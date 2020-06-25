@@ -1,7 +1,7 @@
 import os
 
 
-HOST_URL = "https://xxx.herokuapp.com/"
+HOST_URL = "https://channeltelegrambot.herokuapp.com/"
 HOST_LOCAL_IP = "0.0.0.0"
 
 
