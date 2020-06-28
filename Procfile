@@ -1,2 +1,2 @@
-init: pip install --upgrade -r requirements.txt; pip install --upgrade pip
+init: pip install --upgrade pip; pip install --upgrade -r requirements.txt
 web: python run_bot.py
