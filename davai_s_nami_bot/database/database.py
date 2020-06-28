@@ -70,7 +70,7 @@ def _insert(script, data):
     db_cur = getdb().cursor()
 
     db_cur.execute(script, data)
-    db_cur.close()  # is that need?
+    # db_cur.close()  # is that need?
 
 
 def add2db(events):
