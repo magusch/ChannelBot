@@ -1,6 +1,6 @@
 import os
 
-from escraper import EventData4db
+from escraper.parsers import EventData4db
 import psycopg2
 
 __all__ = ("add2db",)
