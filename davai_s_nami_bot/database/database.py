@@ -5,6 +5,7 @@ import psycopg2
 
 __all__ = ("add2db",)
 
+global db
 SQLITE_DB_NAME = "events.database"
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
@@ -42,8 +43,6 @@ def getdb():
         db.executescript(file.read())
 
     db.commit()
-
-    global db
 
 
 def _get(db, script, names):
