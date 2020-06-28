@@ -1,6 +1,7 @@
 from telebot import TeleBot
 
 from .utils import get_token
+from .collecting_events import update_database
 
 
 BOT_TOKEN = get_token()
@@ -18,4 +19,8 @@ def start_message(incoming_msg):
 def reply_to_text(incoming_msg):
     uid = incoming_msg.from_user.id
     text = incoming_msg.text
-    bot.send_message(chat_id=uid, text=text)
+
+    if text == "update":
+        update_database()
+    else:
+        bot.send_message(chat_id=uid, text=text)
