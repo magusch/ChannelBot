@@ -1,6 +1,6 @@
 import os
 
-# from escraper import EventData4db
+from escraper import EventData4db
 import psycopg2
 
 __all__ = ("add2db",)
@@ -71,7 +71,7 @@ def _insert(script, data):
 
 
 def add2db(events):
-    db_columns = []  # EventData4db._fields
+    db_columns = EventData4db._fields
 
     placeholders = ", ".join(["?" for _ in db_columns])
     script = (
