@@ -13,4 +13,4 @@ requests==2.23.0
 six==1.14.0
 urllib3==1.25.9
 Werkzeug==1.0.1
-escraper@git+https://git@github.com/ArtemErmulin/escraper.git@master#egg=escraper
+escraper@git+https://git@github.com/ArtemErmulin/escraper.git@a60d13e65cb87c00a0f534084293ba4e54ea7c5f
