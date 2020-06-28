@@ -33,8 +33,10 @@ def getdb():
     """
     if DATABASE_URL is not None:
         db = psycopg2.connect(DATABASE_URL, sslmode="require")
+        print("Connecting to posgresql database")
     else:
         db = sqlite3.connect(database=SQLITE_DB_PATH)
+        print("Connecting to sqlite3 database")
 
     db.row_factory = dict_factory
 
@@ -43,6 +45,7 @@ def getdb():
         db.executescript(file.read())
 
     db.commit()
+getdb()
 
 
 def _get(db, script, names):
