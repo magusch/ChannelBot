@@ -2,6 +2,7 @@ from telebot import TeleBot
 
 from .utils import get_token
 from .collecting_events import update_database
+from . import notion_api
 
 
 BOT_TOKEN = get_token()
@@ -20,7 +21,10 @@ def reply_to_text(incoming_msg):
     uid = incoming_msg.from_user.id
     text = incoming_msg.text
 
-    if text == "update":
+    if text == "update_database":
         update_database()
+    elif text == "test_notion_table":
+        text = repr(notion_api.what_in_last_row())
+        bot.send_message(chat_id=uid, text=text)
     else:
         bot.send_message(chat_id=uid, text=text)
