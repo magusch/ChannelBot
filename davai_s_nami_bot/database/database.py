@@ -87,7 +87,7 @@ def add2db(events):
         try:
             _insert(script, [getattr(event, column) for column in db_columns])
         except psycopg2.errors.UniqueViolation:
-            warnings.warn(f"Duplicated event found: {event.id}, {event.title}")
+            warnings.warn(f"Duplicated event found: '{event.id}', '{event.url}'")
             duplicated_event_ids.append(event.id)
 
     return duplicated_event_ids
