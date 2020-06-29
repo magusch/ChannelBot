@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 
-from escraper.parsers import EventData4db
+from escraper.parsers import EVENT_TAGS
 import psycopg2
 
 __all__ = ("add2db",)
@@ -26,7 +26,6 @@ def dict_factory(cursor, row):
     return d
 
 
-@lru_cache()
 def getdb():
     """
     Get database pointer.
@@ -74,7 +73,7 @@ def _insert(script, data):
 
 
 def add2db(events):
-    db_columns = EventData4db._fields
+    db_columns = EVENT_TAGS["to_database"]
 
     placeholders = ", ".join(["%s" for _ in db_columns])
     script = (
