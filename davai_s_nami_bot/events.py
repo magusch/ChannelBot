@@ -16,7 +16,7 @@ TIMEPAD_PARAMS = dict(
 timepad_parser = Timepad()
 
 
-def today():
+def today(with_online=True):
     request_params = TIMEPAD_PARAMS.copy()
 
     today = date.today()
@@ -24,6 +24,11 @@ def today():
         request_params[tag] = request_params[tag].format(
             year_month_day=today.strftime("%Y-%m-%d")
         )
+
+    if with_online:
+        request_params["cities"] = "Без города, Санкт-Петербург"
+    else:
+        request_params["cities"] = "Санкт-Петербург"
 
     # for getting all events (max limit 100)
     today_events = list()
