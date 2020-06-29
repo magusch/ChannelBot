@@ -14,9 +14,23 @@ events_table = notion_client.get_collection_view(NOTION_EVENT_TABLE_URL)
 print(events_table.collection.parent.views)
 
 
-def add_events(events):
+def add_events(events, duplicated_event_ids):
+    remove_blank_rows()
+
     for event in events:
+
+        if event.id in duplicated_event_ids:
+            continue
+
         row = events_table.collection.add_row()
 
         for tag in event._fields:
             setattr(row, tag, getattr(event, tag))
+
+
+def remove_blank_rows():
+    rows = events_table.collection.get_rows()
+
+    for row in rows:
+        if row.get_property("id") is None:
+            row.remove()

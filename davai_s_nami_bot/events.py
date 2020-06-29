@@ -39,5 +39,9 @@ def today():
 
     return today_events
 
+
 def update_database(events):
-    add2db(events)
+    # FIXME bad: add to database something return
+    duplicated_event_ids = add2db(events)
+
+    return duplicated_event_ids

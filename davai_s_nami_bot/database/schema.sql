@@ -1,5 +1,3 @@
-DROP TABLE IF EXISTS "events";
-
 CREATE TABLE IF NOT EXISTS "events" (
     "id" INT NOT NULL UNIQUE,
     "date" TEXT,
