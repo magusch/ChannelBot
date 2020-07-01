@@ -1,1 +1,1 @@
-from .database import add2db
+from .database import add, update

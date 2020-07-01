@@ -2,23 +2,23 @@ import os
 from functools import lru_cache
 import warnings
 
-from escraper.parsers import EVENT_TAGS
 import psycopg2
 
-__all__ = ("add2db",)
+from ..events import TAGS_TO_DATABASE
+
+
+__all__ = ("add", "update")
 
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "
     "WHERE table_name='events'"
 )
-
-if "DATABASE_URL" in os.environ:
-    DATABASE_URL = os.environ["DATABASE_URL"]
-else:
+if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
 
 
@@ -72,8 +72,8 @@ def _insert(script, data):
     db_cur.close()
 
 
-def add2db(events):
-    db_columns = EVENT_TAGS["to_database"]
+def add(events):
+    db_columns = TAGS_TO_DATABASE
 
     placeholders = ", ".join(["%s" for _ in db_columns])
     script = (
@@ -87,7 +87,14 @@ def add2db(events):
         try:
             _insert(script, [getattr(event, column) for column in db_columns])
         except psycopg2.errors.UniqueViolation:
-            warnings.warn(f"Duplicated event found: '{event.id}', '{event.url}'")
+            warnings.warn(f"Existing event found: '{event.id}', '{event.url}'")
             duplicated_event_ids.append(event.id)
 
     return duplicated_event_ids
+
+
+def update(events):
+    # FIXME bad: add to database something return
+    existing_event_ids = add(events)
+
+    return existing_event_ids
