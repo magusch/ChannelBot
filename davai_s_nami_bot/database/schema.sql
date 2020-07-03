@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS "events" (
     "id" INT NOT NULL UNIQUE,
-    "date" TEXT,
+    "date" DATE,
     "title" TEXT NOT NULL,
     "category" TEXT,
     "poster_imag" TEXT,

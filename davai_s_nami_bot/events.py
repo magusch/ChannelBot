@@ -4,14 +4,14 @@ from datetime import date
 from escraper.parsers import Timepad
 
 
-TAGS_TO_DATABASE = (
+TAGS_TO_DATABASE = [
     "id",
-    "date",
     "title",
     "category",
     "poster_imag",
     "url",
-)
+    "date",
+]
 TIMEPAD_PARAMS = dict(
     limit=100,
     price_max=500,

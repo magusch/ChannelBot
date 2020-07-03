@@ -73,19 +73,18 @@ def _insert(script, data):
 
 
 def add(events):
-    db_columns = TAGS_TO_DATABASE
-
-    placeholders = ", ".join(["%s" for _ in db_columns])
+    # required date as last element TAGS_TO_DATABASE
     script = (
-        "INSERT INTO events ({}) VALUES ({})"
-        .format(", ".join(db_columns), placeholders)
+        "INSERT INTO events "
+        f"({TAGS_TO_DATABASE}) values "
+        "(%s, %s, %s, %s, %s, cast(%s as Date))"
     )
 
     duplicated_event_ids = list()
 
     for event in events:
         try:
-            _insert(script, [getattr(event, column) for column in db_columns])
+            _insert(script, [getattr(event, column) for column in TAGS_TO_DATABASE])
         except psycopg2.errors.UniqueViolation:
             warnings.warn(f"Existing event found: '{event.id}', '{event.url}'")
             duplicated_event_ids.append(event.id)
@@ -98,3 +97,9 @@ def update(events):
     existing_event_ids = add(events)
 
     return existing_event_ids
+
+
+def remove_old_events():
+    conn = getdb()
+
+    script = "SELECT id FROM events WHERE date <"
