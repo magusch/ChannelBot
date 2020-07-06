@@ -13,7 +13,7 @@ TAGS_TO_DATABASE = [
     "date",
 ]
 TIMEPAD_PARAMS = dict(
-    limit=30,
+    limit=100,
     price_max=500,
     starts_at_min="{year_month_day}T00:00:00",
     starts_at_max="{year_month_day}T23:59:00",
