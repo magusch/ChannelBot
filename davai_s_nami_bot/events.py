@@ -1,10 +1,10 @@
 from collections import Counter
 from datetime import date
 
-from escraper.parsers import Timepad
+from escraper.parsers import Timepad, ALL_EVENT_TAGS
 
 
-TAGS_TO_DATABASE = [
+TAGS_TO_NOTION = [
     "id",
     "title",
     "category",
@@ -45,7 +45,7 @@ def today(with_online=True):
     while new_items > 0:
         request_params["skip"] = count
         new = timepad_parser.get_events(
-            request_params=request_params, tags=TAGS_TO_DATABASE
+            request_params=request_params, tags=ALL_EVENT_TAGS
         )
         new_items = len(new)
 

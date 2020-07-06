@@ -4,6 +4,8 @@ import time
 
 from notion.client import NotionClient
 
+from .events import TAGS_TO_NOTION
+
 
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_EVENT_TABLE_URL = os.environ.get("NOTION_EVENT_TABLE_URL")
@@ -17,8 +19,6 @@ print(events_table.collection.parent.views)
 
 
 def add_events(events, existing_event_ids):
-    remove_blank_rows()
-
     for event in events:
 
         if event.id in existing_event_ids:
@@ -26,7 +26,7 @@ def add_events(events, existing_event_ids):
 
         row = events_table.collection.add_row()
 
-        for tag in event._fields:
+        for tag in TAGS_TO_NOTION:
             setattr(row, tag, getattr(event, tag))
 
 
@@ -42,6 +42,8 @@ def remove_old_events(date):
     """
     Removing events where date < current date.
     """
+    remove_blank_rows()
+
     for row in events_table.collection.get_rows():
         if row.Date.start < date:
             row.remove()

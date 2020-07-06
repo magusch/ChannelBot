@@ -3,8 +3,7 @@ from functools import lru_cache
 import warnings
 
 import psycopg2
-
-from ..events import TAGS_TO_DATABASE
+from escraper.parsers import ALL_EVENT_TAGS
 
 
 __all__ = ("add", "update")
@@ -82,15 +81,15 @@ def get_existing_events_id(events):
 
 
 def add(events):
-    # required date as last element TAGS_TO_DATABASE
+    # required date as third element ALL_EVENT_TAGS
     script = (
         "INSERT INTO events "
-        f"({', '.join(TAGS_TO_DATABASE)}) values "
-        "(%s, %s, %s, %s, %s, cast(%s as Date))"
+        f"({', '.join(ALL_EVENT_TAGS)}) values "
+        "(%s, %s, cast(%s as Date), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
 
     for event in events:
-        _insert(script, [getattr(event, column) for column in TAGS_TO_DATABASE])
+        _insert(script, [getattr(event, column) for column in ALL_EVENT_TAGS])
 
 
 def remove_old_events(date):
