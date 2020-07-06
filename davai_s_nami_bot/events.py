@@ -4,14 +4,6 @@ from datetime import date
 from escraper.parsers import Timepad, ALL_EVENT_TAGS
 
 
-TAGS_TO_NOTION = [
-    "id",
-    "title",
-    "category",
-    "poster_imag",
-    "url",
-    "date",
-]
 TIMEPAD_PARAMS = dict(
     limit=100,
     price_max=500,
@@ -58,7 +50,4 @@ def today(with_online=True):
 
 
 def unique(events):
-    """
-    TODO
-    """
     return set(events)
