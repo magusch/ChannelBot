@@ -22,7 +22,7 @@ if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
 
 
-def getdb():
+def get_db_connection():
     """
     Get database pointer.
     """
@@ -41,13 +41,8 @@ def getdb():
     return db_conn
 
 
-def _get(db, script, names):
-    """
-    Getting values from `db` by `script`.
-    """
-    values = db.execute(script, names).fetchall()
-
-    return values
+def get_db_cursor():
+    return get_db_connection().cursor()
 
 
 def _insert(script, data):
@@ -61,45 +56,44 @@ def _insert(script, data):
     script : str
         executing script
     """
-    db_conn = getdb()
-    db_cur = db_conn.cursor()
+    db_connection = get_db_connection()
+    db_cursor = db_connection.cursor()
+
+    db_cursor.execute(script, data)
+    db_connection.commit()
+
+    db_connection.close()  # is that need?
+    db_cursor.close()
 
 
-    db_cur.execute(script, data)
-    db_conn.commit()
+def get_existing_events_id(events):
+    db_cursor = get_db_cursor()
 
-    db_conn.close()  # is that need?
-    db_cur.close()
+    db_cursor.execute("SELECT id FROM events")
+    database_ids = [i[0] for i in db_cursor.fetchall()]
+
+    existing_events_id = list()
+
+    for event in events:
+        if event.id in database_ids:
+            existing_events_id.append(event.id)
+
+    return existing_events_id
 
 
 def add(events):
     # required date as last element TAGS_TO_DATABASE
     script = (
         "INSERT INTO events "
-        f"({TAGS_TO_DATABASE}) values "
+        f"({', '.join(TAGS_TO_DATABASE)}) values "
         "(%s, %s, %s, %s, %s, cast(%s as Date))"
     )
 
-    duplicated_event_ids = list()
-
     for event in events:
-        try:
-            _insert(script, [getattr(event, column) for column in TAGS_TO_DATABASE])
-        except psycopg2.errors.UniqueViolation:
-            warnings.warn(f"Existing event found: '{event.id}', '{event.url}'")
-            duplicated_event_ids.append(event.id)
-
-    return duplicated_event_ids
+        _insert(script, [getattr(event, column) for column in TAGS_TO_DATABASE])
 
 
-def update(events):
-    # FIXME bad: add to database something return
-    existing_event_ids = add(events)
+def remove_old_events(date):
+    script = "DELETE FROM events WHERE date < cast(%s as Date)"
 
-    return existing_event_ids
-
-
-def remove_old_events():
-    conn = getdb()
-
-    script = "SELECT id FROM events WHERE date <"
+    _insert(script, [date])

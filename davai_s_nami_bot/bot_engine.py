@@ -1,3 +1,5 @@
+from datetime import date
+
 from telebot import TeleBot
 
 from .utils import get_token
@@ -13,6 +15,13 @@ bot = TeleBot(BOT_TOKEN)
 @bot.message_handler(commands=["update"])
 def update(incoming_msg):
     uid = incoming_msg.from_user.id
+    today = date.today()
+
+    bot.send_message(chat_id=uid, text="Removing old events from postgresql...")
+    database.remove_old_events(today)
+    bot.send_message(chat_id=uid, text="Removing old events from notion table...")
+    notion_api.remove_old_events(today)
+    bot.send_message(chat_id=uid, text="Done.")
 
     bot.send_message(chat_id=uid, text="Getting new events...")
     today_events = events.today()
@@ -20,16 +29,19 @@ def update(incoming_msg):
     event_count = len(today_events)
     bot.send_message(chat_id=uid, text=f"Done. Collected {event_count} events")
 
-    bot.send_message(chat_id=uid, text="Start updating postgresql...")
-    existing_event_ids = database.update(today_events)
-    bot.send_message(
-        chat_id=uid, text=f"Done. Existing events = {len(existing_event_ids)}"
-    )
+    bot.send_message(chat_id=uid, text="Checking for existing events")
+    existing_events_ids = database.get_existing_events_id(today_events)
+    bot.send_message(chat_id=uid, text=f"Existing events count = {len(existing_events_ids)}")
 
-    bot.send_message(
-        chat_id=uid, text="Start updating notion table (without existing)..."
-    )
-    notion_api.add_events(today_events, existing_event_ids)
+    new_events = [i for i in today_events if i.id not in existing_events_ids]
+    bot.send_message(chat_id=uid, text=f"New evenst count = {len(new_events)}")
+
+    bot.send_message(chat_id=uid, text="Start updating postgresql...")
+    database.add(new_events)
+
+    bot.send_message(chat_id=uid, text="Start updating notion table...")
+    notion_api.add_events(today_events, existing_events_ids)
+
     bot.send_message(chat_id=uid, text="Done.")
 
 

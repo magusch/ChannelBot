@@ -1,5 +1,6 @@
 from datetime import date
 import os
+import time
 
 from notion.client import NotionClient
 
@@ -17,7 +18,6 @@ print(events_table.collection.parent.views)
 
 def add_events(events, existing_event_ids):
     remove_blank_rows()
-    remove_old_events()
 
     for event in events:
 
@@ -38,13 +38,11 @@ def remove_blank_rows():
             row.remove()
 
 
-def remove_old_events():
+def remove_old_events(date):
     """
     Removing events where date < current date.
     """
-    rows = events_table.collection.get_rows()
-    current_date = date.today()
-
-    for row in rows:
-        if row.get_property("Date") < current_date:
+    for row in events_table.collection.get_rows():
+        if row.Date.start < date:
             row.remove()
+            time.sleep(0.5)  # to avoid 504 http error

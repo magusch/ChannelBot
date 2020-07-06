@@ -13,7 +13,7 @@ TAGS_TO_DATABASE = [
     "date",
 ]
 TIMEPAD_PARAMS = dict(
-    limit=100,
+    limit=30,
     price_max=500,
     starts_at_min="{year_month_day}T00:00:00",
     starts_at_max="{year_month_day}T23:59:00",
@@ -61,4 +61,4 @@ def unique(events):
     """
     TODO
     """
-    return events
+    return set(events)
