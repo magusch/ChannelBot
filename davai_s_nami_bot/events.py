@@ -1,9 +1,16 @@
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 from escraper.parsers import Timepad, ALL_EVENT_TAGS
 
 
+BAD_KEYWORDS = (
+    "вебинар",
+    "видеотренинг",
+    "тренинг",
+    "HR",
+    "консультация",
+)
 TIMEPAD_PARAMS = dict(
     limit=100,
     price_max=500,
@@ -11,8 +18,33 @@ TIMEPAD_PARAMS = dict(
     starts_at_max="{year_month_day}T23:59:00",
     category_ids_exclude="217, 376, 379, 399, 453, 1315",
     cities="Санкт-Петербург",
+    moderation_statuses="featured",  # одобрено
+    keywords_exclude=", ".join(BAD_KEYWORDS),
 )
+two_days = timedelta(days=2)
 timepad_parser = Timepad()
+
+
+def apply_events_filter(events):
+    """
+    Remove events:
+    - with bad-keywords
+    - with too long duration (more than two days),
+    """
+    good_events = list()
+
+    for event in events:
+        if (
+            event is None
+            or "финанс" in event.title.lower()
+            or not event.is_registration_open
+            or (event.date_to is not None and event.date_to - event.date_from > two_days)
+        ):
+            continue
+
+        good_events.append(event)
+
+    return good_events
 
 
 def today(with_online=True):
@@ -41,8 +73,7 @@ def today(with_online=True):
         )
         new_items = len(new)
 
-        # unmoderated events equals None
-        today_events += [i for i in new if i is not None]
+        today_events += apply_events_filter(new)
 
         count += new_items
 

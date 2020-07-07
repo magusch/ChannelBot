@@ -12,7 +12,7 @@ TAGS_TO_NOTION = [
     "category",
     "poster_imag",
     "url",
-    "date",
+    "date_from",
 ]
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_ALL_EVENTS_TABLE_URL = os.environ.get("NOTION_ALL_EVENTS_TABLE_URL")

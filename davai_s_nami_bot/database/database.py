@@ -93,6 +93,6 @@ def add(events):
 
 
 def remove_old_events(date):
-    script = "DELETE FROM events WHERE date < cast(%s as Date)"
+    script = "DELETE FROM events WHERE date_from < cast(%s as Date)"
 
     _insert(script, [date])
