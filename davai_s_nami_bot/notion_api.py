@@ -74,6 +74,6 @@ def remove_old_events(date):
     remove_blank_rows()
 
     for row in all_events_table.collection.get_rows():
-        if row.Date.start < date:
+        if row.Date_from.start < date:
             row.remove()
             time.sleep(0.5)  # to avoid 504 http error
