@@ -18,7 +18,7 @@ TIMEPAD_PARAMS = dict(
     starts_at_max="{year_month_day}T23:59:00",
     category_ids_exclude="217, 376, 379, 399, 453, 1315",
     cities="Санкт-Петербург",
-    moderation_statuses="featured, shown",  # don't understand what is it
+    moderation_statuses="featured",
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
 two_days = timedelta(days=2)
