@@ -77,3 +77,15 @@ def remove_old_events(date):
         if row.Date_from.start < date:
             row.remove()
             time.sleep(0.5)  # to avoid 504 http error
+
+
+def all_event_ids():
+    ids = list()
+
+    for row in all_events_table.collection.get_rows():
+        event_id = row.get_property("id")
+
+        if event_id is not None:
+            ids.append(event_id)
+
+    return ids

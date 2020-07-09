@@ -13,5 +13,5 @@ requests==2.23.0
 six==1.14.0
 urllib3==1.25.9
 Werkzeug==1.0.1
-escraper@git+https://git@github.com/ArtemErmulin/escraper.git@6922ea8d6af852e05cf5968496c67e2e56baff61
+escraper@git+https://git@github.com/ArtemErmulin/escraper.git@85b9417f5b248c287a25fd5b5f897722b8d0b970
 notion==0.0.25

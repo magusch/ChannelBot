@@ -1,4 +1,5 @@
 import os
+from collections import namedtuple
 from functools import lru_cache
 import warnings
 
@@ -65,6 +66,13 @@ def _insert(script, data):
     db_cursor.close()
 
 
+def _get(script):
+    db_cursor = get_db_cursor()
+    db_cursor.execute(script)
+
+    return db_cursor.fetchall()
+
+
 def get_existing_events_id(events):
     db_cursor = get_db_cursor()
 
@@ -78,6 +86,21 @@ def get_existing_events_id(events):
             existing_events_id.append(event.id)
 
     return existing_events_id
+
+
+def get_event_by_id(event_id):
+    script = (
+        "SELECT {columns} FROM events WHERE id = {id}"
+        .format(
+            columns=", ".join(ALL_EVENT_TAGS),
+            id=event_id,
+        )
+    )
+    values = _get(script)[0]
+
+    return namedtuple("event", ALL_EVENT_TAGS)(
+        **{key: val for key, val in zip(ALL_EVENT_TAGS, values)}
+    )
 
 
 def add(events):

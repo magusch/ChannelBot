@@ -1,4 +1,6 @@
-from datetime import date
+from datetime import datetime
+import random
+import os
 
 from telebot import TeleBot
 
@@ -6,16 +8,18 @@ from .utils import get_token
 from . import notion_api
 from . import events
 from . import database
+from . import posting
 
 
 BOT_TOKEN = get_token()
 bot = TeleBot(BOT_TOKEN)
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 
 @bot.message_handler(commands=["update"])
 def update(incoming_msg):
     uid = incoming_msg.from_user.id
-    today = date.today()
+    today = datetime.now()
 
     bot.send_message(chat_id=uid, text="Removing old events from postgresql...")
     database.remove_old_events(today)
@@ -43,6 +47,15 @@ def update(incoming_msg):
     notion_api.add_events(today_events, existing_events_ids)
 
     bot.send_message(chat_id=uid, text="Done.")
+
+
+@bot.message_handler(commands=["test_post"])
+def test_post(incoming_msg):
+    event_id = random.choice(notion_api.all_event_ids())
+
+    post = posting.create(event_id)
+
+    bot.send_message(chat_id=CHANNEL_ID, text=post, parse_mode="Markdown")
 
 
 @bot.message_handler(content_types=["text"])

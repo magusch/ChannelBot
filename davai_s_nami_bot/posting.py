@@ -1,3 +1,5 @@
+from . import database
+
 
 TAGS_TO_POST = (
     "title",
@@ -10,6 +12,67 @@ TAGS_TO_POST = (
     "url",
     "price",
 )
+WEEKNAMES = {
+    0: "Понедельник",
+    1: "Вторник",
+    2: "Среда",
+    3: "Четверг",
+    4: "Пятница",
+    5: "Суббота",
+    6: "Воскресенье",
+}
+MONTHNAMES = {
+    1: "января",
+    2: "февраля",
+    3: "марта",
+    4: "апреля",
+    5: "мая",
+    6: "июня",
+    7: "июля",
+    8: "августа",
+    9: "сентября",
+    10: "октября",
+    11: "ноября",
+    12: "декабря",
+}
+
+
+def weekday_name(dt):
+    return WEEKNAMES[dt.weekday()]
+
+
+def month_name(dt):
+    return MONTHNAMES[dt.month]
+
+
+def date_to_post(date_from, date_to):
+    s_weekday = weekday_name(date_from)
+    s_day = date_from.day
+    s_month = month_name(date_from)
+    s_hour = date_from.hour
+    s_minute = date_from.minute
+
+    if date_to is not None:
+        e_day = date_to.day
+        e_month = month_name(date_to)
+        e_hour = date_to.hour
+        e_minute = date_to.minute
+
+        if s_day == e_day:
+            start_format = (
+                f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
+            )
+            end_format = f"{e_hour:02}:{e_minute:02}"
+
+        else:
+            start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
+            end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
+
+    else:
+        end_format = ""
+        start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}"
+
+    return start_format + end_format
 
 
 def check_post_tags(tags):
@@ -24,28 +87,36 @@ def check_post_tags(tags):
         )
 
 
-def create(ed):
+def create(event_id):
     """
-    Creating post by raw data.
+    Creating post by event_id.
 
     Parameters:
     -----------
-    ed : namedtuple
-        parsers.EventData
+    event_id : int
+        event id that exist in postgresql database.
     """
 
-    if ed.poster_imag is None:
+    event = database.get_event_by_id(event_id)
+
+    if event.poster_imag is None:
         imag = ""
     else:
-        imag = f"[ ]({ed.poster_imag}) "
+        imag = f"[ ]({event.poster_imag}) "
 
-    title = f"{imag}*{ed.title_date}* {ed.title}\n\n"
+    title_date = "{day} {month}".format(
+        day=event.date_from.day,
+        month=month_name(event.date_from),
+    )
+    date_from_to = date_to_post(event.date_from, event.date_to)
+
+    title = f"{imag}*{title_date}* {event.title}\n\n"
 
     footer = (
         "\n"
-        f"*Где:* {ed.place_name}, {ed.adress} \n"
-        f"*Когда:* {ed.date_from_to} \n"
-        f"*Вход:* [{ed.price}]({ed.url})"
+        f"*Где:* {event.place_name}, {event.adress} \n"
+        f"*Когда:* {date_from_to} \n"
+        f"*Вход:* [{event.price}]({event.url})"
     )
 
     # if ed.price==:
@@ -55,5 +126,5 @@ def create(ed):
     # elif ed.price>0:
     #     footer +=f'*Вход:* [от {ed.price}₽]({ed.url})'
 
-    full_text = title + ed.post_text + footer
+    full_text = title + event.post_text + footer
     return full_text
