@@ -85,7 +85,7 @@ def add(events):
     script = (
         "INSERT INTO events "
         f"({', '.join(ALL_EVENT_TAGS)}) values "
-        "(%s, %s, cast(%s as Date), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        "(%s, %s, cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
 
     for event in events:
@@ -93,6 +93,6 @@ def add(events):
 
 
 def remove_old_events(date):
-    script = "DELETE FROM events WHERE date_from < cast(%s as Date)"
+    script = "DELETE FROM events WHERE date_from < cast(%s as TIMESTAMP)"
 
     _insert(script, [date])

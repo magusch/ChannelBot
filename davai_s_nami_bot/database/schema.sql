@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS "events" (
     "adress" TEXT,
     "category" TEXT,
-    "date_from" DATE,
-    "date_to" DATE,
+    "date_from" TIMESTAMP,
+    "date_to" TIMESTAMP,
     "id" INT NOT NULL UNIQUE,
     "place_name" TEXT,
     "post_text" TEXT,
