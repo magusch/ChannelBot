@@ -21,6 +21,7 @@ TIMEPAD_PARAMS = dict(
     moderation_statuses="featured",
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
+MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 timepad_parser = Timepad()
 
@@ -47,17 +48,25 @@ def apply_events_filter(events):
     return good_events
 
 
-def today(with_online=True):
+def next_days(days=1, with_online=True):
     """
-    Getting today's events.
+    Getting events for next few days.
     """
+    if days > MAX_NEXT_DAYS:
+        raise ValueError(
+            f"Too much days for getting events: {days}."
+            f"Maximum is {MAX_NEXT_DAYS} days."
+        )
+
     request_params = TIMEPAD_PARAMS.copy()
 
     today = date.today()
-    for tag in ["starts_at_min", "starts_at_max"]:
-        request_params[tag] = request_params[tag].format(
-            year_month_day=today.strftime("%Y-%m-%d")
-        )
+    request_params["starts_at_min"] = request_params["starts_at_min"].format(
+        year_month_day=today.strftime("%Y-%m-%d")
+    )
+    request_params["starts_at_max"] = request_params["starts_at_max"].format(
+        year_month_day=(today + timedelta(days=days)).strftime("%Y-%m-%d")
+    )
 
     if with_online:
         request_params["cities"] += ", Без города"

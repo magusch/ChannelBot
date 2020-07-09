@@ -23,8 +23,8 @@ def update(incoming_msg):
     notion_api.remove_old_events(today)
     bot.send_message(chat_id=uid, text="Done.")
 
-    bot.send_message(chat_id=uid, text="Getting new events...")
-    today_events = events.today()
+    bot.send_message(chat_id=uid, text="Getting new events for next 7 days...")
+    today_events = events.next_days(days=7)
 
     event_count = len(today_events)
     bot.send_message(chat_id=uid, text=f"Done. Collected {event_count} events")
