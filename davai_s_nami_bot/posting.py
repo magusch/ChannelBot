@@ -13,13 +13,13 @@ TAGS_TO_POST = (
     "price",
 )
 WEEKNAMES = {
-    0: "Понедельник",
-    1: "Вторник",
-    2: "Среда",
-    3: "Четверг",
-    4: "Пятница",
-    5: "Суббота",
-    6: "Воскресенье",
+    0: "Пн",
+    1: "Вт",
+    2: "Ср",
+    3: "Чт",
+    4: "Пт",
+    5: "Сб",
+    6: "Вск",
 }
 MONTHNAMES = {
     1: "января",
@@ -35,6 +35,7 @@ MONTHNAMES = {
     11: "ноября",
     12: "декабря",
 }
+
 
 
 def weekday_name(dt):
@@ -102,7 +103,7 @@ def create(event_id):
     if event.poster_imag is None:
         imag = ""
     else:
-        imag = f"[ ]({event.poster_imag}) "
+        imag = f"[‌]({event.poster_imag}) "
 
     title_date = "{day} {month}".format(
         day=event.date_from.day,
@@ -110,10 +111,12 @@ def create(event_id):
     )
     date_from_to = date_to_post(event.date_from, event.date_to)
 
-    title = f"{imag}*{title_date}* {event.title}\n\n"
+    title = event.title.replace(' &quot;', ' «').replace('&quot;', '»').replace(' "', ' «').replace('"', '»').replace('«','*«').replace('»','»*')
+
+    title = f"{imag}*{title_date}* {title}\n\n"
 
     footer = (
-        "\n"
+        "\n\n"
         f"*Где:* {event.place_name}, {event.adress} \n"
         f"*Когда:* {date_from_to} \n"
         f"*Вход:* [{event.price}]({event.url})"
@@ -126,5 +129,7 @@ def create(event_id):
     # elif ed.price>0:
     #     footer +=f'*Вход:* [от {ed.price}₽]({ed.url})'
 
-    full_text = title + event.post_text + footer
+    post_text=event.post_text.strip()
+
+    full_text = title + post_text + footer
     return full_text
