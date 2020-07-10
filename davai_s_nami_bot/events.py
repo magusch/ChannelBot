@@ -18,7 +18,7 @@ TIMEPAD_PARAMS = dict(
     starts_at_max="{year_month_day}T23:59:00",
     category_ids_exclude="217, 376, 379, 399, 453, 1315",
     cities="Санкт-Петербург",
-    moderation_statuses="featured",
+    #moderation_statuses="featured",
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
 MAX_NEXT_DAYS = 30
@@ -39,7 +39,7 @@ def apply_events_filter(events):
             event is None
             or "финанс" in event.title.lower()
             or not event.is_registration_open
-            or (event.date_to is not None and event.date_to - event.date_from > two_days)
+            #or (event.date_to is not None and event.date_to - event.date_from > two_days)
         ):
             continue
 
