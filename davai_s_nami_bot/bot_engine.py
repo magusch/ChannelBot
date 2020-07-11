@@ -12,7 +12,7 @@ from . import posting
 
 
 BOT_TOKEN = get_token()
-bot = TeleBot(BOT_TOKEN)
+bot = TeleBot(token=BOT_TOKEN, parse_mode="Markdown")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 
@@ -53,9 +53,12 @@ def update(incoming_msg):
 def test_post(incoming_msg):
     event_id = random.choice(notion_api.all_event_ids())
 
-    post = posting.create(event_id)
+    photo_url, post = posting.create(event_id)
 
-    bot.send_message(chat_id=CHANNEL_ID, text=post, parse_mode="Markdown")
+    if photo_url is None:
+        bot.send_message(chat_id=CHANNEL_ID, text=post, disable_web_page_preview=True)
+    else:
+        bot.send_photo(chat_id=CHANNEL_ID, photo=photo_url, caption=post)
 
 
 @bot.message_handler(content_types=["text"])

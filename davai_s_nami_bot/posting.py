@@ -96,25 +96,31 @@ def create(event_id):
     -----------
     event_id : int
         event id that exist in postgresql database.
+
+    Returns:
+    --------
+    photo_url : str
+    
+    post : str
     """
 
     event = database.get_event_by_id(event_id)
-
-    if event.poster_imag is None:
-        imag = ""
-    else:
-        imag = f"[‌]({event.poster_imag}) "
 
     title_date = "{day} {month}".format(
         day=event.date_from.day,
         month=month_name(event.date_from),
     )
     date_from_to = date_to_post(event.date_from, event.date_to)
-
-    title = event.title.replace(' &quot;', ' «').replace('&quot;', '»').replace(' "', ' «').replace('"', '»').replace('«','*«').replace('»','»*')
-
-    title = f"{imag}*{title_date}* {title}\n\n"
-
+    title = (
+        event.title
+        .replace(' &quot;', ' «')
+        .replace('&quot;', '»')
+        .replace(' "', ' «')
+        .replace('"', '»')
+        .replace('«','*«')
+        .replace('»','»*')
+    )
+    title = f"*{title_date}* {title}\n\n"
     footer = (
         "\n\n"
         f"*Где:* {event.place_name}, {event.adress} \n"
@@ -129,7 +135,7 @@ def create(event_id):
     # elif ed.price>0:
     #     footer +=f'*Вход:* [от {ed.price}₽]({ed.url})'
 
-    post_text=event.post_text.strip()
-
+    post_text = event.post_text.strip()
     full_text = title + post_text + footer
-    return full_text
+
+    return event.poster_imag, full_text
