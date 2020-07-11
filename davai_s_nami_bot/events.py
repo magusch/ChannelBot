@@ -40,6 +40,7 @@ def apply_events_filter(events):
             or "финанс" in event.title.lower()
             or not event.is_registration_open
             #or (event.date_to is not None and event.date_to - event.date_from > two_days)
+            or event.poster_imag==None
         ):
             continue
 
