@@ -119,3 +119,9 @@ def remove_old_events(date):
     script = "DELETE FROM events WHERE date_from < cast(%s as TIMESTAMP)"
 
     _insert(script, [date])
+
+
+def update_post_id(event_id, post_id):
+    script = "UPDATE events SET post_id = %s WHERE id = %s"
+        
+    _insert(script, [post_id, event_id])

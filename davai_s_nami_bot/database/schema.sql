@@ -11,5 +11,7 @@ CREATE TABLE IF NOT EXISTS "events" (
     "title" TEXT NOT NULL,
     "url" TEXT NOT NULL UNIQUE,
     "is_registration_open" INTEGER,
+    "post_id" INTEGER UNIQUE,
     CHECK ("is_registration_open" = 0 or "is_registration_open" = 1)
+
 );
