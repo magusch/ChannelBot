@@ -3,6 +3,8 @@ import os
 import time
 from multiprocessing import Lock
 
+import requests
+
 from notion.client import NotionClient
 
 
@@ -54,7 +56,12 @@ def add_events(events, existing_event_ids):
 
         row = all_events_table.collection.add_row()
         for tag in TAGS_TO_NOTION:
-            setattr(row, tag, getattr(event, tag))
+            while True:
+                try:
+                    setattr(row, tag, getattr(event, tag))
+                    break
+                except requests.exceptions.HTTPError:
+                    Warning("Exception while inset to notion table. Retry...")
 
         row.add_callback(row_callback)
 
@@ -76,7 +83,7 @@ def remove_old_events(date):
     for row in all_events_table.collection.get_rows():
         if row.Date_from.start < date:
             row.remove()
-            time.sleep(0.5)  # to avoid 504 http error
+            time.sleep(0.5)
 
 
 def all_event_ids():

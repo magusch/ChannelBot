@@ -14,7 +14,6 @@ from davai_s_nami_bot import (
     notion_api,
     events,
     posting,
-    HOST_LOCAL_IP,
 )
 
 MSK_TZ = pytz.timezone('Europe/Moscow')
@@ -122,10 +121,10 @@ if __name__ == "__main__":
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=00, minute=00),
+        today.replace(hour=10, minute=33),
     ]
 
-    strftime_event_updating = get_strftimes([today.replace(hour=0, minute=0)])[0]
+    strftime_event_updating = get_strftimes([today.replace(hour=10, minute=33)])[0]
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 
@@ -150,7 +149,7 @@ if __name__ == "__main__":
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
 
     flow = Flow(
-        name="Davai_s_nami_schedule",
+        name="DavaiSNami",
         schedule=schedule,
         tasks=[PostingEvent(), UpdateEvents()]
     )
