@@ -56,10 +56,12 @@ def test_post(incoming_msg):
     photo_url, post = posting.create(event_id)
 
     if photo_url is None:
-        bot.send_message(chat_id=CHANNEL_ID, text=post, disable_web_page_preview=True)
+        mess=bot.send_message(chat_id=CHANNEL_ID, text=post, disable_web_page_preview=True)
     else:
-        bot.send_photo(chat_id=CHANNEL_ID, photo=photo_url, caption=post)
+        mess=bot.send_photo(chat_id=CHANNEL_ID, photo=photo_url, caption=post)
 
+    #post_id=mess.message_id
+    #database.update_post_id(event_id, post_id)
 
 @bot.message_handler(content_types=["text"])
 def reply_to_text(incoming_msg):

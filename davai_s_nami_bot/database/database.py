@@ -66,6 +66,21 @@ def _insert(script, data):
     db_cursor.close()
 
 
+def _update(script): #_insert without 'data' argument
+    
+    db_connection = get_db_connection()
+    db_cursor = db_connection.cursor()
+
+    db_cursor.execute(script)
+    db_connection.commit()
+
+    db_connection.close()  # is that need?
+    db_cursor.close()
+
+
+
+
+
 def _get(script):
     db_cursor = get_db_cursor()
     db_cursor.execute(script)
@@ -119,3 +134,13 @@ def remove_old_events(date):
     script = "DELETE FROM events WHERE date_from < cast(%s as TIMESTAMP)"
 
     _insert(script, [date])
+
+
+def update_post_id(event_id, post_id):
+    script = (
+        "UPDATE events SET post_id = {post_id} WHERE id = {id}"
+        .format(
+            post_id=post_id,
+            id=event_id,
+        )
+    )
