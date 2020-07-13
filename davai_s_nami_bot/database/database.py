@@ -50,7 +50,7 @@ def _insert(script, data):
     Parameters:
     -----------
 
-    data : list of lists
+    data : list of values
         inserting data
 
     script : str
@@ -123,5 +123,5 @@ def remove_old_events(date):
 
 def update_post_id(event_id, post_id):
     script = "UPDATE events SET post_id = %s WHERE id = %s"
-        
+
     _insert(script, [post_id, event_id])

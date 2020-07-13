@@ -30,17 +30,20 @@ class PostingEvent(Task):
             photo_url, post = posting.create(event_id)
 
             if photo_url is None:
-                bot.send_message(
+                message = bot.send_message(
                     chat_id=CHANNEL_ID,
                     text=post,
                     disable_web_page_preview=True,
                 )
             else:
-                bot.send_photo(
+                message = bot.send_photo(
                     chat_id=CHANNEL_ID,
                     photo=photo_url,
                     caption=post,
                 )
+
+            post_id = message.message_id
+            database.update_post_id(event_id, post_id)
 
 
 class UpdateEvents(Task):
@@ -121,10 +124,10 @@ if __name__ == "__main__":
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=10, minute=33),
+        today.replace(hour=20, minute=29),
     ]
 
-    strftime_event_updating = get_strftimes([today.replace(hour=10, minute=33)])[0]
+    strftime_event_updating = get_strftimes([today.replace(hour=20, minute=29)])[0]
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 
