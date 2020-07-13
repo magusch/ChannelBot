@@ -60,8 +60,8 @@ def test_post(incoming_msg):
     else:
         mess=bot.send_photo(chat_id=CHANNEL_ID, photo=photo_url, caption=post)
 
-    #post_id=mess.message_id
-    #database.update_post_id(event_id, post_id)
+    post_id=mess.message_id
+    database.update_post_id(event_id, post_id)
 
 @bot.message_handler(content_types=["text"])
 def reply_to_text(incoming_msg):
