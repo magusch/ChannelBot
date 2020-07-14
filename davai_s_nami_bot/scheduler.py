@@ -3,18 +3,18 @@ import random
 import pytz
 import os
 
+from telebot import TeleBot
 from prefect.schedules import filters
 from prefect.schedules.schedules import Schedule
 from prefect.schedules.clocks import IntervalClock
 from prefect import Flow, Task
 
-from davai_s_nami_bot import (
-    bot,
-    database,
-    notion_api,
-    events,
-    posting,
-)
+from .utils import get_token
+from . import database
+from . import notion_api
+from . import events
+from . import posting
+
 
 MSK_TZ = pytz.timezone('Europe/Moscow')
 MSK_UTCOFFSET = datetime.now(MSK_TZ).utcoffset()
@@ -23,7 +23,9 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 class PostingEvent(Task):
     def run(self):
-        if datetime.utcnow().strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
+        today = datetime.utcnow()
+
+        if today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
             print("Generating post.")
 
             event_id = random.choice(notion_api.all_event_ids())
@@ -48,7 +50,9 @@ class PostingEvent(Task):
 
 class UpdateEvents(Task):
     def run(self):
-        if datetime.utcnow().strftime("%H:%M") == strftime_event_updating:
+        today = datetime.utcnow()
+
+        if today.strftime("%H:%M") == strftime_event_updating:
             print("Start updating events.")
 
             print("Removing old events from postgresql...")
@@ -104,7 +108,9 @@ def get_strftimes(scheduled_times):
     return strftimes
 
 
-if __name__ == "__main__":
+def run():
+    bot = TeleBot(token=get_token(), parse_mode="Markdown")
+
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
@@ -124,10 +130,12 @@ if __name__ == "__main__":
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=20, minute=29),
+        today.replace(hour=20, minute=31),
     ]
 
-    strftime_event_updating = get_strftimes([today.replace(hour=20, minute=29)])[0]
+    global strftimes_weekday, strftimes_weekend, strftime_event_updating
+
+    strftime_event_updating = get_strftimes([today.replace(hour=20, minute=31)])[0]
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 
