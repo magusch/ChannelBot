@@ -28,8 +28,8 @@ class PostingEvent(Task):
         if today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
             print("Generating post.")
 
-            event_id = random.choice(notion_api.all_event_ids())
-            photo_url, post = posting.create(event_id)
+            # TODO: last from table 3
+            photo_url, post = posting.create(None)
 
             if photo_url is None:
                 message = bot.send_message(
@@ -50,15 +50,16 @@ class PostingEvent(Task):
 
 class UpdateEvents(Task):
     def run(self):
-        today = datetime.utcnow()
+        utc_today = datetime.utcnow()
+        msk_today = datetime.now()
 
-        if today.strftime("%H:%M") == strftime_event_updating:
+        if utc_today.strftime("%H:%M") == strftime_event_updating:
             print("Start updating events.")
 
             print("Removing old events from postgresql...")
-            database.remove_old_events(today)
+            database.remove_old_events(utc_today)
             print("Removing old events from notion table...")
-            notion_api.remove_old_events(today)
+            notion_api.remove_old_events(msk_today)
             print("Done.")
 
             print("Getting new events for next 7 days...")
@@ -78,7 +79,7 @@ class UpdateEvents(Task):
             database.add(new_events)
 
             print("Start updating notion table...")
-            notion_api.add_events(today_events, existing_events_ids)
+            notion_api.add_events(today_events, existing_events_ids, msk_today)
 
             print("Done.")
 
@@ -130,12 +131,12 @@ def run():
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=20, minute=31),
+        today.replace(hour=0, minute=0),
     ]
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
 
-    strftime_event_updating = get_strftimes([today.replace(hour=20, minute=31)])[0]
+    strftime_event_updating = get_strftimes([today.replace(hour=0, minute=0)])[0]
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 

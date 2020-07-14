@@ -1,7 +1,9 @@
+import datetime
 from datetime import date
 import os
 import time
 from multiprocessing import Lock
+from functools import partial
 
 import requests
 
@@ -12,44 +14,56 @@ TAGS_TO_NOTION = [
     "id",
     "title",
     "category",
-    "poster_imag",
     "url",
     "date_from",
 ]
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
-NOTION_ALL_EVENTS_TABLE_URL = os.environ.get("NOTION_ALL_EVENTS_TABLE_URL")
-NOTION_TO_CHANNEL_TABLE_URL = os.environ.get("NOTION_TO_CHANNEL_TABLE_URL")
+NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
+NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
+NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2, start_monitoring=True, monitor=True)
-all_events_table = notion_client.get_collection_view(NOTION_ALL_EVENTS_TABLE_URL)
-to_channel_table = notion_client.get_collection_view(NOTION_TO_CHANNEL_TABLE_URL)
+table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
+table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
+table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 
 # 💫 some magic 💫
 # (see issue https://github.com/jamalex/notion-py/issues/92)
-print(all_events_table.collection.parent.views)
-print(to_channel_table.collection.parent.views)
+for t in [table1, table2, table3]:
+    print(t.collection.parent.views)
 
 mutex = Lock()
 
 
-def add_events(events, existing_event_ids):
+def add_events(events, existing_event_ids, explored_date):
     for event in events:
 
         if event.id in existing_event_ids:
             continue
 
-        row = all_events_table.collection.add_row()
+        row = table1.collection.add_row()
+
         for tag in TAGS_TO_NOTION:
-            while True:
-                try:
-                    setattr(row, tag, getattr(event, tag))
-                    break
-                except requests.exceptions.HTTPError:
-                    Warning("Exception while inset to notion table. Retry...")
+            set_property(
+                row=row,
+                property_name=tag,
+                value=getattr(event, tag),
+            )
+
+        # event not contain explored_date field
+        set_property(
+            row=row,
+            property_name="explored_date",
+            value=explored_date,
+        )
 
 
 def remove_blank_rows():
-    rows = all_events_table.collection.get_rows()
+    rows = (
+        list(table1.collection.get_rows())
+        + list(table2.collection.get_rows())
+        + list(table3.collection.get_rows())
+    )
 
     for row in rows:
         if row.get_property("id") is None:
@@ -58,27 +72,82 @@ def remove_blank_rows():
 
 def remove_old_events(date):
     """
-    Removing events where date < current date.
+    Removing events:
+        - from table 1, where explored date > 2 days ago
+        - from table 2, where explored date > 7 days ago
+        - from tables 1, 2, 3, where date_from < today
     """
     remove_blank_rows()
 
-    for row in all_events_table.collection.get_rows():
-        if row.Date_from.start < date:
-            while True:
-                try:
-                    row.remove()
-                    break
-                except requests.exceptions.HTTPError:
-                    Warning("Exception while removing row. Retry...")
+    tables = (table1, table2, table3)
+    check_funcs = (
+        partial(check_for_move_to_table2, date=date, days=2),
+        partial(check_explored_date, date=date, days=7),
+        None,
+    )
+
+    for table, check_func in zip(tables, check_funcs):
+
+        for row in table.collection.get_rows():
+            if in_past(row, target=date):
+                remove_row(row)
+
+            elif check_func:
+                check_func(row)
 
 
-def all_event_ids():
-    ids = list()
+def in_past(record, target):
+    return record.Date_from.start < target
 
-    for row in all_events_table.collection.get_rows():
-        event_id = row.get_property("id")
 
-        if event_id is not None:
-            ids.append(event_id)
+def check_for_move_to_table2(record, date, days=None):
+    if record.explored_date.start + datetime.timedelta(days=days) < date:
+        move_row(record, table2)
 
-    return ids
+
+def check_explored_date(record, date, days=None):
+    if record.explored_date.start + datetime.timedelta(days=days) < date:
+        remove_row(record)
+
+
+def move_approved():
+    rows = (
+        list(table1.collection.get_rows())
+        + list(table2.collection.get_rows())
+    )
+
+    for row in rows:
+        if row.Approved:
+            move_row(row, table3)
+
+
+def set_property(row, property_name, value):
+    while True:
+        try:
+            setattr(row, property_name, value)
+            break
+        except requests.exceptions.HTTPError:
+            Warning("Exception while inset to notion table. Retry...")
+
+
+def remove_row(row):
+    while True:
+        try:
+            row.remove()
+            break
+        except requests.exceptions.HTTPError:
+            Warning("Exception while removing row. Retry...")
+
+
+def move_row(row, to_table):
+    new_row = to_table.collection.add_row()
+
+    for tag in TAGS_TO_NOTION + ["explored_date"]:
+        while True:
+            try:
+                setattr(new_row, tag, row.get_property(tag))
+                break
+            except requests.exceptions.HTTPError:
+                Warning("Exception while moving row. Retry...")
+
+    remove_row(row)
