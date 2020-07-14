@@ -32,22 +32,6 @@ print(to_channel_table.collection.parent.views)
 mutex = Lock()
 
 
-def add_event_to_channel_table(record):
-    row = to_channel_table.collection.add_row()
-    for tag in TAGS_TO_NOTION:
-        setattr(row, tag, record.get_property(tag))
-
-
-def row_callback(record, changes):
-    with mutex:
-        is_approved = record.Approved
-        record.Approved = False
-
-    if is_approved:
-        add_event_to_channel_table(record)
-        record.remove()
-
-
 def add_events(events, existing_event_ids):
     for event in events:
 
@@ -62,8 +46,6 @@ def add_events(events, existing_event_ids):
                     break
                 except requests.exceptions.HTTPError:
                     Warning("Exception while inset to notion table. Retry...")
-
-        row.add_callback(row_callback)
 
 
 def remove_blank_rows():
@@ -82,8 +64,12 @@ def remove_old_events(date):
 
     for row in all_events_table.collection.get_rows():
         if row.Date_from.start < date:
-            row.remove()
-            time.sleep(0.5)
+            while True:
+                try:
+                    row.remove()
+                    break
+                except requests.exceptions.HTTPError:
+                    Warning("Exception while removing row. Retry...")
 
 
 def all_event_ids():
