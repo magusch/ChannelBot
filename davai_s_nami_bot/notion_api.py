@@ -167,10 +167,6 @@ def next_event_id_to_channel():
             row.is_published = True
             break
 
-    if event_id is None:
-        # TODO: what if in table3 isn't events to channel?
-        pass
-
     return event_id
 
 
