@@ -37,19 +37,17 @@ class IsEmptyCheck(Task):
     """
     Checking events in table3: if empty, send warning message to dev channel.
     """
-    not_published_count = notion_api.not_published_count()
+    def run(self):
+        not_published_count = notion_api.not_published_count()
 
-    if not_published_count == 1:
-        text = (
-            "Warning: last event left."
-            "Please, check events in table 1 and 2 to approving events."
-        )
-        bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
+        if not_published_count == 1:
+            text = "Warning: last event left."
 
-    elif not_published_count == 0:
-        text = (
-            "Warning: not found events for posting."
-        )
+        elif not_published_count == 0:
+            text = (
+                "Warning: not found events for posting, skip."
+            )
+
         bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
 
@@ -78,9 +76,6 @@ class PostingEvent(Task):
 
                 post_id = message.message_id
                 database.update_post_id(event_id, post_id)
-            
-            else:
-                print("Skip: events not found.")
 
 
 class UpdateEvents(Task):
@@ -189,6 +184,12 @@ def run():
     ]
 
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
+
+    text = (
+        "I'm running. First scheduled task in {} (MSK)"
+        .format(schedule.next(1)[0].astimezone(MSK_TZ).strftime("%H:%M"))
+    )
+    bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
     flow = Flow(
         name="DavaiSNami",
