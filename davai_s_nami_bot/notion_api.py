@@ -2,7 +2,6 @@ import datetime
 from datetime import date
 import os
 import time
-from multiprocessing import Lock
 from functools import partial
 
 import requests
@@ -31,8 +30,6 @@ table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 # (see issue https://github.com/jamalex/notion-py/issues/92)
 for t in [table1, table2, table3]:
     print(t.collection.parent.views)
-
-mutex = Lock()
 
 
 def add_events(events, existing_event_ids, explored_date):
@@ -166,11 +163,21 @@ def next_event_id_to_channel():
 
     for row in rows:
         if not row.is_published:
-            event_id = row.event_id
+            event_id = row.get_property("id")
             row.is_published = True
+            break
 
     if event_id is None:
         # TODO: what if in table3 isn't events to channel?
         pass
 
     return event_id
+
+
+def not_published_count():
+    count = 0
+
+    for row in table3.collection.get_rows():
+        count += not row.is_published
+
+    return count

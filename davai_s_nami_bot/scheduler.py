@@ -19,53 +19,79 @@ from . import posting
 MSK_TZ = pytz.timezone('Europe/Moscow')
 MSK_UTCOFFSET = datetime.now(MSK_TZ).utcoffset()
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
+DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
+bot = TeleBot(token=get_token(), parse_mode="Markdown")
 
 
 class MoveApproved(Task):
     def run(self):
+        global utc_today, msk_today
+        utc_today = datetime.utcnow()
+        msk_today = datetime.now()
+
         print("Move approved events from table1 and table2 to table3")
         notion_api.move_approved()
 
 
+class IsEmptyCheck(Task):
+    """
+    Checking events in table3: if empty, send warning message to dev channel.
+    """
+    not_published_count = notion_api.not_published_count()
+
+    if not_published_count == 1:
+        text = (
+            "Warning: last event left."
+            "Please, check events in table 1 and 2 to approving events."
+        )
+        bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
+
+    elif not_published_count == 0:
+        text = (
+            "Warning: not found events for posting."
+        )
+        bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
+
+
 class PostingEvent(Task):
     def run(self):
-        today = datetime.utcnow()
-
-        if today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
+        if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
             print("Generating post.")
 
             event_id = notion_api.next_event_id_to_channel()
-            photo_url, post = posting.create(event_id)
 
-            if photo_url is None:
-                message = bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=post,
-                    disable_web_page_preview=True,
-                )
+            if event_id:
+                photo_url, post = posting.create(event_id)
+
+                if photo_url is None:
+                    message = bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=post,
+                        disable_web_page_preview=True,
+                    )
+                else:
+                    message = bot.send_photo(
+                        chat_id=CHANNEL_ID,
+                        photo=photo_url,
+                        caption=post,
+                    )
+
+                post_id = message.message_id
+                database.update_post_id(event_id, post_id)
+            
             else:
-                message = bot.send_photo(
-                    chat_id=CHANNEL_ID,
-                    photo=photo_url,
-                    caption=post,
-                )
-
-            post_id = message.message_id
-            database.update_post_id(event_id, post_id)
+                print("Skip: events not found.")
 
 
 class UpdateEvents(Task):
     def run(self):
-        utc_today = datetime.utcnow()
-        msk_today = datetime.now()
-
         if utc_today.strftime("%H:%M") == strftime_event_updating:
             print("Start updating events.")
 
             print("Removing old events from postgresql...")
             database.remove_old_events(utc_today)
             print("Removing old events from notion table...")
-            notion_api.remove_old_events(msk_today)
+            notion_api.remove_old_events(msk_today + timedelta(hours=1))
             print("Done.")
 
             print("Getting new events for next 7 days...")
@@ -116,8 +142,6 @@ def get_strftimes(scheduled_times):
 
 
 def run():
-    bot = TeleBot(token=get_token(), parse_mode="Markdown")
-
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
@@ -137,12 +161,12 @@ def run():
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=0, minute=0),
+        today.replace(hour=00, minute=00),
     ]
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
 
-    strftime_event_updating = get_strftimes([today.replace(hour=0, minute=0)])[0]
+    strftime_event_updating = get_strftimes([today.replace(hour=00, minute=00)])[0]
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 
@@ -169,7 +193,7 @@ def run():
     flow = Flow(
         name="DavaiSNami",
         schedule=schedule,
-        tasks=[MoveApproved(), PostingEvent(), UpdateEvents()]
+        tasks=[MoveApproved(), IsEmptyCheck(), PostingEvent(), UpdateEvents()]
     )
 
     flow.run()
