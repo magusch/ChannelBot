@@ -28,8 +28,8 @@ class PostingEvent(Task):
         if today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
             print("Generating post.")
 
-            # TODO: last from table 3
-            photo_url, post = posting.create(None)
+            event_id = notion_api.next_event_id_to_channel()
+            photo_url, post = posting.create(event_id)
 
             if photo_url is None:
                 message = bot.send_message(

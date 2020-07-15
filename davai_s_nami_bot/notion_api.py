@@ -151,3 +151,22 @@ def move_row(row, to_table):
                 Warning("Exception while moving row. Retry...")
 
     remove_row(row)
+
+
+def next_event_id_to_channel():
+    """
+    Getting next event id from table 3 (from up to down).
+    """
+    rows = table3.collection.get_rows()
+    event_id = None
+
+    for row in rows:
+        if not row.is_published:
+            event_id = row.event_id
+            row.is_published = True
+
+    if event_id is None:
+        # TODO: what if in table3 isn't events to channel?
+        pass
+
+    return event_id
