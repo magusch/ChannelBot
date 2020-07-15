@@ -21,6 +21,12 @@ MSK_UTCOFFSET = datetime.now(MSK_TZ).utcoffset()
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 
+class MoveApproved(Task):
+    def run(self):
+        print("Move approved events from table1 and table2 to table3")
+        notion_api.move_approved()
+
+
 class PostingEvent(Task):
     def run(self):
         today = datetime.utcnow()
@@ -163,7 +169,7 @@ def run():
     flow = Flow(
         name="DavaiSNami",
         schedule=schedule,
-        tasks=[PostingEvent(), UpdateEvents()]
+        tasks=[MoveApproved(), PostingEvent(), UpdateEvents()]
     )
 
     flow.run()

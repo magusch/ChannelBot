@@ -111,6 +111,10 @@ def check_explored_date(record, date, days=None):
 
 
 def move_approved():
+    """
+    Moving all approved events (with selected checkbox Approved)
+    from table1 and table2 to table3.
+    """
     rows = (
         list(table1.collection.get_rows())
         + list(table2.collection.get_rows())
