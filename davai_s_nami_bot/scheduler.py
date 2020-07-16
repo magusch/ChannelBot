@@ -39,6 +39,7 @@ class IsEmptyCheck(Task):
     """
     def run(self):
         not_published_count = notion_api.not_published_count()
+        text = None
 
         if not_published_count == 1:
             text = "Warning: last event left."
@@ -48,7 +49,8 @@ class IsEmptyCheck(Task):
                 "Warning: not found events for posting, skip."
             )
 
-        bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
+        if text:
+            bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
 
 class PostingEvent(Task):
