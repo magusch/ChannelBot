@@ -67,7 +67,7 @@ def remove_blank_rows():
             row.remove()
 
 
-def remove_old_events(date):
+def remove_old_events(utc_date, msk_date):
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
@@ -78,15 +78,15 @@ def remove_old_events(date):
 
     tables = (table1, table2, table3)
     check_funcs = (
-        partial(check_for_move_to_table2, date=date, days=2),
-        partial(check_explored_date, date=date, days=7),
+        partial(check_for_move_to_table2, date=msk_date, days=2),
+        partial(check_explored_date, date=msk_date, days=7),
         None,
     )
 
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if in_past(row, target=date):
+            if in_past(row, target=utc_date):
                 remove_row(row)
 
             elif check_func:

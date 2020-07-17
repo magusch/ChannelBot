@@ -88,7 +88,7 @@ class UpdateEvents(Task):
             print("Removing old events from postgresql...")
             database.remove_old_events(utc_today)
             print("Removing old events from notion table...")
-            notion_api.remove_old_events(msk_today + timedelta(hours=1))
+            notion_api.remove_old_events(utc_today, msk_today + timedelta(hours=1))
             print("Done.")
 
             print("Getting new events for next 7 days...")
