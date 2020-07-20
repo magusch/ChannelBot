@@ -50,11 +50,8 @@ def connection_wrapper(func):
     return wrapper
 
 
-def add_events(events, existing_event_ids, explored_date):
+def add_events(events, explored_date):
     for event in events:
-
-        if event.id in existing_event_ids:
-            continue
 
         row = table1.collection.add_row()
 
@@ -85,7 +82,7 @@ def remove_blank_rows():
             row.remove()
 
 
-def remove_old_events(utc_date, msk_date):
+def remove_old_events(removing_ids, msk_date):
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
@@ -104,7 +101,7 @@ def remove_old_events(utc_date, msk_date):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if in_past(row, target=utc_date):
+            if row.get_property("id") in removing_ids:
                 remove_row(row)
 
             elif check_func:

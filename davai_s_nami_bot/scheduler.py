@@ -86,9 +86,11 @@ class UpdateEvents(Task):
             print("Start updating events.")
 
             print("Removing old events from postgresql...")
-            database.remove_old_events(utc_today)
+            removing_ids = database.old_events(utc_today)
+            database.remove(removing_ids)
+
             print("Removing old events from notion table...")
-            notion_api.remove_old_events(utc_today, msk_today + timedelta(hours=1))
+            notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1))
             print("Done.")
 
             print("Getting new events for next 7 days...")
@@ -98,17 +100,16 @@ class UpdateEvents(Task):
             print(f"Done. Collected {event_count} events")
 
             print("Checking for existing events")
-            existing_events_ids = database.get_existing_events_id(today_events)
-            print(f"Existing events count = {len(existing_events_ids)}")
+            new_events_id = database.get_new_events_id(today_events)
 
-            new_events = [i for i in today_events if i.id not in existing_events_ids]
+            new_events = [i for i in today_events if i.id in new_events_id]
             print(f"New evenst count = {len(new_events)}")
 
             print("Start updating postgresql...")
             database.add(new_events)
 
             print("Start updating notion table...")
-            notion_api.add_events(today_events, existing_events_ids, msk_today)
+            notion_api.add_events(new_events, msk_today)
 
             print("Done.")
 
