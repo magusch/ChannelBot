@@ -2,7 +2,10 @@ from datetime import timedelta, datetime
 import random
 import pytz
 import os
+from io import BytesIO
 
+from PIL import Image
+import requests
 from telebot import TeleBot
 from prefect.schedules import filters
 from prefect.schedules.schedules import Schedule
@@ -70,11 +73,28 @@ class PostingEvent(Task):
                         disable_web_page_preview=True,
                     )
                 else:
-                    message = bot.send_photo(
-                        chat_id=CHANNEL_ID,
-                        photo=photo_url,
-                        caption=post,
-                    )
+
+                    with Image.open(BytesIO(requests.get(photo_url).content)) as img:
+                        photo_name = str(event_id)
+                        img.save(photo_name + ".png", "png")
+                        img.save(photo_name + ".jpg", "jpeg")
+
+                        image_size = os.path.getsize(photo_name + ".png") / 1_000_000
+
+                        if image_size > 5:
+                            photo_path = photo_name + ".jpg"
+                        else:
+                            photo_path = photo_name + ".png"
+
+                        with open(photo_path, "rb") as photo:
+                            message = bot.send_photo(
+                                chat_id=CHANNEL_ID,
+                                photo=photo,
+                                caption=post,
+                            )
+
+                        os.remove(photo_name + ".jpg")
+                        os.remove(photo_name + ".png")
 
                 post_id = message.message_id
                 database.update_post_id(event_id, post_id)
@@ -82,7 +102,7 @@ class PostingEvent(Task):
 
 class UpdateEvents(Task):
     def run(self):
-        if utc_today.strftime("%H:%M") == strftime_event_updating:
+        if utc_today.strftime("%H:%M") in strftime_event_updating:
             print("Start updating events.")
 
             print("Removing old events from postgresql...")
@@ -119,7 +139,7 @@ def scheduling_filter(dt):
     return (
         filters.is_weekend(dt) and strftime in strftimes_weekend
         or filters.is_weekday(dt) and strftime in strftimes_weekday
-        or strftime == strftime_event_updating
+        or strftime in strftime_event_updating
     )
 
 
@@ -164,7 +184,7 @@ def run():
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
 
-    strftime_event_updating = get_strftimes([today.replace(hour=00, minute=00)])[0]
+    strftime_event_updating = get_strftimes([today.replace(hour=00, minute=00)])
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 

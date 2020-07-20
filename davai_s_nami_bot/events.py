@@ -1,3 +1,4 @@
+import time
 from collections import Counter
 from datetime import date, timedelta
 
@@ -92,6 +93,8 @@ def next_days(days=1, with_online=True):
         today_events += apply_events_filter(new)
 
         count += new_items
+
+        time.sleep(1)
 
     return unique(today_events)  # checking for unique -- just in case
 

@@ -105,7 +105,7 @@ def get_event_by_id(event_id):
         )
 
     return namedtuple("event", ALL_EVENT_TAGS)(
-        **{key: val for key, val in zip(ALL_EVENT_TAGS, values)}
+        **{key: val for key, val in zip(ALL_EVENT_TAGS, values[0])}
     )
 
 

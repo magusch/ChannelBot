@@ -138,4 +138,4 @@ def create(event_id):
     post_text = event.post_text.strip()
     full_text = title + post_text + footer
 
-    return event.poster_imag, full_text
+    return "http://" + event.poster_imag, full_text
