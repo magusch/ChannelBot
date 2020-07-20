@@ -1,4 +1,5 @@
 from datetime import timedelta, datetime
+import logging
 import random
 import pytz
 import os
@@ -7,6 +8,8 @@ from io import BytesIO
 from PIL import Image
 import requests
 from telebot import TeleBot
+import prefect
+from prefect.core import Edge
 from prefect.schedules import filters
 from prefect.schedules.schedules import Schedule
 from prefect.schedules.clocks import IntervalClock
@@ -24,15 +27,18 @@ MSK_UTCOFFSET = datetime.now(MSK_TZ).utcoffset()
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
 bot = TeleBot(token=get_token(), parse_mode="Markdown")
+LOG_FILE = "bot_logs.txt"
 
 
 class MoveApproved(Task):
     def run(self):
+        log = prefect.utilities.logging.get_logger("TaskRunner.MoveApproved")
+
         global utc_today, msk_today
         utc_today = datetime.utcnow()
         msk_today = datetime.now()
 
-        print("Move approved events from table1 and table2 to table3")
+        log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved()
 
 
@@ -49,7 +55,7 @@ class IsEmptyCheck(Task):
 
         elif not_published_count == 0:
             text = (
-                "Warning: not found events for posting, skip."
+                "Warning: not found events for posting."
             )
 
         if text:
@@ -58,8 +64,10 @@ class IsEmptyCheck(Task):
 
 class PostingEvent(Task):
     def run(self):
+        log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
+
         if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
-            print("Generating post.")
+            log.info("Generating post.")
 
             event_id = notion_api.next_event_id_to_channel()
 
@@ -102,36 +110,44 @@ class PostingEvent(Task):
 
 class UpdateEvents(Task):
     def run(self):
-        if utc_today.strftime("%H:%M") in strftime_event_updating:
-            print("Start updating events.")
+        log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
 
-            print("Removing old events from postgresql...")
+        if utc_today.strftime("%H:%M") in strftime_event_updating:
+            log.info("Start updating events.")
+
+            log.info("Removing old events from postgresql")
             removing_ids = database.old_events(utc_today)
             database.remove(removing_ids)
 
-            print("Removing old events from notion table...")
+            log.info("Removing old events from notion table")
             notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1))
-            print("Done.")
 
-            print("Getting new events for next 7 days...")
+            log.info("Getting new events for next 7 days")
             today_events = events.next_days(days=7)
 
             event_count = len(today_events)
-            print(f"Done. Collected {event_count} events")
+            log.info(f"Done. Collected {event_count} events")
 
-            print("Checking for existing events")
+            log.info("Checking for existing events")
             new_events_id = database.get_new_events_id(today_events)
 
             new_events = [i for i in today_events if i.id in new_events_id]
-            print(f"New evenst count = {len(new_events)}")
+            log.info(f"New evenst count = {len(new_events)}")
 
-            print("Start updating postgresql...")
+            log.info("Start updating postgresql")
             database.add(new_events)
 
-            print("Start updating notion table...")
+            log.info("Start updating notion table")
             notion_api.add_events(new_events, msk_today)
 
-            print("Done.")
+
+class SendLogs(Task):
+    def run(self):
+        with open(LOG_FILE, "rb") as logs:
+            bot.send_document(DEV_CHANNEL_ID, logs)
+
+        with open(LOG_FILE, "w") as logs:
+            logs.write("")
 
 
 def scheduling_filter(dt):
@@ -184,7 +200,7 @@ def run():
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
 
-    strftime_event_updating = get_strftimes([today.replace(hour=00, minute=00)])
+    strftime_event_updating = get_strftimes(everyday_task_times)
     strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
     strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
 
@@ -214,10 +230,34 @@ def run():
     )
     bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
+    # create tasks graph
+    move_approved = MoveApproved()
+    is_empty_check = IsEmptyCheck()
+    posting_event = PostingEvent()
+    update_events = UpdateEvents()
+    send_logs = SendLogs()
+
+    edges = [
+        Edge(move_approved, is_empty_check),
+        Edge(is_empty_check, posting_event),
+        Edge(posting_event, update_events),
+        Edge(update_events, send_logs),
+    ]
+
     flow = Flow(
         name="DavaiSNami",
         schedule=schedule,
-        tasks=[MoveApproved(), IsEmptyCheck(), PostingEvent(), UpdateEvents()]
+        edges=edges,
     )
+
+    # prepare logging
+    prefect_logger = prefect.utilities.logging.get_logger()
+    formatter = prefect_logger.handlers[0].formatter
+
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+
+    prefect_logger.addHandler(file_handler)
 
     flow.run()
