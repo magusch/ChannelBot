@@ -20,8 +20,9 @@ NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
+MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 
-notion_client = NotionClient(token_v2=NOTION_TOKEN_V2, start_monitoring=True, monitor=True)
+notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
@@ -30,6 +31,23 @@ table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 # (see issue https://github.com/jamalex/notion-py/issues/92)
 for t in [table1, table2, table3]:
     print(t.collection.parent.views)
+
+
+def connection_wrapper(func):
+
+    def wrapper(*args, **kwargs):
+        attempts_count = 0
+        while True:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if attempts_count == MAX_NUMBER_CONNECTION_ATTEMPTS:
+                    raise e
+
+                print("Retry...")
+                attempts_count += 1
+
+    return wrapper
 
 
 def add_events(events, existing_event_ids, explored_date):
@@ -122,34 +140,21 @@ def move_approved():
             move_row(row, table3)
 
 
+@connection_wrapper
 def set_property(row, property_name, value):
-    while True:
-        try:
-            setattr(row, property_name, value)
-            break
-        except requests.exceptions.HTTPError:
-            Warning("Exception while inset to notion table. Retry...")
+    setattr(row, property_name, value)
 
 
+@connection_wrapper
 def remove_row(row):
-    while True:
-        try:
-            row.remove()
-            break
-        except requests.exceptions.HTTPError:
-            Warning("Exception while removing row. Retry...")
+    row.remove()
 
 
 def move_row(row, to_table):
     new_row = to_table.collection.add_row()
 
     for tag in TAGS_TO_NOTION + ["explored_date"]:
-        while True:
-            try:
-                setattr(new_row, tag, row.get_property(tag))
-                break
-            except requests.exceptions.HTTPError:
-                Warning("Exception while moving row. Retry...")
+        set_property(new_row, tag, row.get_property(tag))
 
     remove_row(row)
 
