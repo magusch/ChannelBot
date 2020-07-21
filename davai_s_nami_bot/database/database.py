@@ -70,14 +70,20 @@ def _get(script):
     db_cursor = get_db_cursor()
     db_cursor.execute(script)
 
-    return db_cursor.fetchall()
+    values = db_cursor.fetchall()
+
+    db_cursor.close()
+
+    return values
 
 
 def get_new_events_id(events):
     db_cursor = get_db_cursor()
 
-    db_cursor.execute("SELECT id FROM events")
+    db_cursor.execute("SELECT id FROM events")(
     database_ids = [i[0] for i in db_cursor.fetchall()]
+
+    db_cursor.close()
 
     new_events_id = list()
 
@@ -126,7 +132,11 @@ def old_events(date):
     script = "SELECT id FROM events WHERE date_from < cast(%s as TIMESTAMP)"
     db_cursor.execute(script, [date])
 
-    return [i[0] for i in db_cursor.fetchall()]
+    events_id = [i[0] for i in db_cursor.fetchall()]
+
+    db_cursor.close()
+
+    return events_id
 
 
 def remove(events_id):

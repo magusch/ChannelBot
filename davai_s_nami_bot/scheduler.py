@@ -153,8 +153,9 @@ class Formatter(logging.Formatter):
             message = record.message[:-25]
 
             dt = datetime.strptime(str_time, "%Y-%m-%dT%H:%M:%S%z") + MSK_UTCOFFSET
-
             message += dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+            bot.send_message(DEV_CHANNEL_ID, text=message)
 
         else:
             message = record.message
@@ -263,12 +264,6 @@ def run():
     ]
 
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
-
-    text = (
-        "I'm running. First scheduled task in {} (MSK)"
-        .format(schedule.next(1)[0].astimezone(MSK_TZ).strftime("%H:%M"))
-    )
-    bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
     # create tasks graph
     move_approved = MoveApproved()
