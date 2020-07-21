@@ -39,7 +39,7 @@ class MoveApproved(Task):
         msk_today = datetime.now()
 
         log.info("Move approved events from table1 and table2 to table3")
-        notion_api.move_approved()
+        notion_api.move_approved(log=log)
 
 
 class IsEmptyCheck(Task):
@@ -120,10 +120,10 @@ class UpdateEvents(Task):
             database.remove(removing_ids)
 
             log.info("Removing old events from notion table")
-            notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1))
+            notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
 
             log.info("Getting new events for next 7 days")
-            today_events = events.next_days(days=7)
+            today_events = events.next_days(days=7, log=log)
 
             event_count = len(today_events)
             log.info(f"Done. Collected {event_count} events")
@@ -138,7 +138,47 @@ class UpdateEvents(Task):
             database.add(new_events)
 
             log.info("Start updating notion table")
-            notion_api.add_events(new_events, msk_today)
+            notion_api.add_events(new_events, msk_today, log=log)
+
+
+class Formatter(logging.Formatter):
+    def converter(self, timestamp):
+        dt = datetime.fromtimestamp(timestamp)
+
+        return MSK_TZ.localize(dt)
+
+    def format(self, record):
+        if record.name == "prefect.DavaiSNami":
+            str_time = record.message[-25:]
+            message = record.message[:-25]
+
+            dt = datetime.strptime(str_time, "%Y-%m-%dT%H:%M:%S%z") + MSK_UTCOFFSET
+
+            message += dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        else:
+            message = record.message
+
+        if record.exc_info:
+            message += record.exc_text
+
+        return self._fmt % dict(
+            asctime=self.formatTime(record),
+            levelname=record.levelname,
+            name=record.name,
+            message=message,
+        )
+
+    def formatTime(self, record, datefmt="%Y-%m-%dT%H:%M:%S"):
+        dt = self.converter(record.created)
+        if datefmt:
+            s = dt.strftime(datefmt)
+        else:
+            try:
+                s = dt.isoformat(timespec="milliseconds")
+            except TypeError:
+                s = dt.isoformat()
+        return s
 
 
 class SendLogs(Task):
@@ -252,7 +292,8 @@ def run():
 
     # prepare logging
     prefect_logger = prefect.utilities.logging.get_logger()
-    formatter = prefect_logger.handlers[0].formatter
+    prefect_formatter = prefect_logger.handlers[0].formatter
+    formatter = Formatter(prefect_formatter._fmt)
 
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.DEBUG)

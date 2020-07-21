@@ -35,7 +35,7 @@ for t in [table1, table2, table3]:
 
 def connection_wrapper(func):
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args, log=None, **kwargs):
         attempts_count = 0
         while True:
             try:
@@ -44,13 +44,13 @@ def connection_wrapper(func):
                 if attempts_count == MAX_NUMBER_CONNECTION_ATTEMPTS:
                     raise e
 
-                print("Retry...")
+                log.warning(f"Retry (raised exception):\n", exc_info=True)
                 attempts_count += 1
 
     return wrapper
 
 
-def add_events(events, explored_date):
+def add_events(events, explored_date, log=None):
     for event in events:
 
         row = table1.collection.add_row()
@@ -60,6 +60,7 @@ def add_events(events, explored_date):
                 row=row,
                 property_name=tag,
                 value=getattr(event, tag),
+                log=log,
             )
 
         # event not contain explored_date field
@@ -67,10 +68,11 @@ def add_events(events, explored_date):
             row=row,
             property_name="explored_date",
             value=explored_date,
+            log=log,
         )
 
 
-def remove_blank_rows():
+def remove_blank_rows(log=None):
     rows = (
         list(table1.collection.get_rows())
         + list(table2.collection.get_rows())
@@ -79,22 +81,22 @@ def remove_blank_rows():
 
     for row in rows:
         if row.get_property("id") is None:
-            row.remove()
+            remove_row(row, log=log)
 
 
-def remove_old_events(removing_ids, msk_date):
+def remove_old_events(removing_ids, msk_date, log=None):
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
         - from table 2, where explored date > 7 days ago
         - from tables 1, 2, 3, where date_from < today
     """
-    remove_blank_rows()
+    remove_blank_rows(log=log)
 
     tables = (table1, table2, table3)
     check_funcs = (
-        partial(check_for_move_to_table2, date=msk_date, days=2),
-        partial(check_explored_date, date=msk_date, days=7),
+        partial(check_for_move_to_table2, date=msk_date, days=2, log=log),
+        partial(check_explored_date, date=msk_date, days=7, log=log),
         None,
     )
 
@@ -102,27 +104,27 @@ def remove_old_events(removing_ids, msk_date):
 
         for row in table.collection.get_rows():
             if row.get_property("id") in removing_ids:
-                remove_row(row)
+                remove_row(row, log=log)
 
             elif check_func:
-                check_func(row)
+                check_func(row, log=log)
 
 
 def in_past(record, target):
     return record.Date_from.start < target
 
 
-def check_for_move_to_table2(record, date, days=None):
+def check_for_move_to_table2(record, date, days=None, log=None):
     if record.explored_date.start + datetime.timedelta(days=days) < date:
-        move_row(record, table2)
+        move_row(record, table2, log=log)
 
 
-def check_explored_date(record, date, days=None):
+def check_explored_date(record, date, days=None, log=None):
     if record.explored_date.start + datetime.timedelta(days=days) < date:
-        remove_row(record)
+        remove_row(record, log=log)
 
 
-def move_approved():
+def move_approved(log=None):
     """
     Moving all approved events (with selected checkbox Approved)
     from table1 and table2 to table3.
@@ -134,7 +136,7 @@ def move_approved():
 
     for row in rows:
         if row.Approved:
-            move_row(row, table3)
+            move_row(row, table3, log=log)
 
 
 @connection_wrapper
@@ -147,13 +149,13 @@ def remove_row(row):
     row.remove()
 
 
-def move_row(row, to_table):
+def move_row(row, to_table, log=None):
     new_row = to_table.collection.add_row()
 
     for tag in TAGS_TO_NOTION + ["explored_date"]:
-        set_property(new_row, tag, row.get_property(tag))
+        set_property(new_row, tag, row.get_property(tag), log=log)
 
-    remove_row(row)
+    remove_row(row, log=log)
 
 
 def next_event_id_to_channel():

@@ -57,7 +57,7 @@ def _get(*args, **kwargs):
     return timepad_parser.get_events(*args, **kwargs)
 
 
-def next_days(days=1, with_online=True):
+def next_days(days=1, with_online=True, log=None):
     """
     Getting events for next few days.
     """
@@ -87,7 +87,7 @@ def next_days(days=1, with_online=True):
     while new_items > 0:
         request_params["skip"] = count
 
-        new = _get(request_params=request_params, tags=ALL_EVENT_TAGS)
+        new = _get(request_params=request_params, tags=ALL_EVENT_TAGS, log=log)
         new_items = len(new)
 
         today_events += apply_events_filter(new)
