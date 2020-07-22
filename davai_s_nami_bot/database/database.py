@@ -80,7 +80,7 @@ def _get(script):
 def get_new_events_id(events):
     db_cursor = get_db_cursor()
 
-    db_cursor.execute("SELECT id FROM events")(
+    db_cursor.execute("SELECT id FROM events")
     database_ids = [i[0] for i in db_cursor.fetchall()]
 
     db_cursor.close()
@@ -149,3 +149,8 @@ def update_post_id(event_id, post_id):
     script = "UPDATE events SET post_id = %s WHERE id = %s"
 
     _insert(script, [post_id, event_id])
+
+
+def events_count():
+    script = "SELECT id FROM events"
+    return len(_get(script))

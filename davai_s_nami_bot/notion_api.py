@@ -181,3 +181,12 @@ def not_published_count():
         count += not row.is_published
 
     return count
+
+
+def events_count():
+    count = 0
+
+    for table in [table1, table2, table3]:
+        count += len(table.collection.get_rows())
+
+    return count

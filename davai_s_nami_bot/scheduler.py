@@ -140,6 +140,15 @@ class UpdateEvents(Task):
             log.info("Start updating notion table")
             notion_api.add_events(new_events, msk_today, log=log)
 
+            db_count = database.events_count()
+            notion_count = notion_api.events_count()
+
+            log.info(f"Events count in database: {db_count}")
+            log.info(f"Events count in notion table: {notion_count}")
+
+            if db_count != notion_count:
+                log.warn("The number of events does not match.")
+
 
 class Formatter(logging.Formatter):
     def converter(self, timestamp):

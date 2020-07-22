@@ -1,5 +1,6 @@
 from .database import (
     add,
+    events_count,
     get_new_events_id,
     old_events,
     remove,
