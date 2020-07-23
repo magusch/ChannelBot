@@ -151,6 +151,13 @@ class UpdateEvents(Task):
 
 
 class Formatter(logging.Formatter):
+    def send_logs(self):
+        with open(LOG_FILE, "rb") as logs:
+            bot.send_document(DEV_CHANNEL_ID, logs)
+
+        with open(LOG_FILE, "w") as logs:
+            logs.write("")
+
     def converter(self, timestamp):
         dt = datetime.fromtimestamp(timestamp)
 
@@ -165,12 +172,14 @@ class Formatter(logging.Formatter):
             message += dt.strftime("%Y-%m-%dT%H:%M:%S")
 
             bot.send_message(DEV_CHANNEL_ID, text=message)
+            self.send_logs()
 
         else:
             message = record.message
 
         if record.exc_info:
             message += record.exc_text
+
 
         return self._fmt % dict(
             asctime=self.formatTime(record),
@@ -189,15 +198,6 @@ class Formatter(logging.Formatter):
             except TypeError:
                 s = dt.isoformat()
         return s
-
-
-class SendLogs(Task):
-    def run(self):
-        with open(LOG_FILE, "rb") as logs:
-            bot.send_document(DEV_CHANNEL_ID, logs)
-
-        with open(LOG_FILE, "w") as logs:
-            logs.write("")
 
 
 def scheduling_filter(dt):
@@ -279,13 +279,11 @@ def run():
     is_empty_check = IsEmptyCheck()
     posting_event = PostingEvent()
     update_events = UpdateEvents()
-    send_logs = SendLogs()
 
     edges = [
         Edge(move_approved, is_empty_check),
         Edge(is_empty_check, posting_event),
         Edge(posting_event, update_events),
-        Edge(update_events, send_logs),
     ]
 
     flow = Flow(
