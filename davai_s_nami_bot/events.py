@@ -1,7 +1,10 @@
+import time
 from collections import Counter
 from datetime import date, timedelta
 
 from escraper.parsers import Timepad, ALL_EVENT_TAGS
+
+from .notion_api import connection_wrapper
 
 
 BAD_KEYWORDS = (
@@ -49,7 +52,12 @@ def apply_events_filter(events):
     return good_events
 
 
-def next_days(days=1, with_online=True):
+@connection_wrapper
+def _get(*args, **kwargs):
+    return timepad_parser.get_events(*args, **kwargs)
+
+
+def next_days(days=1, with_online=True, log=None):
     """
     Getting events for next few days.
     """
@@ -78,14 +86,15 @@ def next_days(days=1, with_online=True):
     new_items = 1
     while new_items > 0:
         request_params["skip"] = count
-        new = timepad_parser.get_events(
-            request_params=request_params, tags=ALL_EVENT_TAGS
-        )
+
+        new = _get(request_params=request_params, tags=ALL_EVENT_TAGS, log=log)
         new_items = len(new)
 
         today_events += apply_events_filter(new)
 
         count += new_items
+
+        time.sleep(1)
 
     return unique(today_events)  # checking for unique -- just in case
 

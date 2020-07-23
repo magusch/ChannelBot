@@ -50,7 +50,7 @@ def _insert(script, data):
     Parameters:
     -----------
 
-    data : list of lists
+    data : list of values
         inserting data
 
     script : str
@@ -70,22 +70,28 @@ def _get(script):
     db_cursor = get_db_cursor()
     db_cursor.execute(script)
 
-    return db_cursor.fetchall()
+    values = db_cursor.fetchall()
+
+    db_cursor.close()
+
+    return values
 
 
-def get_existing_events_id(events):
+def get_new_events_id(events):
     db_cursor = get_db_cursor()
 
     db_cursor.execute("SELECT id FROM events")
     database_ids = [i[0] for i in db_cursor.fetchall()]
 
-    existing_events_id = list()
+    db_cursor.close()
+
+    new_events_id = list()
 
     for event in events:
-        if event.id in database_ids:
-            existing_events_id.append(event.id)
+        if event.id not in database_ids:
+            new_events_id.append(event.id)
 
-    return existing_events_id
+    return new_events_id
 
 
 def get_event_by_id(event_id):
@@ -96,10 +102,16 @@ def get_event_by_id(event_id):
             id=event_id,
         )
     )
-    values = _get(script)[0]
+    values = _get(script)
+
+    if not values:
+        raise TypeError(
+            f"Event id {event_id} not found in database, because "
+            "events in the notion table and in the database does not match"
+        )
 
     return namedtuple("event", ALL_EVENT_TAGS)(
-        **{key: val for key, val in zip(ALL_EVENT_TAGS, values)}
+        **{key: val for key, val in zip(ALL_EVENT_TAGS, values[0])}
     )
 
 
@@ -115,9 +127,31 @@ def add(events):
         _insert(script, [getattr(event, column) for column in ALL_EVENT_TAGS])
 
 
-def remove_old_events(date):
-    script = "DELETE FROM events WHERE date_from < cast(%s as TIMESTAMP)"
+def old_events(date):
+    db_cursor = get_db_cursor()
+    script = "SELECT id FROM events WHERE date_from < cast(%s as TIMESTAMP)"
+    db_cursor.execute(script, [date])
 
+    events_id = [i[0] for i in db_cursor.fetchall()]
+
+    db_cursor.close()
+
+    return events_id
+
+
+def remove(events_id):
+    for event in events_id:
+        script = "DELETE FROM events WHERE id = %s"
+        _insert(script, [event])
+
+
+def update_post_id(event_id, post_id):
+    script = "UPDATE events SET post_id = %s WHERE id = %s"
+
+    _insert(script, [post_id, event_id])
+
+
+<<<<<<< HEAD
     _insert(script, [date])
 
 
@@ -125,3 +159,8 @@ def update_post_id(event_id, post_id):
     script = "UPDATE events SET post_id = %s WHERE id = %s"
         
     _insert(script, [post_id, event_id])
+=======
+def events_count():
+    script = "SELECT id FROM events"
+    return len(_get(script))
+>>>>>>> ff13c456a0d855ae4d5987dc084422f42464cbaf
