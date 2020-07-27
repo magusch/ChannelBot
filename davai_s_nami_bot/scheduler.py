@@ -1,10 +1,10 @@
 from datetime import timedelta, datetime
 import logging
-import random
 import pytz
 import os
 from io import BytesIO
 
+import PIL
 from PIL import Image
 import requests
 from telebot import TeleBot
@@ -28,6 +28,7 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID")
 DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
 bot = TeleBot(token=get_token(), parse_mode="Markdown")
 LOG_FILE = "bot_logs.txt"
+maxsize = (1920, 1080)
 
 
 class MoveApproved(Task):
@@ -51,7 +52,7 @@ class IsEmptyCheck(Task):
         text = None
 
         if not_published_count == 1:
-            text = "Warning: last event left."
+            text = "Warning: posting last event."
 
         elif not_published_count == 0:
             text = (
@@ -80,11 +81,16 @@ class PostingEvent(Task):
                         text=post,
                         disable_web_page_preview=True,
                     )
-                else:
 
+                else:
                     with Image.open(BytesIO(requests.get(photo_url).content)) as img:
                         photo_name = str(event_id)
+                        img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+
                         img.save(photo_name + ".png", "png")
+                        if img.mode == "RGBA":
+                            # jpeg does not support transparency
+                            img = img.convert("RGB")
                         img.save(photo_name + ".jpg", "jpeg")
 
                         image_size = os.path.getsize(photo_name + ".png") / 1_000_000
@@ -152,11 +158,10 @@ class UpdateEvents(Task):
 
 class Formatter(logging.Formatter):
     def send_logs(self):
-        with open(LOG_FILE, "rb") as logs:
+        with open(LOG_FILE, "r+b") as logs:
             bot.send_document(DEV_CHANNEL_ID, logs)
-
-        with open(LOG_FILE, "w") as logs:
-            logs.write("")
+            logs.truncate(0)
+            logs.write(b"")
 
     def converter(self, timestamp):
         dt = datetime.fromtimestamp(timestamp)
