@@ -115,36 +115,47 @@ class PostingEvent(Task):
 
 
 class UpdateEvents(Task):
+    def remove_old(self, log):
+        log.info("Removing old events from postgresql")
+        removing_ids = database.old_events(utc_today)
+        database.remove(removing_ids)
+
+        log.info("Removing old events from notion table")
+        notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
+
+
+    def update_events(self, events, log):
+        log.info("Checking for existing events")
+        new_events_id = database.get_new_events_id(events)
+
+        new_events = [i for i in events if i.id in new_events_id]
+        log.info(f"New evenst count = {len(new_events)}")
+
+        log.info("Updating postgresql")
+        database.add(new_events)
+
+        log.info("Updating notion table")
+        notion_api.add_events(new_events, msk_today, log=log)
+
     def run(self):
         log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
 
         if utc_today.strftime("%H:%M") in strftime_event_updating:
             log.info("Start updating events.")
 
-            log.info("Removing old events from postgresql")
-            removing_ids = database.old_events(utc_today)
-            database.remove(removing_ids)
+            self.remove_old(log)
 
-            log.info("Removing old events from notion table")
-            notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
+            log.info("Getting events from approved organizations for nexe 7 days")
+            approved_events = events.from_approved_organizations(days=7, log=log)
+            log.info(f"Collected {len(approved_events)} approved events.")
 
-            log.info("Getting new events for next 7 days")
-            today_events = events.next_days(days=7, log=log)
+            self.update_events(approved_events)
 
-            event_count = len(today_events)
-            log.info(f"Done. Collected {event_count} events")
+            log.info("Getting new events from other organizations for next 7 days")
+            other_events = events.from_not_approved_organizations(days=7, log=log)
+            log.info(f"Collected {len(other_events)} events")
 
-            log.info("Checking for existing events")
-            new_events_id = database.get_new_events_id(today_events)
-
-            new_events = [i for i in today_events if i.id in new_events_id]
-            log.info(f"New evenst count = {len(new_events)}")
-
-            log.info("Start updating postgresql")
-            database.add(new_events)
-
-            log.info("Start updating notion table")
-            notion_api.add_events(new_events, msk_today, log=log)
+            self.update_events(other_events)
 
             db_count = database.events_count()
             notion_count = notion_api.events_count()

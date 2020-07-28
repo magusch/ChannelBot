@@ -1,13 +1,19 @@
 import os
 from collections import namedtuple
-from functools import lru_cache
-import warnings
 
 import psycopg2
 from escraper.parsers import ALL_EVENT_TAGS
 
 
-__all__ = ("add", "update")
+__all__ = (
+    "add",
+    "events_count",
+    "get_event_by_id",
+    "get_new_events_id",
+    "old_events",
+    "update_post_id",
+    "remove",
+)
 
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
@@ -123,8 +129,12 @@ def add(events):
         "(%s, %s, cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
 
+    data = list()
+
     for event in events:
-        _insert(script, [getattr(event, column) for column in ALL_EVENT_TAGS])
+        data.append([getattr(event, column) for column in ALL_EVENT_TAGS])
+
+    _insert(script, data)
 
 
 def old_events(date):
@@ -140,9 +150,12 @@ def old_events(date):
 
 
 def remove(events_id):
-    for event in events_id:
-        script = "DELETE FROM events WHERE id = %s"
-        _insert(script, [event])
+    script = (
+        "DELETE FROM events WHERE id IN {}"
+        .format(["%, " for _ in events_id])
+    )
+
+    _insert(script, [events_id])
 
 
 def update_post_id(event_id, post_id):
