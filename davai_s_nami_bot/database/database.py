@@ -126,15 +126,16 @@ def add(events):
     script = (
         "INSERT INTO events "
         f"({', '.join(ALL_EVENT_TAGS)}) values "
-        "(%s, %s, cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    )
+         + "(%s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s), " * len(events)
+    )[:-2]
 
     data = list()
 
     for event in events:
-        data.append([getattr(event, column) for column in ALL_EVENT_TAGS])
+        data += [getattr(event, column) for column in ALL_EVENT_TAGS])
 
-    _insert(script, data)
+    if data:
+        _insert(script, data)
 
 
 def old_events(date):
@@ -150,12 +151,13 @@ def old_events(date):
 
 
 def remove(events_id):
-    script = (
-        "DELETE FROM events WHERE id IN {}"
-        .format(["%, " for _ in events_id])
-    )
+    if events_id:
+        script = (
+            "DELETE FROM events WHERE id IN ({})"
+            .format("".join(["%s, " for _ in events_id])[:-2])
+        )
 
-    _insert(script, [events_id])
+        _insert(script, events_id)
 
 
 def update_post_id(event_id, post_id):

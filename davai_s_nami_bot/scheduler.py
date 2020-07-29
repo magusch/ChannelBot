@@ -117,7 +117,7 @@ class PostingEvent(Task):
 class UpdateEvents(Task):
     def remove_old(self, log):
         log.info("Removing old events from postgresql")
-        removing_ids = database.old_events(utc_today)
+        removing_ids = database.old_events(msk_today)
         database.remove(removing_ids)
 
         log.info("Removing old events from notion table")
