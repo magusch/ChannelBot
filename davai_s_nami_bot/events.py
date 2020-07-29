@@ -14,14 +14,47 @@ BAD_KEYWORDS = (
     "HR",
     "консультация",
 )
-TIMEPAD_PARAMS = dict(
+APPROVED_ORGANIZATIONS = [
+    "57992",  # Манеж
+    "79462",  # Новая Голландия
+    "42587",  # Молодёжный центр Эрмитажа
+    "186669",  # musicAeterna
+    "109981",  # ГЦСИ в Санкт-Петербурге
+    "67092",  # Музей советских игровых автоматов
+    "43027",  # Театр-студия
+    "78132",  # Театр-фестиваль «Балтийский дом»
+    "75134",  # Ленфильм
+]
+CATEGORY_IDS_EXCLUDE = [
+    "217",  # Бизнесс
+    "376",  # Спорт
+    "379",  # Для детей
+    "399",  # Красота и здоровье
+    "453",  # Психология и самопознание
+    "1315",  # Образование за рубежом
+    "452",  # ИТ и интернет
+    "382",  # Иностранные языки
+    "2335",  # Интеллектуальные игры
+    "524",  # Хобби и творчество
+    "462",  # Другие события
+]
+TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
-    price_max=500,
     starts_at_min="{year_month_day}T11:00:00",
     starts_at_max="{year_month_day}T23:59:00",
-    category_ids_exclude="217, 376, 379, 399, 453, 1315, 452, 382, 2335, 524, 462",
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
+    organization_ids=", ".join(APPROVED_ORGANIZATIONS),
+)
+TIMEPAD_OTHERS_PARAMS = dict(
+    limit=100,
+    starts_at_min="{year_month_day}T11:00:00",
+    starts_at_max="{year_month_day}T23:59:00",
+    cities="Санкт-Петербург",
+    moderation_statuses="featured, shown",
+    organization_ids_exclude=", ".join(APPROVED_ORGANIZATIONS),
+    price_max=500,
+    category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
 MAX_NEXT_DAYS = 30
@@ -29,7 +62,7 @@ two_days = timedelta(days=2)
 timepad_parser = Timepad()
 
 
-def apply_events_filter(events):
+def not_approved_organization_filter(events):
     """
     Remove events:
     - with bad-keywords
@@ -43,8 +76,24 @@ def apply_events_filter(events):
             or "финанс" in event.title.lower()
             or not event.is_registration_open
             or (event.date_to is not None and event.date_to - event.date_from > two_days)
-            or event.poster_imag==None
+            or event.poster_imag == None
         ):
+            continue
+
+        good_events.append(event)
+
+    return good_events
+
+
+def approved_organization_filter(events):
+    """
+    Remove events:
+    - with closed registration
+    """
+    good_events = list()
+
+    for event in events:
+        if not event.is_registration_open:
             continue
 
         good_events.append(event)
@@ -57,17 +106,38 @@ def _get(*args, **kwargs):
     return timepad_parser.get_events(*args, **kwargs)
 
 
-def next_days(days=1, with_online=True, log=None):
+def from_approved_organizations(days, log, **kwargs):
     """
-    Getting events for next few days.
+    Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
+    """
+    return get_events(
+        days,
+        TIMEPAD_APPROVED_PARAMS,
+        log,
+        events_filter=approved_organization_filter,
+        **kwargs,
+    )
+
+
+def from_not_approved_organizations(days, log, **kwargs):
+    return get_events(
+        days,
+        TIMEPAD_OTHERS_PARAMS,
+        log,
+        events_filter=not_approved_organization_filter,
+        **kwargs,
+    )
+
+
+def get_events(days, request_params, log, events_filter=None, with_online=True):
+    """
+    Getting events.
     """
     if days > MAX_NEXT_DAYS:
         raise ValueError(
             f"Too much days for getting events: {days}."
             f"Maximum is {MAX_NEXT_DAYS} days."
         )
-
-    request_params = TIMEPAD_PARAMS.copy()
 
     today = date.today()
     request_params["starts_at_min"] = request_params["starts_at_min"].format(
@@ -90,11 +160,13 @@ def next_days(days=1, with_online=True, log=None):
         new = _get(request_params=request_params, tags=ALL_EVENT_TAGS, log=log)
         new_items = len(new)
 
-        today_events += apply_events_filter(new)
-
+        today_events += new
         count += new_items
 
         time.sleep(1)
+
+    if events_filter:
+        today_events = events_filter(today_events)
 
     return unique(today_events)  # checking for unique -- just in case
 

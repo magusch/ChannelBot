@@ -27,11 +27,6 @@ table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 
-# 💫 some magic 💫
-# (see issue https://github.com/jamalex/notion-py/issues/92)
-for t in [table1, table2, table3]:
-    print(t.collection.parent.views)
-
 
 def connection_wrapper(func):
 
@@ -190,3 +185,10 @@ def events_count():
         count += len(table.collection.get_rows())
 
     return count
+
+
+def update_table_views():
+    # 💫 some magic 💫
+    # (see issue https://github.com/jamalex/notion-py/issues/92)
+    for t in [table1, table2, table3]:
+        print(t.collection.parent.views)
