@@ -33,6 +33,9 @@ maxsize = (1920, 1080)
 
 class MoveApproved(Task):
     def run(self):
+        # in case changed table views
+        notion_api.update_table_views()
+
         log = prefect.utilities.logging.get_logger("TaskRunner.MoveApproved")
 
         global utc_today, msk_today
