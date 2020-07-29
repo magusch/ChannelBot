@@ -145,17 +145,17 @@ class UpdateEvents(Task):
 
             self.remove_old(log)
 
-            log.info("Getting events from approved organizations for nexe 7 days")
+            log.info("Getting events from approved organizations for next 7 days")
             approved_events = events.from_approved_organizations(days=7, log=log)
             log.info(f"Collected {len(approved_events)} approved events.")
 
-            self.update_events(approved_events)
+            self.update_events(approved_events, log)
 
             log.info("Getting new events from other organizations for next 7 days")
             other_events = events.from_not_approved_organizations(days=7, log=log)
             log.info(f"Collected {len(other_events)} events")
 
-            self.update_events(other_events)
+            self.update_events(other_events, log)
 
             db_count = database.events_count()
             notion_count = notion_api.events_count()

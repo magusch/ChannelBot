@@ -112,7 +112,7 @@ def from_approved_organizations(days, log, **kwargs):
     """
     return get_events(
         days,
-        APPROVED_ORGANIZATIONS,
+        TIMEPAD_APPROVED_PARAMS,
         log,
         events_filter=approved_organization_filter,
         **kwargs,
