@@ -127,7 +127,7 @@ class UpdateEvents(Task):
         notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
 
 
-    def update_events(self, events, log):
+    def update_events(self, events, log, table=None):
         log.info("Checking for existing events")
         new_events_id = database.get_new_events_id(events)
 
@@ -138,7 +138,7 @@ class UpdateEvents(Task):
         database.add(new_events)
 
         log.info("Updating notion table")
-        notion_api.add_events(new_events, msk_today, log=log)
+        notion_api.add_events(new_events, msk_today, table=table, log=log)
 
     def run(self):
         log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
@@ -152,13 +152,13 @@ class UpdateEvents(Task):
             approved_events = events.from_approved_organizations(days=7, log=log)
             log.info(f"Collected {len(approved_events)} approved events.")
 
-            self.update_events(approved_events, log)
+            self.update_events(approved_events, log, table=notion_api.table3)
 
             log.info("Getting new events from other organizations for next 7 days")
             other_events = events.from_not_approved_organizations(days=7, log=log)
             log.info(f"Collected {len(other_events)} events")
 
-            self.update_events(other_events, log)
+            self.update_events(other_events, log, table=notion_api.table1)
 
             db_count = database.events_count()
             notion_count = notion_api.events_count()

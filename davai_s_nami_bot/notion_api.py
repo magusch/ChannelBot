@@ -45,10 +45,12 @@ def connection_wrapper(func):
     return wrapper
 
 
-def add_events(events, explored_date, log=None):
+def add_events(events, explored_date, table=None, log=None):
+    table = table or table1
+
     for event in events:
 
-        row = table1.collection.add_row()
+        row = table.collection.add_row()
 
         for tag in TAGS_TO_NOTION:
             set_property(

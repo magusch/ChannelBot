@@ -126,16 +126,19 @@ def add(events):
     script = (
         "INSERT INTO events "
         f"({', '.join(ALL_EVENT_TAGS)}) values "
-         + "(%s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s), " * len(events)
-    )[:-2]
+    )
+    placeholder = (
+        "(%s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), "
+        "%s, %s, %s, %s, %s, %s, %s, %s), "
+    )
 
     data = list()
 
     for event in events:
-        data += [getattr(event, column) for column in ALL_EVENT_TAGS])
+        data += [getattr(event, column) for column in ALL_EVENT_TAGS]
 
     if data:
-        _insert(script, data)
+        _insert(script + (placeholder * len(events))[:-2], data)
 
 
 def old_events(date):
