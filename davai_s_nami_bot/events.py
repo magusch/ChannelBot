@@ -25,6 +25,14 @@ APPROVED_ORGANIZATIONS = [
     "78132",  # Театр-фестиваль «Балтийский дом»
     "75134",  # Ленфильм
 ]
+
+UNAPPROVED_ORGANIZATIONS = [
+    "185394", #Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
+    "106118", #АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
+    "212547", #Иерусалимская Сказка
+    "146675", #Корни и Крылья https://korni-i-krylya.timepad.ru
+]
+
 CATEGORY_IDS_EXCLUDE = [
     "217",  # Бизнесс
     "376",  # Спорт
@@ -36,6 +44,7 @@ CATEGORY_IDS_EXCLUDE = [
     "382",  # Иностранные языки
     "2335",  # Интеллектуальные игры
     "524",  # Хобби и творчество
+    "461",  # Экскурсии и путешествия
     "462",  # Другие события
 ]
 TIMEPAD_APPROVED_PARAMS = dict(
@@ -52,7 +61,7 @@ TIMEPAD_OTHERS_PARAMS = dict(
     starts_at_max="{year_month_day}T23:59:00",
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
-    organization_ids_exclude=", ".join(APPROVED_ORGANIZATIONS),
+    organization_ids_exclude=", ".join(APPROVED_ORGANIZATIONS)+", " + ", ".join(UNAPPROVED_ORGANIZATIONS)      ,
     price_max=500,
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
