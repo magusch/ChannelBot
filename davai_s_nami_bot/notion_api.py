@@ -60,11 +60,17 @@ def add_events(events, explored_date, table=None, log=None):
                 log=log,
             )
 
-        # event not contain explored_date field
+        # event not contain explored_date and status fields
         set_property(
             row=row,
             property_name="explored_date",
             value=explored_date,
+            log=log,
+        )
+        set_property(
+            row=row,
+            property_name="status",
+            value="ready to post",
             log=log,
         )
 
@@ -164,9 +170,17 @@ def next_event_id_to_channel():
 
     for row in rows:
         if not row.is_published:
-            event_id = row.get_property("id")
-            row.is_published = True
-            break
+            if row.status == "ready to post":
+                event_id = row.get_property("id")
+                row.is_published = True
+                row.status = "posted"
+                break
+
+            elif row.status == "ready to skiped posting time":
+                event_id = None
+
+            else:
+                raise ValueError(f"Unavailable posting status: {row.status}")
 
     return event_id
 
@@ -191,6 +205,7 @@ def events_count():
 
 def update_table_views():
     # 💫 some magic 💫
+    # WARNING: if running background, need `> /dev/null`
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)

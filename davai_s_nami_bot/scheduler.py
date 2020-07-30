@@ -31,20 +31,97 @@ LOG_FILE = "bot_logs.txt"
 maxsize = (1920, 1080)
 
 
-class MoveApproved(Task):
-    def run(self):
-        # in case changed table views
-        notion_api.update_table_views()
-
-        log = prefect.utilities.logging.get_logger("TaskRunner.MoveApproved")
-
+class PrepareEvents(Task):
+    def update_today_time(self):
         global utc_today, msk_today
         utc_today = datetime.utcnow()
         msk_today = datetime.now()
 
+    def move_approved(self, log):
         log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=log)
 
+    def check_status(self, log):
+        """
+        Checking event status in table3 and update posting time.
+        """
+        log.info("Check events posting status")
+
+        posting_datetimes = self.posting_datetimes()
+        for row in notion_api.table3.collection.get_rows():
+            if row.status is None or row.status == "posted":
+                continue
+
+            elif row.status == "skip posting time":
+                next(posting_datetimes)  # skip time
+                posting_datetime = next(posting_datetimes)
+                notion_api.set_property(row, "status", "ready to skiped posting time")
+
+            elif row.status == "ready to skiped posting time":
+                dt = row.posting_datetime.start
+                if dt.hour == msk_today.hour and dt.minute == msk_today.minute:
+                    notion_api.set_property(row, "status", "ready to post")
+                    posting_datetime = next(posting_datetimes)
+
+                else:
+                    next(posting_datetimes)  # skip time
+                    posting_datetime = next(posting_datetimes)
+
+            elif row.status == "ready to post":
+                posting_datetime = next(posting_datetimes)
+
+            else:
+                raise ValueError(f"Unavailable posting status: {row.status}")
+
+            notion_api.set_property(row, "posting_datetime", posting_datetime)
+
+    def posting_datetimes(self):
+        datetimes_schecule = self.datetimes_schecule()
+
+        while True:
+            day_schedule = next(datetimes_schecule)
+            for posting_datetime in day_schedule:
+                yield posting_datetime
+
+    def datetimes_schecule(self):
+        weekday = weekday_posting_times + everyday_posting_times
+        weekend = weekend_posting_times + everyday_posting_times
+        day = msk_today
+
+        current_day_datetimes = list()
+        if filters.is_weekday(day):
+            today_datetimes = weekday
+        else:
+            today_datetimes = weekend
+
+        for dt in today_datetimes:
+            if (
+                dt.hour < day.hour
+                or (dt.hour == day.hour and dt.minute < day.minute)
+            ):
+                continue
+
+            current_day_datetimes.append(dt)
+
+        if current_day_datetimes:
+            yield current_day_datetimes
+
+        while True:
+            day += timedelta(days=1)
+            ymd = dict(year=day.year, month=day.month, day=day.day)
+
+            datetimes = weekday if filters.is_weekday(day) else weekend
+            yield [i.replace(**ymd) for i in datetimes]
+
+    def run(self):
+        log = prefect.utilities.logging.get_logger("TaskRunner.PrepareEvents")
+        self.update_today_time()
+
+        # in case changed table views
+        notion_api.update_table_views()
+
+        self.move_approved(log)
+        self.check_status(log)
 
 class IsEmptyCheck(Task):
     """
@@ -71,9 +148,15 @@ class PostingEvent(Task):
         log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
 
         if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
-            log.info("Generating post.")
+            log.info("Check posting status")
 
             event_id = notion_api.next_event_id_to_channel()
+
+            if event_id is None:
+                log.info("Skipping posting time")
+                return
+
+            log.info("Generating post.")
 
             if event_id:
                 photo_url, post = posting.create(event_id)
@@ -248,6 +331,8 @@ def run():
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
+    global weekday_posting_times, weekend_posting_times, everyday_posting_times
+
     weekday_posting_times = [
         today.replace(hour=9, minute=30),
         today.replace(hour=12, minute=00),
@@ -264,7 +349,7 @@ def run():
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=00, minute=00),
+        today.replace(hour=14, minute=57),
     ]
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
@@ -294,13 +379,13 @@ def run():
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
 
     # create tasks graph
-    move_approved = MoveApproved()
+    prepare_events = PrepareEvents()
     is_empty_check = IsEmptyCheck()
     posting_event = PostingEvent()
     update_events = UpdateEvents()
 
     edges = [
-        Edge(move_approved, is_empty_check),
+        Edge(prepare_events, is_empty_check),
         Edge(is_empty_check, posting_event),
         Edge(posting_event, update_events),
     ]
