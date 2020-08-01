@@ -112,8 +112,10 @@ def create(event_id):
     )
     date_from_to = date_to_post(event.date_from, event.date_to)
     title = (
-        # for convert: Some Name`s to Some Name's
-        event.title.replace("`", "'")
+        event.title
+        .replace("`", "\`")
+        .replace("_", "\_")
+        .replace("*", "\*")
         .replace(' &quot;', ' «')
         .replace('&quot;', '»')
         .replace(' "', ' «')
@@ -129,16 +131,12 @@ def create(event_id):
         f"*Вход:* [{event.price}]({event.url})"
     )
 
-    # if ed.price==:
-    #     footer +=f'Регистрация ограничена: [подробности](ed.url)'
-    # elif ed.price==0:
-    #     footer +=f'*Вход свободный* [по предварительной регистрации]({ed.url})'
-    # elif ed.price>0:
-    #     footer +=f'*Вход:* [от {ed.price}₽]({ed.url})'
-
-    # for convert: `* new item; * another item; ...`
-    # to: `- new item; - another item; ...`
-    post_text = event.post_text.strip().replace("*", "-")
+    post_text = (
+        event.post_text.strip()
+        .replace("`", "\`")
+        .replace("_", "\_")
+        .replace("*", "\*")
+    )
     full_text = title + post_text + footer
 
     return "http://" + event.poster_imag, full_text
