@@ -47,7 +47,7 @@ class PrepareEvents(Task):
         """
         log.info("Check events posting status")
 
-        posting_datetimes = self.posting_datetimes()
+        posting_datetimes = self.posting_datetimes(msk_today)
         for row in notion_api.table3.collection.get_rows():
             if row.status is None or row.status == "posted":
                 continue
@@ -75,29 +75,28 @@ class PrepareEvents(Task):
 
             notion_api.set_property(row, "posting_datetime", posting_datetime)
 
-    def posting_datetimes(self):
-        datetimes_schecule = self.datetimes_schecule()
+    def posting_datetimes(self, today):
+        datetimes_schecule = self.datetimes_schecule(today)
 
         while True:
             day_schedule = next(datetimes_schecule)
             for posting_datetime in day_schedule:
                 yield posting_datetime
 
-    def datetimes_schecule(self):
+    def datetimes_schecule(self, today):
         weekday = weekday_posting_times + everyday_posting_times
         weekend = weekend_posting_times + everyday_posting_times
-        day = msk_today
 
         current_day_datetimes = list()
-        if filters.is_weekday(day):
+        if filters.is_weekday(today):
             today_datetimes = weekday
         else:
             today_datetimes = weekend
 
         for dt in today_datetimes:
             if (
-                dt.hour < day.hour
-                or (dt.hour == day.hour and dt.minute < day.minute)
+                dt.hour < today.hour
+                or (dt.hour == today.hour and dt.minute < today.minute)
             ):
                 continue
 
@@ -107,10 +106,10 @@ class PrepareEvents(Task):
             yield current_day_datetimes
 
         while True:
-            day += timedelta(days=1)
-            ymd = dict(year=day.year, month=day.month, day=day.day)
+            today += timedelta(days=1)
+            ymd = dict(year=today.year, month=today.month, day=today.day)
 
-            datetimes = weekday if filters.is_weekday(day) else weekend
+            datetimes = weekday if filters.is_weekday(today) else weekend
             yield [i.replace(**ymd) for i in datetimes]
 
     def run(self):
