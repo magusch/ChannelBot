@@ -1,3 +1,5 @@
+import re
+
 from . import database
 
 
@@ -116,13 +118,10 @@ def create(event_id):
         .replace("`", "\`")
         .replace("_", "\_")
         .replace("*", "\*")
-        .replace(' &quot;', ' «')
-        .replace('&quot;', '»')
-        .replace(' "', ' «')
-        .replace('"', '»')
-        .replace('«','*«')
-        .replace('»','»*')
     )
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
+
     title = f"*{title_date}* {title}\n\n"
     footer = (
         "\n\n"
