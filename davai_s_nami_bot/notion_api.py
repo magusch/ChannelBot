@@ -181,7 +181,7 @@ def next_event_id_to_channel():
         if row.status != "posted":
             if row.status == "ready to post":
                 event_id = row.get_property("id")
-                row.status = "posted"
+                set_property(row, "status", "posted")
 
             elif row.status == "ready to skiped posting time":
                 event_id = None
