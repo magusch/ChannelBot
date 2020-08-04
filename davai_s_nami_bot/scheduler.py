@@ -100,7 +100,9 @@ class PrepareEvents(Task):
             ):
                 continue
 
-            current_day_datetimes.append(dt)
+            current_day_datetimes.append(
+                dt.replace(year=today.year, month=today.month, day=today.day)
+            )
 
         if current_day_datetimes:
             yield current_day_datetimes
