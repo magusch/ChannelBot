@@ -1,5 +1,6 @@
 import datetime
 from datetime import date
+from collections import namedtuple
 import os
 import time
 from functools import partial
@@ -8,14 +9,20 @@ import requests
 
 from notion.client import NotionClient
 
+from . import posting
 
-TAGS_TO_NOTION = [
-    "id",
-    "title",
-    "category",
-    "url",
-    "date_from",
-]
+
+TAGS_TO_NOTION = {
+    "Title": posting.parse_title,
+    "Post": posting.parse_post,
+    "From_date": posting.parse_from_date,
+    "Event_id": posting.parse_event_id,
+    "Image": posting.parse_image,
+    "URL": posting.parse_url,
+    "Ticket": posting.parse_ticket,
+    "Where": posting.parse_where,
+    "When": posting.parse_when,
+}
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
@@ -53,18 +60,18 @@ def add_events(events, explored_date, table=None, log=None):
 
         row = table.collection.add_row(update_views=False)
 
-        for tag in TAGS_TO_NOTION:
+        for tag, parse_func in TAGS_TO_NOTION.items():
             set_property(
                 row=row,
                 property_name=tag,
-                value=getattr(event, tag),
+                value=parse_func(event),
                 log=log,
             )
 
-        # event not contain explored_date and status fields
+        # event not contain "Explored date" and "Status" fields
         set_property(
             row=row,
-            property_name="explored_date",
+            property_name="Explored date",
             value=explored_date,
             log=log,
         )
@@ -73,7 +80,7 @@ def add_events(events, explored_date, table=None, log=None):
         if table_name == "Таблица 3":
             set_property(
                 row=row,
-                property_name="status",
+                property_name="Status",
                 value="ready to post",
                 log=log,
             )
@@ -87,11 +94,11 @@ def remove_blank_rows(log=None):
     )
 
     for row in rows:
-        if row.get_property("id") is None:
+        if row.get_property("Event_id") is None:
             remove_row(row, log=log)
 
 
-def remove_old_events(removing_ids, msk_date, log=None):
+def remove_old_events(msk_date, log=None):
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
@@ -110,7 +117,7 @@ def remove_old_events(removing_ids, msk_date, log=None):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if row.get_property("id") in removing_ids:
+            if row.get_property("From_date").start < msk_date:
                 remove_row(row, log=log)
 
             elif check_func:
@@ -148,7 +155,7 @@ def move_approved(log=None):
 
 @connection_wrapper
 def set_property(row, property_name, value):
-    setattr(row, property_name, value)
+    row.set_property(property_name, value)
 
 
 @connection_wrapper
@@ -160,45 +167,60 @@ def move_row(row, to_table, log=None):
     if to_table.collection.name == "Таблица 3":
         # add at the end table
         new_row = to_table.collection.add_row()
-        set_property(new_row, "status", "ready to post", log=log)
+        set_property(new_row, "status", "Ready to post", log=log)
     else:
         new_row = to_table.collection.add_row(update_views=False)
 
-    for tag in TAGS_TO_NOTION + ["explored_date"]:
+    for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
         set_property(new_row, tag, row.get_property(tag), log=log)
 
     remove_row(row, log=log)
 
 
-def next_event_id_to_channel():
+def next_event_to_channel():
     """
-    Getting next event id from table 3 (from up to down).
+    Getting next event (namedtuple) from table 3 (from up to down).
     """
     rows = table3.collection.get_rows()
-    event_id = None
+    event = None
 
     for row in rows:
-        if row.status != "posted":
-            if row.status == "ready to post":
-                event_id = row.get_property("id")
-                set_property(row, "status", "posted")
+        if row.status != "Posted":
+            if row.status == "Ready to post":
+                event = namedtuple("event", TAGS_TO_NOTION.keys())(
+                    **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()}
+                )
+                set_property(row, "status", "Posted")
 
-            elif row.status == "ready to skiped posting time":
-                event_id = None
+            elif row.status == "Ready to skiped posting time":
+                pass
 
             else:
                 raise ValueError(f"Unavailable posting status: {row.status}")
 
             break
 
-    return event_id
+    return event
 
+
+def get_new_events(events):
+    existing_ids = list()
+    for table in [table1, table2, table3]:
+        for row in table.collection.get_rows():
+            existing_ids.append(row.get_property("Event_id"))
+
+    new_events = list()
+    for event in events:
+        if event.id not in existing_ids:
+            new_events.append(event)
+
+    return new_events
 
 def not_published_count():
     count = 0
 
     for row in table3.collection.get_rows():
-        count += row.status != "posted"
+        count += row.status != "Posted"
 
     return count
 

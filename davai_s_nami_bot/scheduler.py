@@ -49,25 +49,25 @@ class PrepareEvents(Task):
 
         posting_datetimes = self.posting_datetimes(msk_today)
         for row in notion_api.table3.collection.get_rows():
-            if row.status is None or row.status == "posted":
+            if row.status is None or row.status == "Posted":
                 continue
 
-            elif row.status == "skip posting time":
+            elif row.status == "Skip posting time":
                 next(posting_datetimes)  # skip time
                 posting_datetime = next(posting_datetimes)
-                notion_api.set_property(row, "status", "ready to skiped posting time")
+                notion_api.set_property(row, "status", "Ready to skiped posting time")
 
-            elif row.status == "ready to skiped posting time":
+            elif row.status == "Ready to skiped posting time":
                 dt = row.posting_datetime.start
                 if dt.hour == msk_today.hour and dt.minute == msk_today.minute:
-                    notion_api.set_property(row, "status", "ready to post")
+                    notion_api.set_property(row, "status", "Ready to post")
                     posting_datetime = next(posting_datetimes)
 
                 else:
                     next(posting_datetimes)  # skip time
                     posting_datetime = next(posting_datetimes)
 
-            elif row.status == "ready to post":
+            elif row.status == "Ready to post":
                 posting_datetime = next(posting_datetimes)
 
             else:
@@ -151,75 +151,65 @@ class PostingEvent(Task):
         if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
             log.info("Check posting status")
 
-            event_id = notion_api.next_event_id_to_channel()
+            event = notion_api.next_event_to_channel()
 
-            if event_id is None:
+            if event is None:
                 log.info("Skipping posting time")
                 return
 
             log.info("Generating post.")
+            photo_url, post = posting.create(event)
 
-            if event_id:
-                photo_url, post = posting.create(event_id)
+            if photo_url is None:
+                message = bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=post,
+                    disable_web_page_preview=True,
+                )
 
-                if photo_url is None:
-                    message = bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=post,
-                        disable_web_page_preview=True,
-                    )
+            else:
+                with Image.open(BytesIO(requests.get(photo_url).content)) as img:
+                    photo_name = str(event.Event_id)
+                    img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
 
-                else:
-                    with Image.open(BytesIO(requests.get(photo_url).content)) as img:
-                        photo_name = str(event_id)
-                        img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+                    img.save(photo_name + ".png", "png")
+                    if img.mode == "RGBA":
+                        # jpeg does not support transparency
+                        img = img.convert("RGB")
+                    img.save(photo_name + ".jpg", "jpeg")
 
-                        img.save(photo_name + ".png", "png")
-                        if img.mode == "RGBA":
-                            # jpeg does not support transparency
-                            img = img.convert("RGB")
-                        img.save(photo_name + ".jpg", "jpeg")
+                    image_size = os.path.getsize(photo_name + ".png") / 1_000_000
 
-                        image_size = os.path.getsize(photo_name + ".png") / 1_000_000
+                    if image_size > 5:
+                        photo_path = photo_name + ".jpg"
+                    else:
+                        photo_path = photo_name + ".png"
 
-                        if image_size > 5:
-                            photo_path = photo_name + ".jpg"
-                        else:
-                            photo_path = photo_name + ".png"
+                    with open(photo_path, "rb") as photo:
+                        message = bot.send_photo(
+                            chat_id=CHANNEL_ID,
+                            photo=photo,
+                            caption=post,
+                        )
 
-                        with open(photo_path, "rb") as photo:
-                            message = bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=photo,
-                                caption=post,
-                            )
+                    os.remove(photo_name + ".jpg")
+                    os.remove(photo_name + ".png")
 
-                        os.remove(photo_name + ".jpg")
-                        os.remove(photo_name + ".png")
-
-                post_id = message.message_id
-                database.update_post_id(event_id, post_id)
+            post_id = message.message_id
+            database.add(event, post_id)
 
 
 class UpdateEvents(Task):
     def remove_old(self, log):
-        log.info("Removing old events from postgresql")
-        removing_ids = database.old_events(msk_today)
-        database.remove(removing_ids)
-
-        log.info("Removing old events from notion table")
-        notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
-
+        log.info("Removing old events")
+        notion_api.remove_old_events(msk_today + timedelta(hours=1), log=log)
+        database.remove(msk_today + timedelta(hours=1))
 
     def update_events(self, events, log, table=None):
         log.info("Checking for existing events")
-        new_events_id = database.get_new_events_id(events)
 
-        new_events = [i for i in events if i.id in new_events_id]
+        new_events = notion_api.get_new_events(events)
         log.info(f"New evenst count = {len(new_events)}")
-
-        log.info("Updating postgresql")
-        database.add(new_events)
 
         log.info("Updating notion table")
         notion_api.add_events(new_events, msk_today, table=table, log=log)
@@ -244,14 +234,9 @@ class UpdateEvents(Task):
 
             self.update_events(other_events, log, table=notion_api.table1)
 
-            db_count = database.events_count()
             notion_count = notion_api.events_count()
 
-            log.info(f"Events count in database: {db_count}")
             log.info(f"Events count in notion table: {notion_count}")
-
-            if db_count != notion_count:
-                log.warn("The number of events does not match.")
 
 
 class Formatter(logging.Formatter):

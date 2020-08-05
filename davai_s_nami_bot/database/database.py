@@ -19,7 +19,7 @@ TABLE_NAME = "dev_events"
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "
-    f"WHERE table_name={TABLE_NAME}"
+    f"WHERE table_name='{TABLE_NAME}'"
 )
 if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
@@ -88,17 +88,20 @@ def add(event, post_id):
     placeholder = "(%s, %s, %s, cast(%s as TIMESTAMP))"
 
     data = [
-        event.id,
-        event.title,
+        event.Event_id,
+        event.Title,
         post_id,
-        event.date_from,
+        event.From_date.start,
     ]
 
     _insert(script + placeholder, data)
 
 
 def remove(date):
-    script = "DELETE FROM {TABLE_NAME} WHERE event_date < cast(%s as TIMESTAMP)"
+    script = (
+        "DELETE FROM {table} WHERE event_date < cast(%s as TIMESTAMP)"
+        .format(table=TABLE_NAME)
+    )
 
     _insert(script, [date])
 
