@@ -2,27 +2,24 @@ import os
 from collections import namedtuple
 
 import psycopg2
-from escraper.parsers import ALL_EVENT_TAGS
 
 
 __all__ = (
     "add",
-    "events_count",
-    "get_event_by_id",
-    "get_new_events_id",
-    "old_events",
-    "update_post_id",
     "remove",
+    "event_by_date",
 )
 
+TAGS = ["id", "title", "post_id", "event_date"]
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
 DATABASE_URL = os.environ.get("DATABASE_URL")
+TABLE_NAME = "dev_events"
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "
-    "WHERE table_name='events'"
+    f"WHERE table_name={TABLE_NAME}"
 )
 if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
@@ -68,7 +65,7 @@ def _insert(script, data):
     db_cursor.execute(script, data)
     db_connection.commit()
 
-    db_connection.close()  # is that need?
+    db_connection.close()
     db_cursor.close()
 
 
@@ -83,92 +80,48 @@ def _get(script):
     return values
 
 
-def get_new_events_id(events):
-    db_cursor = get_db_cursor()
-
-    db_cursor.execute("SELECT id FROM events")
-    database_ids = [i[0] for i in db_cursor.fetchall()]
-
-    db_cursor.close()
-
-    new_events_id = list()
-
-    for event in events:
-        if event.id not in database_ids:
-            new_events_id.append(event.id)
-
-    return new_events_id
-
-
-def get_event_by_id(event_id):
+def add(event, post_id):
     script = (
-        "SELECT {columns} FROM events WHERE id = {id}"
-        .format(
-            columns=", ".join(ALL_EVENT_TAGS),
-            id=event_id,
-        )
+        f"INSERT INTO {TABLE_NAME} "
+        f"({', '.join(TAGS)}) values "
     )
-    values = _get(script)
+    placeholder = "(%s, %s, %s, cast(%s as TIMESTAMP))"
 
-    if not values:
-        raise TypeError(
-            f"Event id {event_id} not found in database, because "
-            "events in the notion table and in the database does not match"
-        )
+    data = [
+        event.id,
+        event.title,
+        post_id,
+        event.date_from,
+    ]
 
-    return namedtuple("event", ALL_EVENT_TAGS)(
-        **{key: val for key, val in zip(ALL_EVENT_TAGS, values[0])}
-    )
+    _insert(script + placeholder, data)
 
 
-def add(events):
-    # required date as third element ALL_EVENT_TAGS
+def remove(date):
+    script = "DELETE FROM {TABLE_NAME} WHERE event_date < cast(%s as TIMESTAMP)"
+
+    _insert(script, [date])
+
+
+def event_by_date(dt):
+    """
+    Required for dt (type datetime):
+    - hours = 0
+    - minutes = 0
+    - seconds = 0
+    - microseconds = 0
+
+    Only year, month and day.
+    """
     script = (
-        "INSERT INTO events "
-        f"({', '.join(ALL_EVENT_TAGS)}) values "
-    )
-    placeholder = (
-        "(%s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), "
-        "%s, %s, %s, %s, %s, %s, %s, %s), "
+        f"SELECT ({', '.join(TAGS)}) FROM {TABLE_NAME}"
+        "WHERE event_datetime = cast(%s as TIMESTAMP)"
     )
 
-    data = list()
-
-    for event in events:
-        data += [getattr(event, column) for column in ALL_EVENT_TAGS]
-
-    if data:
-        _insert(script + (placeholder * len(events))[:-2], data)
-
-
-def old_events(date):
-    db_cursor = get_db_cursor()
-    script = "SELECT id FROM events WHERE date_from < cast(%s as TIMESTAMP)"
-    db_cursor.execute(script, [date])
-
-    events_id = [i[0] for i in db_cursor.fetchall()]
-
-    db_cursor.close()
-
-    return events_id
-
-
-def remove(events_id):
-    if events_id:
-        script = (
-            "DELETE FROM events WHERE id IN ({})"
-            .format("".join(["%s, " for _ in events_id])[:-2])
+    events = list()
+    for values in _get(script):
+        events.append(
+            dict(title=values[1], post_id=values[2])
         )
 
-        _insert(script, events_id)
-
-
-def update_post_id(event_id, post_id):
-    script = "UPDATE events SET post_id = %s WHERE id = %s"
-
-    _insert(script, [post_id, event_id])
-
-
-def events_count():
-    script = "SELECT id FROM events"
-    return len(_get(script))
+    return events

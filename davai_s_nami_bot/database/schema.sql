@@ -1,17 +1,6 @@
-CREATE TABLE IF NOT EXISTS "events" (
-    "adress" TEXT,
-    "category" TEXT,
-    "date_from" TIMESTAMP,
-    "date_to" TIMESTAMP,
-    "id" INT NOT NULL UNIQUE,
-    "place_name" TEXT,
-    "post_text" TEXT,
-    "poster_imag" TEXT,
-    "price" TEXT,
+CREATE TABLE IF NOT EXISTS "dev_events" (
+    "id" INTEGER UNIQUE,
     "title" TEXT NOT NULL,
-    "url" TEXT NOT NULL UNIQUE,
-    "is_registration_open" INTEGER,
     "post_id" INTEGER UNIQUE,
-    CHECK ("is_registration_open" = 0 or "is_registration_open" = 1)
-
+    "event_date" TIMESTAMP
 );
