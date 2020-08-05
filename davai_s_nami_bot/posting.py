@@ -113,12 +113,22 @@ def parse_title(event):
 
 
 def parse_post(event):
-    return (
+    post_text = (
         event.post_text.strip()
         .replace("`", "\`")
         .replace("_", "\_")
         .replace("*", "\*")
     )
+
+    date_from_to = date_to_post(event.date_from, event.date_to)
+    footer = (
+        "\n\n"
+        f"**Где:** {event.place_name}, {event.adress} \n"
+        f"**Когда:** {date_from_to} \n"
+        f"**Вход:** [{event.price}] ({event.url})"
+    )
+
+    return post_text + footer
 
 
 def parse_from_date(event):
@@ -131,20 +141,3 @@ def parse_event_id(event):
 
 def parse_image(event):
     return "http://" + event.poster_imag
-
-
-def parse_url(event):
-    return event.url
-
-
-def parse_ticket(event):
-    return event.price
-
-
-def parse_where(event):
-    return f"{event.place_name}, {event.adress}"
-
-
-def parse_when(event):
-    date_from_to = date_to_post(event.date_from, event.date_to)
-    return f"{date_from_to}"
