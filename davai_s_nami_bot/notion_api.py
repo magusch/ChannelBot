@@ -15,6 +15,7 @@ from . import posting
 TAGS_TO_NOTION = {
     "Title": posting.parse_title,
     "Post": posting.parse_post,
+    "URL": posting.parse_url,
     "From_date": posting.parse_from_date,
     "Event_id": posting.parse_event_id,
     "Image": posting.parse_image,
@@ -77,7 +78,7 @@ def add_events(events, explored_date, table=None, log=None):
             set_property(
                 row=row,
                 property_name="Status",
-                value="ready to post",
+                value="Ready to post",
                 log=log,
             )
 

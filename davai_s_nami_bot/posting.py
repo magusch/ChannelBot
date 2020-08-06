@@ -81,24 +81,13 @@ def create(event):
     post : str
     """
 
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", event.Title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
-
-    title_date = "{day} {month}".format(
-        day=event.From_date.start.day,
-        month=month_name(event.From_date.start),
-    )
-    title = f"*{title_date}* {title}\n\n"
-    footer = (
-        "\n\n"
-        f"*Где:* {event.Where} \n"
-        f"*Когда:* {event.When} \n"
-        f"*Вход:* [{event.Ticket}]({event.URL})"
+    post = (
+        event.Post
+        .replace("__", "*")
+        .replace("] (", "](")
     )
 
-    full_text = title + event.Post + footer
-
-    return event.Image, full_text
+    return event.Image, post
 
 
 def parse_title(event):
@@ -113,6 +102,22 @@ def parse_title(event):
 
 
 def parse_post(event):
+    title = (
+        event.title
+        .replace("`", "\`")
+        .replace("_", "\_")
+        .replace("*", "\*")
+    )
+
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
+
+    title_date = "{day} {month}".format(
+        day=event.date_from.day,
+        month=month_name(event.date_from),
+    )
+    title = f"**{title_date}** {title}\n\n"
+
     post_text = (
         event.post_text.strip()
         .replace("`", "\`")
@@ -128,7 +133,11 @@ def parse_post(event):
         f"**Вход:** [{event.price}] ({event.url})"
     )
 
-    return post_text + footer
+    return title + post_text + footer
+
+
+def parse_url(event):
+    return event.url
 
 
 def parse_from_date(event):
