@@ -144,9 +144,5 @@ def parse_from_date(event):
     return event.date_from
 
 
-def parse_event_id(event):
-    return event.id
-
-
 def parse_image(event):
     return "http://" + event.poster_imag

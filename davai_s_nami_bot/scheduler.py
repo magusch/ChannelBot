@@ -268,7 +268,6 @@ class Formatter(logging.Formatter):
         if record.exc_info:
             message += record.exc_text
 
-
         return self._fmt % dict(
             asctime=self.formatTime(record),
             levelname=record.levelname,
