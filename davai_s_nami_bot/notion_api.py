@@ -52,7 +52,6 @@ def connection_wrapper(func):
 
 def add_events(events, explored_date, table=None, log=None):
     table = table or table1
-    table_name = table.collection.name
     event_id = get_last_event_id()
 
     for event in events:
@@ -85,7 +84,7 @@ def add_events(events, explored_date, table=None, log=None):
         )
 
         # status only in table3
-        if table_name == "Таблица 3":
+        if table is table3:
             set_property(
                 row=row,
                 property_name="Status",
@@ -174,7 +173,7 @@ def remove_row(row):
 
 
 def move_row(row, to_table, log=None):
-    if to_table.collection.name == "Таблица 3":
+    if to_table is table3:
         # add at the end table
         new_row = to_table.collection.add_row()
         set_property(new_row, "status", "Ready to post", log=log)
