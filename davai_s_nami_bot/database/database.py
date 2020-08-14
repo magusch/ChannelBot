@@ -1,13 +1,19 @@
 import os
 from collections import namedtuple
-from functools import lru_cache
-import warnings
 
 import psycopg2
 from escraper.parsers import ALL_EVENT_TAGS
 
 
-__all__ = ("add", "update")
+__all__ = (
+    "add",
+    "events_count",
+    "get_event_by_id",
+    "get_new_events_id",
+    "old_events",
+    "update_post_id",
+    "remove",
+)
 
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
@@ -120,11 +126,19 @@ def add(events):
     script = (
         "INSERT INTO events "
         f"({', '.join(ALL_EVENT_TAGS)}) values "
-        "(%s, %s, cast(%s as TIMESTAMP), %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    )
+    placeholder = (
+        "(%s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), "
+        "%s, %s, %s, %s, %s, %s, %s, %s), "
     )
 
+    data = list()
+
     for event in events:
-        _insert(script, [getattr(event, column) for column in ALL_EVENT_TAGS])
+        data += [getattr(event, column) for column in ALL_EVENT_TAGS]
+
+    if data:
+        _insert(script + (placeholder * len(events))[:-2], data)
 
 
 def old_events(date):
@@ -140,9 +154,13 @@ def old_events(date):
 
 
 def remove(events_id):
-    for event in events_id:
-        script = "DELETE FROM events WHERE id = %s"
-        _insert(script, [event])
+    if events_id:
+        script = (
+            "DELETE FROM events WHERE id IN ({})"
+            .format("".join(["%s, " for _ in events_id])[:-2])
+        )
+
+        _insert(script, events_id)
 
 
 def update_post_id(event_id, post_id):

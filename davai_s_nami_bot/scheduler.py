@@ -1,10 +1,10 @@
 from datetime import timedelta, datetime
 import logging
-import random
 import pytz
 import os
 from io import BytesIO
 
+import PIL
 from PIL import Image
 import requests
 from telebot import TeleBot
@@ -28,19 +28,101 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID")
 DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
 bot = TeleBot(token=get_token(), parse_mode="Markdown")
 LOG_FILE = "bot_logs.txt"
+maxsize = (1920, 1080)
 
 
-class MoveApproved(Task):
-    def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.MoveApproved")
-
+class PrepareEvents(Task):
+    def update_today_time(self):
         global utc_today, msk_today
         utc_today = datetime.utcnow()
         msk_today = datetime.now()
 
+    def move_approved(self, log):
         log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=log)
 
+    def check_status(self, log):
+        """
+        Checking event status in table3 and update posting time.
+        """
+        log.info("Check events posting status")
+
+        posting_datetimes = self.posting_datetimes(msk_today)
+        for row in notion_api.table3.collection.get_rows():
+            if row.status is None or row.status == "posted":
+                continue
+
+            elif row.status == "skip posting time":
+                next(posting_datetimes)  # skip time
+                posting_datetime = next(posting_datetimes)
+                notion_api.set_property(row, "status", "ready to skiped posting time")
+
+            elif row.status == "ready to skiped posting time":
+                dt = row.posting_datetime.start
+                if dt.hour == msk_today.hour and dt.minute == msk_today.minute:
+                    notion_api.set_property(row, "status", "ready to post")
+                    posting_datetime = next(posting_datetimes)
+
+                else:
+                    next(posting_datetimes)  # skip time
+                    posting_datetime = next(posting_datetimes)
+
+            elif row.status == "ready to post":
+                posting_datetime = next(posting_datetimes)
+
+            else:
+                raise ValueError(f"Unavailable posting status: {row.status}")
+
+            notion_api.set_property(row, "posting_datetime", posting_datetime)
+
+    def posting_datetimes(self, today):
+        datetimes_schecule = self.datetimes_schecule(today)
+
+        while True:
+            day_schedule = next(datetimes_schecule)
+            for posting_datetime in day_schedule:
+                yield posting_datetime
+
+    def datetimes_schecule(self, today):
+        weekday = weekday_posting_times + everyday_posting_times
+        weekend = weekend_posting_times + everyday_posting_times
+
+        current_day_datetimes = list()
+        if filters.is_weekday(today):
+            today_datetimes = weekday
+        else:
+            today_datetimes = weekend
+
+        for dt in today_datetimes:
+            if (
+                dt.hour < today.hour
+                or (dt.hour == today.hour and dt.minute < today.minute)
+            ):
+                continue
+
+            current_day_datetimes.append(
+                dt.replace(year=today.year, month=today.month, day=today.day)
+            )
+
+        if current_day_datetimes:
+            yield current_day_datetimes
+
+        while True:
+            today += timedelta(days=1)
+            ymd = dict(year=today.year, month=today.month, day=today.day)
+
+            datetimes = weekday if filters.is_weekday(today) else weekend
+            yield [i.replace(**ymd) for i in datetimes]
+
+    def run(self):
+        log = prefect.utilities.logging.get_logger("TaskRunner.PrepareEvents")
+        self.update_today_time()
+
+        # in case changed table views
+        notion_api.update_table_views()
+
+        self.move_approved(log)
+        self.check_status(log)
 
 class IsEmptyCheck(Task):
     """
@@ -51,7 +133,7 @@ class IsEmptyCheck(Task):
         text = None
 
         if not_published_count == 1:
-            text = "Warning: last event left."
+            text = "Warning: posting last event."
 
         elif not_published_count == 0:
             text = (
@@ -67,9 +149,15 @@ class PostingEvent(Task):
         log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
 
         if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
-            log.info("Generating post.")
+            log.info("Check posting status")
 
             event_id = notion_api.next_event_id_to_channel()
+
+            if event_id is None:
+                log.info("Skipping posting time")
+                return
+
+            log.info("Generating post.")
 
             if event_id:
                 photo_url, post = posting.create(event_id)
@@ -80,11 +168,16 @@ class PostingEvent(Task):
                         text=post,
                         disable_web_page_preview=True,
                     )
-                else:
 
+                else:
                     with Image.open(BytesIO(requests.get(photo_url).content)) as img:
                         photo_name = str(event_id)
+                        img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+
                         img.save(photo_name + ".png", "png")
+                        if img.mode == "RGBA":
+                            # jpeg does not support transparency
+                            img = img.convert("RGB")
                         img.save(photo_name + ".jpg", "jpeg")
 
                         image_size = os.path.getsize(photo_name + ".png") / 1_000_000
@@ -109,36 +202,47 @@ class PostingEvent(Task):
 
 
 class UpdateEvents(Task):
+    def remove_old(self, log):
+        log.info("Removing old events from postgresql")
+        removing_ids = database.old_events(msk_today)
+        database.remove(removing_ids)
+
+        log.info("Removing old events from notion table")
+        notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
+
+
+    def update_events(self, events, log, table=None):
+        log.info("Checking for existing events")
+        new_events_id = database.get_new_events_id(events)
+
+        new_events = [i for i in events if i.id in new_events_id]
+        log.info(f"New evenst count = {len(new_events)}")
+
+        log.info("Updating postgresql")
+        database.add(new_events)
+
+        log.info("Updating notion table")
+        notion_api.add_events(new_events, msk_today, table=table, log=log)
+
     def run(self):
         log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
 
         if utc_today.strftime("%H:%M") in strftime_event_updating:
             log.info("Start updating events.")
 
-            log.info("Removing old events from postgresql")
-            removing_ids = database.old_events(utc_today)
-            database.remove(removing_ids)
+            self.remove_old(log)
 
-            log.info("Removing old events from notion table")
-            notion_api.remove_old_events(removing_ids, msk_today + timedelta(hours=1), log=log)
+            log.info("Getting events from approved organizations for next 7 days")
+            approved_events = events.from_approved_organizations(days=7, log=log)
+            log.info(f"Collected {len(approved_events)} approved events.")
 
-            log.info("Getting new events for next 7 days")
-            today_events = events.next_days(days=7, log=log)
+            self.update_events(approved_events, log, table=notion_api.table3)
 
-            event_count = len(today_events)
-            log.info(f"Done. Collected {event_count} events")
+            log.info("Getting new events from other organizations for next 7 days")
+            other_events = events.from_not_approved_organizations(days=7, log=log)
+            log.info(f"Collected {len(other_events)} events")
 
-            log.info("Checking for existing events")
-            new_events_id = database.get_new_events_id(today_events)
-
-            new_events = [i for i in today_events if i.id in new_events_id]
-            log.info(f"New evenst count = {len(new_events)}")
-
-            log.info("Start updating postgresql")
-            database.add(new_events)
-
-            log.info("Start updating notion table")
-            notion_api.add_events(new_events, msk_today, log=log)
+            self.update_events(other_events, log, table=notion_api.table1)
 
             db_count = database.events_count()
             notion_count = notion_api.events_count()
@@ -152,11 +256,10 @@ class UpdateEvents(Task):
 
 class Formatter(logging.Formatter):
     def send_logs(self):
-        with open(LOG_FILE, "rb") as logs:
+        with open(LOG_FILE, "r+b") as logs:
             bot.send_document(DEV_CHANNEL_ID, logs)
-
-        with open(LOG_FILE, "w") as logs:
-            logs.write("")
+            logs.truncate(0)
+            logs.write(b"")
 
     def converter(self, timestamp):
         dt = datetime.fromtimestamp(timestamp)
@@ -229,6 +332,8 @@ def run():
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
+    global weekday_posting_times, weekend_posting_times, everyday_posting_times
+
     weekday_posting_times = [
         today.replace(hour=9, minute=30),
         today.replace(hour=12, minute=00),
@@ -275,13 +380,13 @@ def run():
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
 
     # create tasks graph
-    move_approved = MoveApproved()
+    prepare_events = PrepareEvents()
     is_empty_check = IsEmptyCheck()
     posting_event = PostingEvent()
     update_events = UpdateEvents()
 
     edges = [
-        Edge(move_approved, is_empty_check),
+        Edge(prepare_events, is_empty_check),
         Edge(is_empty_check, posting_event),
         Edge(posting_event, update_events),
     ]

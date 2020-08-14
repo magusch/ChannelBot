@@ -1,3 +1,5 @@
+import re
+
 from . import database
 
 
@@ -113,13 +115,13 @@ def create(event_id):
     date_from_to = date_to_post(event.date_from, event.date_to)
     title = (
         event.title
-        .replace(' &quot;', ' «')
-        .replace('&quot;', '»')
-        .replace(' "', ' «')
-        .replace('"', '»')
-        .replace('«','*«')
-        .replace('»','»*')
+        .replace("`", "\`")
+        .replace("_", "\_")
+        .replace("*", "\*")
     )
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
+
     title = f"*{title_date}* {title}\n\n"
     footer = (
         "\n\n"
@@ -128,14 +130,12 @@ def create(event_id):
         f"*Вход:* [{event.price}]({event.url})"
     )
 
-    # if ed.price==:
-    #     footer +=f'Регистрация ограничена: [подробности](ed.url)'
-    # elif ed.price==0:
-    #     footer +=f'*Вход свободный* [по предварительной регистрации]({ed.url})'
-    # elif ed.price>0:
-    #     footer +=f'*Вход:* [от {ed.price}₽]({ed.url})'
-
-    post_text = event.post_text.strip()
+    post_text = (
+        event.post_text.strip()
+        .replace("`", "\`")
+        .replace("_", "\_")
+        .replace("*", "\*")
+    )
     full_text = title + post_text + footer
 
     return "http://" + event.poster_imag, full_text

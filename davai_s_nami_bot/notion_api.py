@@ -27,11 +27,6 @@ table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 
-# 💫 some magic 💫
-# (see issue https://github.com/jamalex/notion-py/issues/92)
-for t in [table1, table2, table3]:
-    print(t.collection.parent.views)
-
 
 def connection_wrapper(func):
 
@@ -50,10 +45,13 @@ def connection_wrapper(func):
     return wrapper
 
 
-def add_events(events, explored_date, log=None):
+def add_events(events, explored_date, table=None, log=None):
+    table = table or table1
+    table_name = table.collection.name
+
     for event in events:
 
-        row = table1.collection.add_row()
+        row = table.collection.add_row(update_views=False)
 
         for tag in TAGS_TO_NOTION:
             set_property(
@@ -63,13 +61,22 @@ def add_events(events, explored_date, log=None):
                 log=log,
             )
 
-        # event not contain explored_date field
+        # event not contain explored_date and status fields
         set_property(
             row=row,
             property_name="explored_date",
             value=explored_date,
             log=log,
         )
+
+        # status only in table3
+        if table_name == "Таблица 3":
+            set_property(
+                row=row,
+                property_name="status",
+                value="ready to post",
+                log=log,
+            )
 
 
 def remove_blank_rows(log=None):
@@ -150,7 +157,12 @@ def remove_row(row):
 
 
 def move_row(row, to_table, log=None):
-    new_row = to_table.collection.add_row()
+    if to_table.collection.name == "Таблица 3":
+        # add at the end table
+        new_row = to_table.collection.add_row()
+        set_property(new_row, "status", "ready to post", log=log)
+    else:
+        new_row = to_table.collection.add_row(update_views=False)
 
     for tag in TAGS_TO_NOTION + ["explored_date"]:
         set_property(new_row, tag, row.get_property(tag), log=log)
@@ -166,9 +178,17 @@ def next_event_id_to_channel():
     event_id = None
 
     for row in rows:
-        if not row.is_published:
-            event_id = row.get_property("id")
-            row.is_published = True
+        if row.status != "posted":
+            if row.status == "ready to post":
+                event_id = row.get_property("id")
+                set_property(row, "status", "posted")
+
+            elif row.status == "ready to skiped posting time":
+                event_id = None
+
+            else:
+                raise ValueError(f"Unavailable posting status: {row.status}")
+
             break
 
     return event_id
@@ -178,7 +198,7 @@ def not_published_count():
     count = 0
 
     for row in table3.collection.get_rows():
-        count += not row.is_published
+        count += row.status != "posted"
 
     return count
 
@@ -190,3 +210,11 @@ def events_count():
         count += len(table.collection.get_rows())
 
     return count
+
+
+def update_table_views():
+    # 💫 some magic 💫
+    # WARNING: if running background, need `> /dev/null`
+    # (see issue https://github.com/jamalex/notion-py/issues/92)
+    for t in [table1, table2, table3]:
+        print(t.collection.parent.views)
