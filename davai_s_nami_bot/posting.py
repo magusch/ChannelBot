@@ -77,7 +77,7 @@ def create(event):
     Returns:
     --------
     photo_url : str
-    
+
     post : str
     """
 
@@ -146,3 +146,7 @@ def parse_from_date(event):
 
 def parse_image(event):
     return "http://" + event.poster_imag
+
+
+def parse_id(event):
+    return event.id

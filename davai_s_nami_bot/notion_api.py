@@ -18,19 +18,22 @@ TAGS_TO_NOTION = {
     "URL": posting.parse_url,
     "From_date": posting.parse_from_date,
     "Image": posting.parse_image,
+    "Event_id": posting.parse_id,
 }
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
-SERVICE_TABLE_URL = os.environ.get("SERVICE_TABLE_URL")
+NOTION_POSTING_TIME_URL = os.environ.get("NOTION_POSTING_TIME_URL")
+NOTION_EVERYDAY_TIME_URL = os.environ.get("NOTION_EVERYDAY_TASK_TIME_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
-service_table = notion_client.get_collection_view(SERVICE_TABLE_URL)
+notion_posting_time = notion_client.get_collection_view(NOTION_POSTING_TIME_URL)
+notion_everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TASK_TIME_URL)
 
 
 def connection_wrapper(func):
@@ -52,12 +55,10 @@ def connection_wrapper(func):
 
 def add_events(events, explored_date, table=None, log=None):
     table = table or table1
-    event_id = get_last_event_id()
 
     for event in events:
 
         row = table.collection.add_row(update_views=False)
-        event_id += 1
 
         for tag, parse_func in TAGS_TO_NOTION.items():
             set_property(
@@ -66,14 +67,6 @@ def add_events(events, explored_date, table=None, log=None):
                 value=parse_func(event),
                 log=log,
             )
-
-        # set unique event_id
-        set_property(
-            row=row,
-            property_name="Event_id",
-            value=event_id,
-            log=log,
-        )
 
         # event not contain "Explored date" and "Status" fields
         set_property(
@@ -91,8 +84,6 @@ def add_events(events, explored_date, table=None, log=None):
                 value="Ready to post",
                 log=log,
             )
-
-    set_last_event_id(event_id)
 
 
 def remove_blank_rows(log=None):
@@ -196,9 +187,8 @@ def next_event_to_channel():
     for row in rows:
         if row.status != "Posted":
             if row.status == "Ready to post":
-                event = namedtuple("event", list(TAGS_TO_NOTION.keys()) + ["Event_id"])(
+                event = namedtuple("event", list(TAGS_TO_NOTION.keys()))(
                     **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
-                    Event_id=row.get_property("Event_id"),
                 )
                 set_property(row, "status", "Posted")
 
@@ -244,25 +234,29 @@ def events_count():
     return count
 
 
+def get_posting_times():
+    weekday_times = list()
+    weekend_times = list()
+
+    for row in notion_posting_time.collection.get_rows():
+        weekday_times.append(row.get_property("weekday"))
+        weekend_times.append(row.get_property("weekend"))
+
+    return weekday_times, weekend_times
+
+
+def get_everyday_times():
+    everyday_times = dict()
+
+    for row in notion_everyday_times.collection.get_rows():
+        everyday_times[row.get_property("name")] = row.get_property("everyday")
+
+    return everyday_times
+
+
 def update_table_views():
     # 💫 some magic 💫
     # WARNING: if running background, need `> /dev/null`
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)
-
-
-def get_service_row(varname):
-    for row in service_table.collection.get_rows():
-        if row.get_property("varname") == varname:
-            return row
-
-
-def get_last_event_id():
-    row = get_service_row("last_event_id")
-    return int(row.get_property("value"))
-
-
-def set_last_event_id(event_id):
-    row = get_service_row("last_event_id")
-    set_property(row, "value", str(event_id))

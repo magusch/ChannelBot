@@ -115,7 +115,15 @@ def approved_organization_filter(events):
 
 @connection_wrapper
 def _get(*args, **kwargs):
-    return timepad_parser.get_events(*args, **kwargs)
+    data = timepad_parser.get_events(*args, **kwargs)
+    event_with_prepare_id = list()
+
+    for event in data:
+        event_with_prepare_id.append(
+            event._replace(id="TP-" + str(event.id))
+        )
+
+    return event_with_prepare_id
 
 
 def from_approved_organizations(days, log, **kwargs):

@@ -13,7 +13,6 @@ from prefect.core import Edge
 from prefect.schedules import filters
 from prefect.schedules.schedules import Schedule
 from prefect.schedules.clocks import IntervalClock
-from prefect import Flow, Task
 
 from .utils import get_token
 from . import database
@@ -31,21 +30,26 @@ LOG_FILE = "bot_logs.txt"
 maxsize = (1920, 1080)
 
 
+class Task:
+    def __init__(self, logger):
+        self.log = logger.getChild(self.__name__)
+
+
 class PrepareEvents(Task):
     def update_today_time(self):
         global utc_today, msk_today
         utc_today = datetime.utcnow()
         msk_today = datetime.now()
 
-    def move_approved(self, log):
-        log.info("Move approved events from table1 and table2 to table3")
-        notion_api.move_approved(log=log)
+    def move_approved(self):
+        self.log.info("Move approved events from table1 and table2 to table3")
+        notion_api.move_approved(log=self.log)
 
-    def check_status(self, log):
+    def check_status(self):
         """
         Checking event status in table3 and update posting time.
         """
-        log.info("Check events posting status")
+        self.log.info("Check events posting status")
 
         posting_datetimes = self.posting_datetimes(msk_today)
         for row in notion_api.table3.collection.get_rows():
@@ -115,14 +119,14 @@ class PrepareEvents(Task):
             yield [i.replace(**ymd) for i in datetimes]
 
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.PrepareEvents")
         self.update_today_time()
 
         # in case changed table views
         notion_api.update_table_views()
 
-        self.move_approved(log)
-        self.check_status(log)
+        self.move_approved()
+        self.check_status()
+
 
 class IsEmptyCheck(Task):
     """
@@ -146,18 +150,16 @@ class IsEmptyCheck(Task):
 
 class PostingEvent(Task):
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
-
         if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
-            log.info("Check posting status")
+            self.log.info("Check posting status")
 
             event = notion_api.next_event_to_channel()
 
             if event is None:
-                log.info("Skipping posting time")
+                self.log.info("Skipping posting time")
                 return
 
-            log.info("Generating post.")
+            self.log.info("Generating post.")
             photo_url, post = posting.create(event)
 
             if photo_url is None:
@@ -200,43 +202,41 @@ class PostingEvent(Task):
 
 
 class UpdateEvents(Task):
-    def remove_old(self, log):
-        log.info("Removing old events")
-        notion_api.remove_old_events(msk_today + timedelta(hours=1), log=log)
+    def remove_old(self):
+        self.log.info("Removing old events")
+        notion_api.remove_old_events(msk_today + timedelta(hours=1), log=self.log)
         database.remove(msk_today + timedelta(hours=1))
 
-    def update_events(self, events, log, table=None):
-        log.info("Checking for existing events")
+    def update_events(self, events, table=None):
+        self.log.info("Checking for existing events")
 
         new_events = notion_api.get_new_events(events)
-        log.info(f"New evenst count = {len(new_events)}")
+        self.log.info(f"New evenst count = {len(new_events)}")
 
-        log.info("Updating notion table")
-        notion_api.add_events(new_events, msk_today, table=table, log=log)
+        self.log.info("Updating notion table")
+        notion_api.add_events(new_events, msk_today, table=table, log=self.log)
 
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
-
         if utc_today.strftime("%H:%M") in strftime_event_updating:
-            log.info("Start updating events.")
+            self.log.info("Start updating events.")
 
-            self.remove_old(log)
+            self.remove_old()
 
-            log.info("Getting events from approved organizations for next 7 days")
-            approved_events = events.from_approved_organizations(days=7, log=log)
-            log.info(f"Collected {len(approved_events)} approved events.")
+            self.log.info("Getting events from approved organizations for next 7 days")
+            approved_events = events.from_approved_organizations(days=7, log=self.log)
+            self.log.info(f"Collected {len(approved_events)} approved events.")
 
-            self.update_events(approved_events, log, table=notion_api.table3)
+            self.update_events(approved_events, table=notion_api.table3)
 
-            log.info("Getting new events from other organizations for next 7 days")
-            other_events = events.from_not_approved_organizations(days=7, log=log)
-            log.info(f"Collected {len(other_events)} events")
+            self.log.info("Getting new events from other organizations for next 7 days")
+            other_events = events.from_not_approved_organizations(days=7, log=self.log)
+            self.log.info(f"Collected {len(other_events)} events")
 
-            self.update_events(other_events, log, table=notion_api.table1)
+            self.update_events(other_events, table=notion_api.table1)
 
             notion_count = notion_api.events_count()
 
-            log.info(f"Events count in notion table: {notion_count}")
+            self.log.info(f"Events count in notion table: {notion_count}")
 
 
 class Formatter(logging.Formatter):
@@ -252,7 +252,7 @@ class Formatter(logging.Formatter):
         return MSK_TZ.localize(dt)
 
     def format(self, record):
-        if record.name == "prefect.DavaiSNami":
+        if record.name == "DavaiSNami":
             str_time = record.message[-25:]
             message = record.message[:-25]
 
@@ -287,6 +287,18 @@ class Formatter(logging.Formatter):
         return s
 
 
+class Flow:
+    def __init__(self, graph):
+        self.graph = graph
+
+    def run(self):
+        self.execute_graph()
+
+    def execute_graph(self):
+        for task in graph:
+            task.run()
+
+
 def scheduling_filter(dt):
     strftime = dt.strftime("%H:%M")
     return (
@@ -313,83 +325,57 @@ def get_strftimes(scheduled_times):
 
 
 def run():
+    default_task_times = notion_api.get_task_times()
+
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
-    global weekday_posting_times, weekend_posting_times, everyday_posting_times
+    global weekday_posting_times, weekend_posting_times
 
-    weekday_posting_times = [
-        today.replace(hour=9, minute=30),
-        today.replace(hour=12, minute=00),
-        today.replace(hour=14, minute=20),
-        today.replace(hour=16, minute=30),
-    ]
-    weekend_posting_times = [
-        today.replace(hour=11, minute=00),
-        today.replace(hour=12, minute=30),
-        today.replace(hour=14, minute=40),
-        today.replace(hour=17, minute=00),
-    ]
-    everyday_posting_times = [
-        today.replace(hour=18, minute=40),
-    ]
-    everyday_task_times = [
-        today.replace(hour=16, minute=8),
-    ]
+    weekday_posting_times, weekend_posting_times = notion_api.get_posting_times()
+    everyday_task_times = notion_api.get_everyday_times()  # dict(task_name=strftime)
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating
 
-    strftime_event_updating = get_strftimes(everyday_task_times)
-    strftimes_weekday = get_strftimes(weekday_posting_times+everyday_posting_times)
-    strftimes_weekend = get_strftimes(weekend_posting_times+everyday_posting_times)
+    strftime_event_updating = get_strftimes(everyday_task_times["update_events"])
+    strftimes_weekday = get_strftimes(weekday_posting_times)
+    strftimes_weekend = get_strftimes(weekend_posting_times)
 
     all_task_times = convert_to_utc(
         scheduled_times=(
             weekday_posting_times
             + weekend_posting_times
-            + everyday_posting_times
-            + everyday_task_times
+            + list(everyday_task_times.values()]
         ),
         utcoffset=MSK_UTCOFFSET,
     )
 
-    schedule_clocks = [
-        IntervalClock(
-            interval=timedelta(days=1),
-            start_date=today.replace(hour=i.hour, minute=i.minute)
-        )
-        for i in all_task_times
-    ]
+    # schedule_clocks = [
+    #     IntervalClock(
+    #         interval=timedelta(days=1),
+    #         start_date=today.replace(hour=i.hour, minute=i.minute)
+    #     )
+    #     for i in all_task_times
+    # ]
 
-    schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
-
-    # create tasks graph
-    prepare_events = PrepareEvents()
-    is_empty_check = IsEmptyCheck()
-    posting_event = PostingEvent()
-    update_events = UpdateEvents()
-
-    edges = [
-        Edge(prepare_events, is_empty_check),
-        Edge(is_empty_check, posting_event),
-        Edge(posting_event, update_events),
-    ]
-
-    flow = Flow(
-        name="DavaiSNami",
-        schedule=schedule,
-        edges=edges,
-    )
+    # schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
 
     # prepare logging
-    prefect_logger = prefect.utilities.logging.get_logger()
-    prefect_formatter = prefect_logger.handlers[0].formatter
-    formatter = Formatter(prefect_formatter._fmt)
+    logger = logging.getLogger("DavaiSNami")
 
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.DEBUG)
+    formatter = Formatter("[%(asctime)s] %(name)s - %(levelname)s | %(message)s")
     file_handler.setFormatter(formatter)
 
-    prefect_logger.addHandler(file_handler)
+    logger.addHandler(file_handler)
 
+    graph = (
+        PrepareEvents(log=logger),
+        IsEmptyCheck(log=logger),
+        PostingEvent(log=logger),
+        UpdateEvents(log=logger),
+    )
+
+    flow = Flow(graph)
     flow.run()
