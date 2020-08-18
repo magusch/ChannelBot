@@ -47,18 +47,16 @@ CATEGORY_IDS_EXCLUDE = [
     "461",  # Экскурсии и путешествия
     "462",  # Другие события
 ]
+STARTS_AT_MIN = "{year_month_day}T11:00:00"
+STARTS_AT_MAX = "{year_month_day}T23:59:00"
 TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
-    starts_at_min="{year_month_day}T11:00:00",
-    starts_at_max="{year_month_day}T23:59:00",
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
     organization_ids=", ".join(APPROVED_ORGANIZATIONS),
 )
 TIMEPAD_OTHERS_PARAMS = dict(
     limit=100,
-    starts_at_min="{year_month_day}T11:00:00",
-    starts_at_max="{year_month_day}T23:59:00",
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
     organization_ids_exclude=", ".join(APPROVED_ORGANIZATIONS)+", " + ", ".join(UNAPPROVED_ORGANIZATIONS)      ,
@@ -121,7 +119,7 @@ def from_approved_organizations(days, log, **kwargs):
     """
     return get_events(
         days,
-        TIMEPAD_APPROVED_PARAMS,
+        TIMEPAD_APPROVED_PARAMS.copy(),
         log,
         events_filter=approved_organization_filter,
         **kwargs,
@@ -131,7 +129,7 @@ def from_approved_organizations(days, log, **kwargs):
 def from_not_approved_organizations(days, log, **kwargs):
     return get_events(
         days,
-        TIMEPAD_OTHERS_PARAMS,
+        TIMEPAD_OTHERS_PARAMS.copy(),
         log,
         events_filter=not_approved_organization_filter,
         **kwargs,
@@ -149,10 +147,10 @@ def get_events(days, request_params, log, events_filter=None, with_online=True):
         )
 
     today = date.today()
-    request_params["starts_at_min"] = request_params["starts_at_min"].format(
+    request_params["starts_at_min"] = STARTS_AT_MIN.format(
         year_month_day=today.strftime("%Y-%m-%d")
     )
-    request_params["starts_at_max"] = request_params["starts_at_max"].format(
+    request_params["starts_at_max"] = STARTS_AT_MAX.format(
         year_month_day=(today + timedelta(days=days)).strftime("%Y-%m-%d")
     )
 
