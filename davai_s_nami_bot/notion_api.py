@@ -33,7 +33,7 @@ table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 notion_posting_time = notion_client.get_collection_view(NOTION_POSTING_TIME_URL)
-notion_everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TASK_TIME_URL)
+notion_everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIME_URL)
 
 
 def connection_wrapper(func):

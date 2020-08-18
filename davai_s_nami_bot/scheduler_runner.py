@@ -32,7 +32,7 @@ maxsize = (1920, 1080)
 
 class Task:
     def __init__(self, logger):
-        self.log = logger.getChild(self.__name__)
+        self.log = logger.getChild(self.__class__.__name__)
 
 
 class PrepareEvents(Task):
@@ -263,7 +263,7 @@ class Formatter(logging.Formatter):
             self.send_logs()
 
         else:
-            message = record.message
+            message = record.msg
 
         if record.exc_info:
             message += record.exc_text
@@ -295,7 +295,7 @@ class Flow:
         self.execute_graph()
 
     def execute_graph(self):
-        for task in graph:
+        for task in self.graph:
             task.run()
 
 
@@ -325,30 +325,22 @@ def get_strftimes(scheduled_times):
 
 
 def run():
-    default_task_times = notion_api.get_task_times()
-
     seconds = dict(second=00, microsecond=00)
     today = datetime.utcnow().replace(**seconds)
 
-    global weekday_posting_times, weekend_posting_times
+    global weekday_posting_strftimes, weekend_posting_strftimes, everyday_task_strftimes
 
-    weekday_posting_times, weekend_posting_times = notion_api.get_posting_times()
-    everyday_task_times = notion_api.get_everyday_times()  # dict(task_name=strftime)
+    weekday_posting_strftimes, weekend_posting_strftimes = notion_api.get_posting_times()
+    everyday_task_strftimes = notion_api.get_everyday_times()  # dict(task_name=strftime)
 
-    global strftimes_weekday, strftimes_weekend, strftime_event_updating
-
-    strftime_event_updating = get_strftimes(everyday_task_times["update_events"])
-    strftimes_weekday = get_strftimes(weekday_posting_times)
-    strftimes_weekend = get_strftimes(weekend_posting_times)
-
-    all_task_times = convert_to_utc(
-        scheduled_times=(
-            weekday_posting_times
-            + weekend_posting_times
-            + list(everyday_task_times.values()]
-        ),
-        utcoffset=MSK_UTCOFFSET,
-    )
+    # all_task_times = convert_to_utc(
+    #     scheduled_times=(
+    #         weekday_posting_times
+    #         + weekend_posting_times
+    #         + list(everyday_task_times.values())
+    #     ),
+    #     utcoffset=MSK_UTCOFFSET,
+    # )
 
     # schedule_clocks = [
     #     IntervalClock(
@@ -362,6 +354,7 @@ def run():
 
     # prepare logging
     logger = logging.getLogger("DavaiSNami")
+    logger.setLevel(logging.DEBUG)
 
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.DEBUG)
@@ -371,10 +364,10 @@ def run():
     logger.addHandler(file_handler)
 
     graph = (
-        PrepareEvents(log=logger),
-        IsEmptyCheck(log=logger),
-        PostingEvent(log=logger),
-        UpdateEvents(log=logger),
+        PrepareEvents(logger=logger),
+        IsEmptyCheck(logger=logger),
+        PostingEvent(logger=logger),
+        UpdateEvents(logger=logger),
     )
 
     flow = Flow(graph)
