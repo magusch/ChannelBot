@@ -45,6 +45,11 @@ class PrepareEvents(Task):
         """
         Checking event status in table3 and update posting time.
         """
+        if utc_today.strftime("%H:%M") not in strftimes_weekday + strftimes_weekend:
+            # update only events in tables, not event status
+            log.info("Event status update occurs in the posting datetime.")
+            return
+
         log.info("Check events posting status")
 
         posting_datetimes = self.posting_datetimes(msk_today)
