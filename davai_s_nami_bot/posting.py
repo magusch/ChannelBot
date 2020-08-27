@@ -102,7 +102,7 @@ def create(event_id):
     Returns:
     --------
     photo_url : str
-    
+
     post : str
     """
 
@@ -112,7 +112,11 @@ def create(event_id):
         day=event.date_from.day,
         month=month_name(event.date_from),
     )
-    date_from_to = date_to_post(event.date_from, event.date_to)
+    if event.date_from_to is not None:
+        date_from_to = event.date_from_to
+    else:
+        date_from_to = date_to_post(event.date_from, event.date_to)
+
     title = (
         event.title
         .replace("`", "\`")

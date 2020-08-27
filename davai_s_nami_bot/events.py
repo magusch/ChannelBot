@@ -178,5 +178,20 @@ def get_events(days, request_params, log, events_filter=None, with_online=True):
     return unique(today_events)  # checking for unique -- just in case
 
 
+def from_timepad():
+    pass
+
+
+def from_radario():
+    category = [
+        "concert",
+        "theatre",
+        "sport",
+        "entertainment",
+        "kids",
+        "show",
+    ]
+    radario.get_events(date_from, date_to, category=category)
+
 def unique(events):
     return set(events)
