@@ -1,5 +1,6 @@
 import datetime
 from datetime import date
+from collections import namedtuple
 import os
 import time
 from functools import partial
@@ -8,25 +9,31 @@ import requests
 
 from notion.client import NotionClient
 
+from . import posting
 
-TAGS_TO_NOTION = [
-    "Event_id",
-    "Title",
-    "From_date",
-    "Post",
-    "Image",
-    "URL",
-]
+
+TAGS_TO_NOTION = {
+    "Title": posting.parse_title,
+    "Post": posting.parse_post,
+    "URL": posting.parse_url,
+    "From_date": posting.parse_from_date,
+    "Image": posting.parse_image,
+    "Event_id": posting.parse_id,
+}
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
+NOTION_POSTING_TIME_URL = os.environ.get("NOTION_POSTING_TIME_URL")
+NOTION_EVERYDAY_TIME_URL = os.environ.get("NOTION_EVERYDAY_TASK_TIME_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
+notion_posting_time = notion_client.get_collection_view(NOTION_POSTING_TIME_URL)
+notion_everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIME_URL)
 
 
 def connection_wrapper(func):
@@ -48,34 +55,33 @@ def connection_wrapper(func):
 
 def add_events(events, explored_date, table=None, log=None):
     table = table or table1
-    table_name = table.collection.name
 
     for event in events:
 
         row = table.collection.add_row(update_views=False)
 
-        for tag in TAGS_TO_NOTION:
+        for tag, parse_func in TAGS_TO_NOTION.items():
             set_property(
                 row=row,
                 property_name=tag,
-                value=getattr(event, tag),
+                value=parse_func(event),
                 log=log,
             )
 
-        # event not contain explored_date and status fields
+        # event not contain "Explored date" and "Status" fields
         set_property(
             row=row,
-            property_name="explored_date",
+            property_name="Explored date",
             value=explored_date,
             log=log,
         )
 
         # status only in table3
-        if table_name == "Таблица 3":
+        if table is table3:
             set_property(
                 row=row,
-                property_name="status",
-                value="ready to post",
+                property_name="Status",
+                value="Ready to post",
                 log=log,
             )
 
@@ -92,7 +98,7 @@ def remove_blank_rows(log=None):
             remove_row(row, log=log)
 
 
-def remove_old_events(removing_ids, msk_date, log=None):
+def remove_old_events(msk_date, log=None):
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
@@ -111,7 +117,7 @@ def remove_old_events(removing_ids, msk_date, log=None):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if row.get_property("Event_id") in removing_ids:
+            if row.get_property("From_date").start < msk_date:
                 remove_row(row, log=log)
 
             elif check_func:
@@ -149,7 +155,7 @@ def move_approved(log=None):
 
 @connection_wrapper
 def set_property(row, property_name, value):
-    setattr(row, property_name, value)
+    row.set_property(property_name, value)
 
 
 @connection_wrapper
@@ -158,48 +164,63 @@ def remove_row(row):
 
 
 def move_row(row, to_table, log=None):
-    if to_table.collection.name == "Таблица 3":
+    if to_table is table3:
         # add at the end table
         new_row = to_table.collection.add_row()
-        set_property(new_row, "status", "ready to post", log=log)
+        set_property(new_row, "status", "Ready to post", log=log)
     else:
         new_row = to_table.collection.add_row(update_views=False)
 
-    for tag in TAGS_TO_NOTION + ["Explored date"]:
+    for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
         set_property(new_row, tag, row.get_property(tag), log=log)
 
     remove_row(row, log=log)
 
 
-def next_event_id_to_channel():
+def next_event_to_channel():
     """
-    Getting next event id from table 3 (from up to down).
+    Getting next event (namedtuple) from table 3 (from up to down).
     """
     rows = table3.collection.get_rows()
-    event_id = None
+    event = None
 
     for row in rows:
-        if row.status != "posted":
-            if row.status == "ready to post":
-                event_id = row.get_property("Event_id")
-                set_property(row, "status", "posted")
+        if row.status != "Posted":
+            if row.status == "Ready to post":
+                event = namedtuple("event", list(TAGS_TO_NOTION.keys()))(
+                    **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
+                )
+                set_property(row, "status", "Posted")
 
-            elif row.status == "ready to skiped posting time":
-                event_id = None
+            elif row.status == "Ready to skiped posting time":
+                pass
 
             else:
                 raise ValueError(f"Unavailable posting status: {row.status}")
 
             break
 
-    return event_id
+    return event
 
+
+def get_new_events(events):
+    existing_ids = list()
+    for table in [table1, table2, table3]:
+        for row in table.collection.get_rows():
+            existing_ids.append(row.get_property("Event_id"))
+
+    new_events = list()
+    for event in events:
+        if event.id not in existing_ids:
+            new_events.append(event)
+
+    return new_events
 
 def not_published_count():
     count = 0
 
     for row in table3.collection.get_rows():
-        count += row.status != "posted"
+        count += row.status != "Posted"
 
     return count
 
@@ -211,6 +232,26 @@ def events_count():
         count += len(table.collection.get_rows())
 
     return count
+
+
+def get_posting_times():
+    weekday_times = list()
+    weekend_times = list()
+
+    for row in notion_posting_time.collection.get_rows():
+        weekday_times.append(row.get_property("weekday"))
+        weekend_times.append(row.get_property("weekend"))
+
+    return weekday_times, weekend_times
+
+
+def get_everyday_times():
+    everyday_times = dict()
+
+    for row in notion_everyday_times.collection.get_rows():
+        everyday_times[row.get_property("name")] = row.get_property("everyday")
+
+    return everyday_times
 
 
 def update_table_views():

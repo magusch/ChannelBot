@@ -1,4 +1,4 @@
-from davai_s_nami_bot import scheduler
+from davai_s_nami_bot import scheduler_runner
 
 
-scheduler.run()
+scheduler_runner.run()

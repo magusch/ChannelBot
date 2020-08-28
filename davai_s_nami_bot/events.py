@@ -26,7 +26,7 @@ APPROVED_ORGANIZATIONS = [
     "75134",  # Ленфильм
 ]
 
-UNAPPROVED_ORGANIZATIONS = [
+BORING_ORGANIZATIONS = [
     "185394", #Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
     "106118", #АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
     "212547", #Иерусалимская Сказка
@@ -59,7 +59,10 @@ TIMEPAD_OTHERS_PARAMS = dict(
     limit=100,
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
-    organization_ids_exclude=", ".join(APPROVED_ORGANIZATIONS)+", " + ", ".join(UNAPPROVED_ORGANIZATIONS)      ,
+    organization_ids_exclude=(
+        ", ".join(APPROVED_ORGANIZATIONS)
+        + ", " + ", ".join(BORING_ORGANIZATIONS)
+    ),
     price_max=500,
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
