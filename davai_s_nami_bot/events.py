@@ -2,7 +2,7 @@ import time
 from collections import Counter
 from datetime import date, timedelta
 
-from escraper.parsers import Timepad, ALL_EVENT_TAGS
+from escraper.parsers import Timepad, Radario, ALL_EVENT_TAGS
 
 from .notion_api import connection_wrapper
 
@@ -67,6 +67,7 @@ TIMEPAD_OTHERS_PARAMS = dict(
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 timepad_parser = Timepad()
+radario_parser = Radario()
 
 
 def not_approved_organization_filter(events):
@@ -109,15 +110,15 @@ def approved_organization_filter(events):
 
 
 @connection_wrapper
-def _get(*args, **kwargs):
-    return timepad_parser.get_events(*args, **kwargs)
+def _get_events(parser, *args, **kwargs):
+    return parser.get_events(*args, **kwargs)
 
 
 def from_approved_organizations(days, log, **kwargs):
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
     """
-    return get_events(
+    return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
         log,
@@ -126,17 +127,19 @@ def from_approved_organizations(days, log, **kwargs):
     )
 
 
-def from_not_approved_organizations(days, log, **kwargs):
-    return get_events(
+def from_not_approved_organizations(days, log):
+    timepad_events = get_timpad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
         log,
         events_filter=not_approved_organization_filter,
-        **kwargs,
     )
+    radario_events = get_radario_events(days, log=log)
+
+    return timepad_events + radario_events
 
 
-def get_events(days, request_params, log, events_filter=None, with_online=True):
+def get_timepad_events(days, request_params, log, events_filter=None, with_online=True):
     """
     Getting events.
     """
@@ -158,31 +161,32 @@ def get_events(days, request_params, log, events_filter=None, with_online=True):
         request_params["cities"] += ", Без города"
 
     # for getting all events (max limit 100)
-    today_events = list()
+    new_events = list()
     count = 0
-    new_items = 1
-    while new_items > 0:
+    new_count = 1
+    while new_count > 0:
         request_params["skip"] = count
 
-        new = _get(request_params=request_params, tags=ALL_EVENT_TAGS, log=log)
-        new_items = len(new)
+        new = _get_events(
+            timepad_parser,
+            request_params=request_params,
+            tags=ALL_EVENT_TAGS,
+            log=log,
+        )
+        new_count = len(new)
 
-        today_events += new
-        count += new_items
+        new_events += new
+        count += new_count
 
         time.sleep(1)
 
     if events_filter:
-        today_events = events_filter(today_events)
+        new_events = events_filter(new_events)
 
-    return unique(today_events)  # checking for unique -- just in case
-
-
-def from_timepad():
-    pass
+    return unique(new_events)  # checking for unique -- just in case
 
 
-def from_radario():
+def get_radario_events(days, log=None):
     category = [
         "concert",
         "theatre",
@@ -191,7 +195,19 @@ def from_radario():
         "kids",
         "show",
     ]
-    radario.get_events(date_from, date_to, category=category)
+    today = date.today()
+    date_from = today
+    date_to = today + timedelta(days=days)
+
+    new_events = _get_events(
+        radario_parser,
+        date_from=date_from,
+        date_to=date_to,
+        category=category,
+    )
+
+    return unique(new_events)
+
 
 def unique(events):
     return set(events)
