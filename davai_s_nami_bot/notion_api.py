@@ -24,16 +24,12 @@ NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
-NOTION_POSTING_TIME_URL = os.environ.get("NOTION_POSTING_TIME_URL")
-NOTION_EVERYDAY_TIME_URL = os.environ.get("NOTION_EVERYDAY_TASK_TIME_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
-notion_posting_time = notion_client.get_collection_view(NOTION_POSTING_TIME_URL)
-notion_everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIME_URL)
 
 
 def connection_wrapper(func):

@@ -131,10 +131,10 @@ def from_approved_organizations(days, log, **kwargs):
 
 
 def from_not_approved_organizations(days, log):
-    timepad_events = get_timpad_events(
+    timepad_events = get_timepad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
-        log,
+        log=log,
         events_filter=not_approved_organization_filter,
     )
     radario_events = get_radario_events(days, log=log)
@@ -189,7 +189,7 @@ def get_timepad_events(days, request_params, log, events_filter=None, with_onlin
     return unique(new_events)  # checking for unique -- just in case
 
 
-def get_radario_events(days, log=None):
+def get_radario_events(days, events_filter=None, log=None):
     category = [
         "concert",
         "theatre",
@@ -204,10 +204,14 @@ def get_radario_events(days, log=None):
 
     new_events = _get_events(
         radario_parser,
+        log=log,
         date_from=date_from,
         date_to=date_to,
         category=category,
     )
+
+    if events_filter:
+        new_events = events_filter(new_events)
 
     return unique(new_events)
 
