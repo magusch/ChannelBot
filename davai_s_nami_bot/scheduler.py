@@ -355,7 +355,7 @@ def run():
         today.replace(hour=18, minute=40),
     ]
     everyday_task_times = [
-        today.replace(hour=00, minute=00),
+        today.replace(hour=16, minute=59),
     ]
 
     global strftimes_weekday, strftimes_weekend, strftime_event_updating

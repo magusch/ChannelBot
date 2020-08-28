@@ -19,10 +19,11 @@ DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
 DATABASE_URL = os.environ.get("DATABASE_URL")
+TABLE_NAME = "timepad_and_radario_events"
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "
-    "WHERE table_name='events'"
+    f"WHERE table_name='{TABLE_NAME}'"
 )
 if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
@@ -86,7 +87,7 @@ def _get(script):
 def get_new_events_id(events):
     db_cursor = get_db_cursor()
 
-    db_cursor.execute("SELECT id FROM events")
+    db_cursor.execute(f"SELECT id FROM {TABLE_NAME}")
     database_ids = [i[0] for i in db_cursor.fetchall()]
 
     db_cursor.close()
@@ -102,9 +103,10 @@ def get_new_events_id(events):
 
 def get_event_by_id(event_id):
     script = (
-        "SELECT {columns} FROM events WHERE id = {id}"
+        "SELECT {columns} FROM {table_name} WHERE id = {id}"
         .format(
             columns=", ".join(ALL_EVENT_TAGS),
+            table_name=TABLE_NAME,
             id=event_id,
         )
     )
@@ -124,7 +126,7 @@ def get_event_by_id(event_id):
 def add(events):
     # required date as third element ALL_EVENT_TAGS
     script = (
-        "INSERT INTO events "
+        f"INSERT INTO {TABLE_NAME} "
         f"({', '.join(ALL_EVENT_TAGS)}) values "
     )
     placeholder = (
@@ -143,7 +145,7 @@ def add(events):
 
 def old_events(date):
     db_cursor = get_db_cursor()
-    script = "SELECT id FROM events WHERE date_from < cast(%s as TIMESTAMP)"
+    script = f"SELECT id FROM {TABLE_NAME} WHERE date_from < cast(%s as TIMESTAMP)"
     db_cursor.execute(script, [date])
 
     events_id = [i[0] for i in db_cursor.fetchall()]
@@ -156,19 +158,22 @@ def old_events(date):
 def remove(events_id):
     if events_id:
         script = (
-            "DELETE FROM events WHERE id IN ({})"
-            .format("".join(["%s, " for _ in events_id])[:-2])
+            "DELETE FROM {table_name} WHERE id IN ({ids})"
+            .format(
+                table_name=TABLE_NAME,
+                ids="".join(["%s, " for _ in events_id])[:-2]
+            )
         )
 
         _insert(script, events_id)
 
 
 def update_post_id(event_id, post_id):
-    script = "UPDATE events SET post_id = %s WHERE id = %s"
+    script = f"UPDATE {TABLE_NAME} SET post_id = %s WHERE id = %s"
 
     _insert(script, [post_id, event_id])
 
 
 def events_count():
-    script = "SELECT id FROM events"
+    script = f"SELECT id FROM {TABLE_NAME}"
     return len(_get(script))

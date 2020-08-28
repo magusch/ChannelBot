@@ -10,11 +10,12 @@ from notion.client import NotionClient
 
 
 TAGS_TO_NOTION = [
-    "id",
-    "title",
-    "category",
-    "url",
-    "date_from",
+    "Event_id",
+    "Title",
+    "From_date",
+    "Post",
+    "Image",
+    "URL",
 ]
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
@@ -87,7 +88,7 @@ def remove_blank_rows(log=None):
     )
 
     for row in rows:
-        if row.get_property("id") is None:
+        if row.get_property("Event_id") is None:
             remove_row(row, log=log)
 
 
@@ -110,7 +111,7 @@ def remove_old_events(removing_ids, msk_date, log=None):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if row.get_property("id") in removing_ids:
+            if row.get_property("Event_id") in removing_ids:
                 remove_row(row, log=log)
 
             elif check_func:
@@ -164,7 +165,7 @@ def move_row(row, to_table, log=None):
     else:
         new_row = to_table.collection.add_row(update_views=False)
 
-    for tag in TAGS_TO_NOTION + ["explored_date"]:
+    for tag in TAGS_TO_NOTION + ["Explored date"]:
         set_property(new_row, tag, row.get_property(tag), log=log)
 
     remove_row(row, log=log)
@@ -180,7 +181,7 @@ def next_event_id_to_channel():
     for row in rows:
         if row.status != "posted":
             if row.status == "ready to post":
-                event_id = row.get_property("id")
+                event_id = row.get_property("Event_id")
                 set_property(row, "status", "posted")
 
             elif row.status == "ready to skiped posting time":
