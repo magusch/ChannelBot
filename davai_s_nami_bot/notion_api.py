@@ -17,6 +17,7 @@ TAGS_TO_NOTION = {
     "Post": posting.parse_post,
     "URL": posting.parse_url,
     "From_date": posting.parse_from_date,
+    "To_date": posting.parse_to_date,
     "Image": posting.parse_image,
     "Event_id": posting.parse_id,
 }

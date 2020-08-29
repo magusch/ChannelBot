@@ -126,5 +126,4 @@ def event_by_date(dt):
         events.append(
             dict(title=values[1], post_id=values[2])
         )
-
     return events
