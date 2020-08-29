@@ -112,10 +112,18 @@ def parse_post(event):
     title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
     title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
 
-    title_date = "{day} {month}".format(
-        day=event.date_from.day,
-        month=month_name(event.date_from),
-    )
+    if event.date_from_to is not None:
+        date_from_to = event.date_from_to
+        title_date = event.date_from_to.split(",")[0]
+
+    else:
+        date_from_to = date_to_post(event.date_from, event.date_to)
+
+        title_date = "{day} {month}".format(
+            day=event.date_from.day,
+            month=month_name(event.date_from),
+        )
+
     title = f"**{title_date}** {title}\n\n"
 
     post_text = (
@@ -124,11 +132,6 @@ def parse_post(event):
         .replace("_", "\_")
         .replace("*", "\*")
     )
-
-    if event.date_from_to is not None:
-        date_from_to = event.date_from_to
-    else:
-        date_from_to = date_to_post(event.date_from, event.date_to)
 
     footer = (
         "\n\n"
@@ -149,7 +152,8 @@ def parse_from_date(event):
 
 
 def parse_image(event):
-    return "http://" + event.poster_imag
+    if event.poster_imag:
+        return "http://" + event.poster_imag
 
 
 def parse_id(event):

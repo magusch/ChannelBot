@@ -217,4 +217,4 @@ def get_radario_events(days, events_filter=None, log=None):
 
 
 def unique(events):
-    return set(events)
+    return list(set(events))
