@@ -149,6 +149,9 @@ def parse_url(event):
 
 def parse_from_date(event):
     return event.date_from
+    
+def parse_to_date(event):
+    return event.date_to
 
 
 def parse_image(event):
