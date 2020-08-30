@@ -10,7 +10,7 @@ __all__ = (
     "event_by_date",
 )
 
-TAGS = ["id", "title", "post_id", "event_date"]
+TAGS = ["id", "title", "post_id", "event_date", "date_to"]
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
@@ -92,6 +92,7 @@ def add(event, post_id):
         event.Title,
         post_id,
         event.From_date.start,
+        event.To_date.start,
     ]
 
     _insert(script + placeholder, data)
