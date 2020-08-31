@@ -102,27 +102,17 @@ def parse_title(event):
 
 
 def parse_post(event):
-    title = (
-        event.title
-        .replace("`", "\`")
-        .replace("_", "\_")
-        .replace("*", "\*")
-    )
+    title = parse_title(event)
 
     title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
     title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
 
-    if event.date_from_to is not None:
-        date_from_to = event.date_from_to
-        title_date = event.date_from_to.split(",")[0]
+    date_from_to = date_to_post(event.date_from, event.date_to)
 
-    else:
-        date_from_to = date_to_post(event.date_from, event.date_to)
-
-        title_date = "{day} {month}".format(
-            day=event.date_from.day,
-            month=month_name(event.date_from),
-        )
+    title_date = "{day} {month}".format(
+        day=event.date_from.day,
+        month=month_name(event.date_from),
+    )
 
     title = f"**{title_date}** {title}\n\n"
 
