@@ -85,14 +85,14 @@ def add(event, post_id):
         f"INSERT INTO {TABLE_NAME} "
         f"({', '.join(TAGS)}) values "
     )
-    placeholder = "(%s, %s, %s, cast(%s as TIMESTAMP))"
+    placeholder = "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
 
     data = [
         event.Event_id,
         event.Title,
         post_id,
-        event.From_date.start,
-        event.To_date.start,
+        None if event.From_date is None else event.From_date.start,
+        None if event.To_date is None else event.To_date.start,
     ]
 
     _insert(script + placeholder, data)

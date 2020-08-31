@@ -149,14 +149,17 @@ def parse_url(event):
 
 def parse_from_date(event):
     return event.date_from
-    
+
 def parse_to_date(event):
     return event.date_to
 
 
 def parse_image(event):
     if event.poster_imag:
-        return "http://" + event.poster_imag
+        if event.id.startswith("TIMEPAD"):
+            return "http://" + event.poster_imag
+        else:
+            return event.poster_imag
 
 
 def parse_id(event):
