@@ -91,8 +91,15 @@ def remove_blank_rows(log=None):
     )
 
     for row in rows:
-        if row.get_property("Event_id") is None:
-            remove_row(row, log=log)
+        try:
+            if row.get_property("Event_id") is None:
+                remove_row(row, log=log)
+        except TypeError as e:
+            # to avoid notion bug
+            if e.args[0] == "'NoneType' object is not iterable":
+                remove_row(row, log=log)
+            else:
+                raise e
 
 
 def remove_old_events(msk_date, log=None):
