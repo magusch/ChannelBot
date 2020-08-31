@@ -10,7 +10,7 @@ __all__ = (
     "event_by_date",
 )
 
-TAGS = ["id", "title", "post_id", "event_date", "date_to"]
+TAGS = ["id", "title", "post_id", "date_from", "date_to"]
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
@@ -100,7 +100,7 @@ def add(event, post_id):
 
 def remove(date):
     script = (
-        "DELETE FROM {table} WHERE event_date < cast(%s as TIMESTAMP)"
+        "DELETE FROM {table} WHERE date_from < cast(%s as TIMESTAMP)"
         .format(table=TABLE_NAME)
     )
 
@@ -119,7 +119,7 @@ def event_by_date(dt):
     """
     script = (
         f"SELECT ({', '.join(TAGS)}) FROM {TABLE_NAME}"
-        "WHERE event_datetime = cast(%s as TIMESTAMP)"
+        "WHERE date_from = cast(%s as TIMESTAMP)"
     )
 
     events = list()
