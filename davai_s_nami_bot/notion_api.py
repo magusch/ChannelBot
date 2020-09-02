@@ -55,7 +55,10 @@ def add_events(events, explored_date, table=None, log=None):
 
     for event in events:
 
-        row = table.collection.add_row(update_views=False)
+        if table is table3:
+            row = table.collection.add_row(update_views=True)
+        else:
+            row = table.collection.add_row(update_views=False)
 
         for tag, parse_func in TAGS_TO_NOTION.items():
             set_property(
