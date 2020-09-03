@@ -1,17 +1,22 @@
-CREATE TABLE IF NOT EXISTS "events" (
-    "adress" TEXT,
-    "category" TEXT,
-    "date_from" TIMESTAMP,
-    "date_to" TIMESTAMP,
-    "id" INT NOT NULL UNIQUE,
-    "place_name" TEXT,
-    "post_text" TEXT,
-    "poster_imag" TEXT,
-    "price" TEXT,
+CREATE TABLE IF NOT EXISTS "dev_events" (
+    "id" TEXT UNIQUE,
     "title" TEXT NOT NULL,
-    "url" TEXT NOT NULL UNIQUE,
-    "is_registration_open" INTEGER,
-    "post_id" INTEGER UNIQUE,
-    CHECK ("is_registration_open" = 0 or "is_registration_open" = 1)
-
+    "post_id" INTEGER,
+    "date_from" TIMESTAMP,
+    "date_to" TIMESTAMP
 );
+
+
+CREATE OR REPLACE FUNCTION date_from_to_date_to()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    UPDATE dev_events SET date_to=dev_events.date_from+ '2 hours' WHERE date_to is NULL;
+    RETURN NEW;
+END;
+$$
+LANGUAGE 'plpgsql';
+
+
+CREATE TRIGGER empty_date_to AFTER INSERT ON dev_events
+FOR EACH ROW EXECUTE PROCEDURE date_from_to_date_to();

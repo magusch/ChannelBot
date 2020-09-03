@@ -52,4 +52,4 @@ urllib3==1.25.9
 websocket-client==0.57.0
 Werkzeug==1.0.1
 zict==2.0.0
-escraper@git+https://git@github.com/ArtemErmulin/escraper.git@256fb1075102398566690ef000623d1d9a08987a
+escraper@git+https://git@github.com/ArtemErmulin/escraper.git@cadf25c4aba9ac3582a48ce10540ee26bc44dcde

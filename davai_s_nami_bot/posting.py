@@ -1,19 +1,6 @@
 import re
 
-from . import database
 
-
-TAGS_TO_POST = (
-    "title",
-    "title_date",
-    "place_name",
-    "post_text",
-    "date_from_to",
-    "adress",
-    "poster_imag",
-    "url",
-    "price",
-)
 WEEKNAMES = {
     0: "Пн",
     1: "Вт",
@@ -78,57 +65,56 @@ def date_to_post(date_from, date_to):
     return start_format + end_format
 
 
-def check_post_tags(tags):
-    if tags is None:
-        raise ValueError("Event tags not found.")
-
-    missing_tags = TAGS_TO_POST - set(tags)
-
-    if missing_tags:
-        raise ValueError(
-            f"Not found some tags for creating post: {missing_tags}"
-        )
-
-
-def create(event_id):
+def create(event):
     """
-    Creating post by event_id.
+    Creating post by event (namedtuple).
 
     Parameters:
     -----------
-    event_id : int
-        event id that exist in postgresql database.
+    event : namedtuple
+        event that exist in table.
 
     Returns:
     --------
     photo_url : str
-    
+
     post : str
     """
 
-    event = database.get_event_by_id(event_id)
-
-    title_date = "{day} {month}".format(
-        day=event.date_from.day,
-        month=month_name(event.date_from),
+    post = (
+        event.Post
+        .replace("__", "*")
+        .replace("] (", "](")
     )
-    date_from_to = date_to_post(event.date_from, event.date_to)
+
+    return event.Image, post
+
+
+def parse_title(event):
     title = (
         event.title
         .replace("`", "\`")
         .replace("_", "\_")
         .replace("*", "\*")
     )
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
 
-    title = f"*{title_date}* {title}\n\n"
-    footer = (
-        "\n\n"
-        f"*Где:* {event.place_name}, {event.adress} \n"
-        f"*Когда:* {date_from_to} \n"
-        f"*Вход:* [{event.price}]({event.url})"
+    return title
+
+
+def parse_post(event):
+    title = parse_title(event)
+
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
+
+    date_from_to = date_to_post(event.date_from, event.date_to)
+
+    title_date = "{day} {month}".format(
+        day=event.date_from.day,
+        month=month_name(event.date_from),
     )
+
+    title = f"**{title_date}** {title}\n\n"
 
     post_text = (
         event.post_text.strip()
@@ -136,6 +122,35 @@ def create(event_id):
         .replace("_", "\_")
         .replace("*", "\*")
     )
-    full_text = title + post_text + footer
 
-    return "http://" + event.poster_imag, full_text
+    footer = (
+        "\n\n"
+        f"**Где:** {event.place_name}, {event.adress} \n"
+        f"**Когда:** {date_from_to} \n"
+        f"**Вход:** [{event.price}] ({event.url})"
+    )
+
+    return title + post_text + footer
+
+
+def parse_url(event):
+    return event.url
+
+
+def parse_from_date(event):
+    return event.date_from
+
+def parse_to_date(event):
+    return event.date_to
+
+
+def parse_image(event):
+    if event.poster_imag:
+        if event.id.startswith("TIMEPAD"):
+            return "http://" + event.poster_imag
+        else:
+            return event.poster_imag
+
+
+def parse_id(event):
+    return event.id
