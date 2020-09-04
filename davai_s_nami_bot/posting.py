@@ -148,8 +148,8 @@ def parse_image(event):
     if event.poster_imag:
         if event.id.startswith("TIMEPAD"):
             return "http://" + event.poster_imag
-        else:
-            return event.poster_imag
+
+        return event.poster_imag
 
 
 def parse_id(event):
