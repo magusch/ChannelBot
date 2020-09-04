@@ -1,5 +1,4 @@
-import datetime
-from datetime import date
+from datetime import date, datetime, timedelta
 from collections import namedtuple
 import os
 import time
@@ -124,7 +123,11 @@ def remove_old_events(msk_date, log=None):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            if row.get_property("From_date").start < msk_date:
+            from_date = row.get_property("From_date").start
+            if isinstance(from_date, date):
+                from_date = datetime.combine(from_date, datetime.min.time())
+
+            if from_date < msk_date:
                 remove_row(row, log=log)
 
             elif check_func:
@@ -136,12 +139,12 @@ def in_past(record, target):
 
 
 def check_for_move_to_table2(record, date, days=None, log=None):
-    if record.explored_date.start + datetime.timedelta(days=days) < date:
+    if record.explored_date.start + timedelta(days=days) < date:
         move_row(record, table2, log=log)
 
 
 def check_explored_date(record, date, days=None, log=None):
-    if record.explored_date.start + datetime.timedelta(days=days) < date:
+    if record.explored_date.start + timedelta(days=days) < date:
         remove_row(record, log=log)
 
 
