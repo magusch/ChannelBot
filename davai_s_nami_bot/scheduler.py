@@ -177,18 +177,24 @@ class PostingEvent(Task):
                     photo_name = str(event.Event_id)
                     img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
 
-                    img.save(photo_name + ".png", "png")
-                    if img.mode == "RGBA":
-                        # jpeg does not support transparency
-                        img = img.convert("RGB")
-                    img.save(photo_name + ".jpg", "jpeg")
-
-                    image_size = os.path.getsize(photo_name + ".png") / 1_000_000
-
-                    if image_size > 5:
+                    if img.mode == "CMYK":
+                        # can't save CMYK as PNG
+                        img.save(photo_name + ".jpg", "jpeg")
                         photo_path = photo_name + ".jpg"
+
                     else:
-                        photo_path = photo_name + ".png"
+                        img.save(photo_name + ".png", "png")
+                        if img.mode == "RGBA":
+                            # jpeg does not support transparency
+                            img = img.convert("RGB")
+                        img.save(photo_name + ".jpg", "jpeg")
+
+                        image_size = os.path.getsize(photo_name + ".png") / 1_000_000
+
+                        if image_size > 5:
+                            photo_path = photo_name + ".jpg"
+                        else:
+                            photo_path = photo_name + ".png"
 
                     with open(photo_path, "rb") as photo:
                         message = bot.send_photo(
