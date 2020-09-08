@@ -83,6 +83,7 @@ def create(event):
 
     post = (
         event.Post
+        .replace("_", "\_")
         .replace("__", "*")
         .replace("] (", "](")
     )
