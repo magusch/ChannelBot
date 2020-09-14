@@ -173,13 +173,18 @@ def remove_row(row):
     row.remove()
 
 
+@connection_wrapper
+def add_row(table, update_views=False):
+    return table.collection.add_row(update_views=update_views)
+
+
 def move_row(row, to_table, log=None):
     if to_table is table3:
         # add at the end table
-        new_row = to_table.collection.add_row()
+        new_row = add_row(to_table, update_views=True, log=log)
         set_property(new_row, "status", "Ready to post", log=log)
     else:
-        new_row = to_table.collection.add_row(update_views=False)
+        new_row = add_row(to_table, update_views=False, log=log)
 
     for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
         set_property(new_row, tag, row.get_property(tag), log=log)
