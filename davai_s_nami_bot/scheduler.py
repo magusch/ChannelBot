@@ -78,7 +78,7 @@ class PrepareEvents(Task):
             else:
                 raise ValueError(f"Unavailable posting status: {row.status}")
 
-            notion_api.set_property(row, "posting_datetime", posting_datetime)
+            notion_api.set_property(row, "posting_datetime", posting_datetime, log=log)
 
     def posting_datetimes(self, today):
         datetimes_schecule = self.datetimes_schecule(today)
