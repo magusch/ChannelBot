@@ -1,0 +1,33 @@
+import pytz
+from datetime import datetime
+
+from . import notion_api
+
+
+MSK_TZ = pytz.timezone("Europe/Moscow")
+
+
+class Flow:
+    def __init__(self, name, edges, log):
+        self._name = name
+        self._edges = edges
+        self.log = log
+
+    def run(self):
+        while True:
+            utc_today = datetime.utcnow().replace(second=00, microsecond=00)
+            msk_today = utc_today + MSK_TZ.utcoffset(utc_today)
+
+            self._run(msk_today=msk_today)
+            next_time = notion_api.next_task_time()
+            naptime = (next_time - msk_today).second
+
+            self.log.info(
+                "Waiting next scheduled time in %s", next_time.strftime(STRFTIME)
+            )
+            time.sleep(naptime)
+
+    def _run(self, msk_today):
+        for task in self._edges:
+            if task.is_need_running(msk_today):
+                task.run(msk_today)

@@ -1,7 +1,9 @@
 from datetime import date, datetime, timedelta
 from collections import namedtuple
+from typing import List
 import os
 import time
+import pytz
 from functools import partial
 
 import requests
@@ -24,12 +26,17 @@ NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
+NOTION_POSTING_TIMES_URL = os.environ.get("NOTION_POSTING_TIMES_URL")
+NOTION_EVERYDAY_TIMES_URL = os.environ.get("NOTION_EVERYDAY_TIMES_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
+MSK_TZ = pytz.timezone('Europe/Moscow')
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
+posting_times_table = notion_client.get_collection_view(NOTION_POSTING_TIMES_URL)
+everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIMES_URL)
 
 
 def connection_wrapper(func):
@@ -275,3 +282,29 @@ def update_table_views():
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)
+
+
+def get_weekday_posting_times() -> List:
+    return _get_times(column="weekday")
+
+
+def get_weekend_posting_times() -> List:
+    return _get_times(column="weekend")
+
+
+def _get_times(column) -> List:
+    """
+    Return cell value from notion table:
+    ("Wiki проекта" -> "Расписание выполнения задач" таблица "Постинг в канал")
+    """
+    seconds = dict(second=00, microsecond=00)
+    today = MSK_TZ.localize(
+        datetime.utcnow().replace(**seconds)
+    )
+
+    times = list()
+    for row in posting_times_table.collection.get_rows():
+        hour, minute = map(int, row.get_property(column).split(":"))
+        times.append(today.replace(hour=hour, minute=minute))
+
+    return times

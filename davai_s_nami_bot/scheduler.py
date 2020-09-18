@@ -8,19 +8,14 @@ import PIL
 from PIL import Image
 import requests
 from telebot import TeleBot
-import prefect
-from prefect.core import Edge
-from prefect.schedules import filters
-from prefect.schedules.schedules import Schedule
-from prefect.schedules.clocks import IntervalClock
-from prefect import Flow, Task
 
 from .utils import get_token
+from .flow import Flow, Task
+from . import tasks
 from . import database
 from . import notion_api
 from . import events
 from . import posting
-
 
 MSK_TZ = pytz.timezone('Europe/Moscow')
 MSK_UTCOFFSET = datetime.now(MSK_TZ).utcoffset()
@@ -33,221 +28,288 @@ maxsize = (1920, 1080)
 
 class PrepareEvents(Task):
     def update_today_time(self):
-        global utc_today, msk_today
-        utc_today = datetime.utcnow()
-        msk_today = datetime.now()
+        pass
+        # global utc_today, msk_today
+        # utc_today = datetime.utcnow()
+        # msk_today = datetime.now()
 
-    def move_approved(self, log):
-        log.info("Move approved events from table1 and table2 to table3")
-        notion_api.move_approved(log=log)
+    def move_approved(self):
+        pass
+        # self.log.info("Move approved events from table1 and table2 to table3")
+        # notion_api.move_approved(log=self.log)
 
-    def check_status(self, log):
+    def check_status(self):
         """
         Checking event status in table3 and update posting time.
         """
-        if utc_today.strftime("%H:%M") not in strftimes_weekday + strftimes_weekend:
-            # update only events in tables, not event status
-            log.info("Event status update occurs in the posting datetime.")
-            return
+        # if utc_today.strftime("%H:%M") not in strftimes_weekday + strftimes_weekend:
+        #     # update only events in tables, not event status
+        #     self.log.info("Event status update occurs in the posting datetime.")
+        #     return
 
-        log.info("Check events posting status")
+        # self.log.info("Check events posting status")
 
-        posting_datetimes = self.posting_datetimes(msk_today)
-        for row in notion_api.table3.collection.get_rows():
-            if row.status is None or row.status == "Posted":
-                continue
+        # posting_datetimes = self.posting_datetimes(msk_today)
+        # for row in notion_api.table3.collection.get_rows():
+        #     if row.status is None or row.status == "Posted":
+        #         continue
 
-            elif row.status == "Skip posting time":
-                next(posting_datetimes)  # skip time
-                posting_datetime = next(posting_datetimes)
-                notion_api.set_property(row, "status", "Ready to skiped posting time")
+        #     elif row.status == "Skip posting time":
+        #         next(posting_datetimes)  # skip time
+        #         posting_datetime = next(posting_datetimes)
+        #         notion_api.set_property(row, "status", "Ready to skiped posting time")
 
-            elif row.status == "Ready to skiped posting time":
-                dt = row.posting_datetime.start
-                if dt.hour == msk_today.hour and dt.minute == msk_today.minute:
-                    notion_api.set_property(row, "status", "Ready to post")
-                    posting_datetime = next(posting_datetimes)
+        #     elif row.status == "Ready to skiped posting time":
+        #         dt = row.posting_datetime.start
+        #         if dt.hour == msk_today.hour and dt.minute == msk_today.minute:
+        #             notion_api.set_property(row, "status", "Ready to post")
+        #             posting_datetime = next(posting_datetimes)
 
-                else:
-                    next(posting_datetimes)  # skip time
-                    posting_datetime = next(posting_datetimes)
+        #         else:
+        #             next(posting_datetimes)  # skip time
+        #             posting_datetime = next(posting_datetimes)
 
-            elif row.status == "Ready to post":
-                posting_datetime = next(posting_datetimes)
+        #     elif row.status == "Ready to post":
+        #         posting_datetime = next(posting_datetimes)
 
-            else:
-                raise ValueError(f"Unavailable posting status: {row.status}")
+        #     else:
+        #         raise ValueError(f"Unavailable posting status: {row.status}")
 
-            notion_api.set_property(row, "posting_datetime", posting_datetime, log=log)
+        #     notion_api.set_property(row, "posting_datetime", posting_datetime, log=self.log)
 
     def posting_datetimes(self, today):
-        datetimes_schecule = self.datetimes_schecule(today)
+        pass
+        # datetimes_schecule = self.datetimes_schecule(today)
 
-        while True:
-            day_schedule = next(datetimes_schecule)
-            for posting_datetime in day_schedule:
-                yield posting_datetime
+        # while True:
+        #     day_schedule = next(datetimes_schecule)
+        #     for posting_datetime in day_schedule:
+        #         yield posting_datetime
 
     def datetimes_schecule(self, today):
-        weekday = weekday_posting_times + everyday_posting_times
-        weekend = weekend_posting_times + everyday_posting_times
+        pass
+        # weekday = weekday_posting_times + everyday_posting_times
+        # weekend = weekend_posting_times + everyday_posting_times
 
-        current_day_datetimes = list()
-        if filters.is_weekday(today):
-            today_datetimes = weekday
-        else:
-            today_datetimes = weekend
+        # current_day_datetimes = list()
+        # if filters.is_weekday(today):
+        #     today_datetimes = weekday
+        # else:
+        #     today_datetimes = weekend
 
-        for dt in today_datetimes:
-            if (
-                dt.hour < today.hour
-                or (dt.hour == today.hour and dt.minute < today.minute)
-            ):
-                continue
+        # for dt in today_datetimes:
+        #     if (
+        #         dt.hour < today.hour
+        #         or (dt.hour == today.hour and dt.minute < today.minute)
+        #     ):
+        #         continue
 
-            current_day_datetimes.append(
-                dt.replace(year=today.year, month=today.month, day=today.day)
-            )
+        #     current_day_datetimes.append(
+        #         dt.replace(year=today.year, month=today.month, day=today.day)
+        #     )
 
-        if current_day_datetimes:
-            yield current_day_datetimes
+        # if current_day_datetimes:
+        #     yield current_day_datetimes
 
-        while True:
-            today += timedelta(days=1)
-            ymd = dict(year=today.year, month=today.month, day=today.day)
+        # while True:
+        #     today += timedelta(days=1)
+        #     ymd = dict(year=today.year, month=today.month, day=today.day)
 
-            datetimes = weekday if filters.is_weekday(today) else weekend
-            yield [i.replace(**ymd) for i in datetimes]
+        #     datetimes = weekday if filters.is_weekday(today) else weekend
+        #     yield [i.replace(**ymd) for i in datetimes]
 
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.PrepareEvents")
-        self.update_today_time()
+        pass
+        # log = prefect.utilities.logging.get_logger("TaskRunner.PrepareEvents")
+        # self.update_today_time()
 
-        # in case changed table views
-        notion_api.update_table_views()
+        # # in case changed table views
+        # notion_api.update_table_views()
 
-        self.move_approved(log)
-        self.check_status(log)
+        # self.move_approved(log)
+        # self.check_status(log)
+
 
 class IsEmptyCheck(Task):
     """
     Checking events in table3: if empty, send warning message to dev channel.
     """
     def run(self):
-        not_published_count = notion_api.not_published_count()
-        text = None
+        pass
+        # not_published_count = notion_api.not_published_count()
+        # text = None
 
-        if not_published_count == 1:
-            text = "Warning: posting last event."
+        # if not_published_count == 1:
+        #     text = "Warning: posting last event."
 
-        elif not_published_count == 0:
-            text = (
-                "Warning: not found events for posting."
-            )
+        # elif not_published_count == 0:
+        #     text = (
+        #         "Warning: not found events for posting."
+        #     )
 
-        if text:
-            bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
+        # if text:
+        #     bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
 
 
 class PostingEvent(Task):
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
+        pass
+        # log = prefect.utilities.logging.get_logger("TaskRunner.PostingEvent")
 
-        if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
-            log.info("Check posting status")
+        # if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
+        #     log.info("Check posting status")efect.utilities.logging.get_logger("TaskRunner.PostingEvent")
 
-            event = notion_api.next_event_to_channel()
+        # if utc_today.strftime("%H:%M") in strftimes_weekday + strftimes_weekend:
+        #     log.info("Check posting status")
 
-            if event is None:
-                log.info("Skipping posting time")
-                return
+        #     event = notion_api.next_event_to_channel()
 
-            log.info("Generating post.")
-            photo_url, post = posting.create(event)
+        #     if event is None:
+        #         log.info("Skipping posting time")
+        #         return
 
-            if photo_url is None:
-                message = bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=post,
-                    disable_web_page_preview=True,
-                )
+        #     log.info("Generating post.")
+        #     photo_url, post = posting.create(event)
 
-            else:
-                with Image.open(BytesIO(requests.get(photo_url).content)) as img:
-                    photo_name = str(event.Event_id)
-                    img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+        #     if photo_url is None:
+        #         message = bot.send_message(
+        #             chat_id=CHANNEL_ID,
+        #             text=post,
+        #             disable_web_page_preview=True,
+        #         )
 
-                    if img.mode == "CMYK":
-                        # can't save CMYK as PNG
-                        img.save(photo_name + ".jpg", "jpeg")
-                        photo_path = photo_name + ".jpg"
+        #     else:
+        #         with Image.open(BytesIO(requests.get(photo_url).content)) as img:
+        #             photo_name = str(event.Event_id)
+        #             img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
 
-                    else:
-                        img.save(photo_name + ".png", "png")
-                        if img.mode == "RGBA":
-                            # jpeg does not support transparency
-                            img = img.convert("RGB")
-                        img.save(photo_name + ".jpg", "jpeg")
+        #             if img.mode == "CMYK":
+        #                 # can't save CMYK as PNG
+        #                 img.save(photo_name + ".jpg", "jpeg")
+        #                 photo_path = photo_name + ".jpg"
 
-                        image_size = os.path.getsize(photo_name + ".png") / 1_000_000
+        #             else:
+        #                 img.save(photo_name + ".png", "png")
+        #                 if img.mode == "RGBA":
+        #                     # jpeg does not support transparency
+        #                     img = img.convert("RGB")
+        #                 img.save(photo_name + ".jpg", "jpeg")
 
-                        if image_size > 5:
-                            photo_path = photo_name + ".jpg"
-                        else:
-                            photo_path = photo_name + ".png"
+        #                 image_size = os.path.getsize(photo_name + ".png") / 1_000_000
 
-                    with open(photo_path, "rb") as photo:
-                        message = bot.send_photo(
-                            chat_id=CHANNEL_ID,
-                            photo=photo,
-                            caption=post,
-                        )
+        #                 if image_size > 5:
+        #                     photo_path = photo_name + ".jpg"
+        #                 else:
+        #                     photo_path = photo_name + ".png"
 
-                    os.remove(photo_name + ".jpg")
-                    os.remove(photo_name + ".png")
+        #             with open(photo_path, "rb") as photo:
+        #                 message = bot.send_photo(
+        #                     chat_id=CHANNEL_ID,
+        #                     photo=photo,
+        #                     caption=post,
+        #                 )
 
-            post_id = message.message_id
-            database.add(event, post_id)
+        #             os.remove(photo_name + ".jpg")
+        #             os.remove(photo_name + ".png")
+
+        #     post_id = message.message_id
+        #     databas
+
+        #     event = notion_api.next_event_to_channel()
+
+        #     if event is None:
+        #         log.info("Skipping posting time")
+        #         return
+
+        #     log.info("Generating post.")
+        #     photo_url, post = posting.create(event)
+
+        #     if photo_url is None:
+        #         message = bot.send_message(
+        #             chat_id=CHANNEL_ID,
+        #             text=post,
+        #             disable_web_page_preview=True,
+        #         )
+
+        #     else:
+        #         with Image.open(BytesIO(requests.get(photo_url).content)) as img:
+        #             photo_name = str(event.Event_id)
+        #             img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+
+        #             if img.mode == "CMYK":
+        #                 # can't save CMYK as PNG
+        #                 img.save(photo_name + ".jpg", "jpeg")
+        #                 photo_path = photo_name + ".jpg"
+
+        #             else:
+        #                 img.save(photo_name + ".png", "png")
+        #                 if img.mode == "RGBA":
+        #                     # jpeg does not support transparency
+        #                     img = img.convert("RGB")
+        #                 img.save(photo_name + ".jpg", "jpeg")
+
+        #                 image_size = os.path.getsize(photo_name + ".png") / 1_000_000
+
+        #                 if image_size > 5:
+        #                     photo_path = photo_name + ".jpg"
+        #                 else:
+        #                     photo_path = photo_name + ".png"
+
+        #             with open(photo_path, "rb") as photo:
+        #                 message = bot.send_photo(
+        #                     chat_id=CHANNEL_ID,
+        #                     photo=photo,
+        #                     caption=post,
+        #                 )
+
+        #             os.remove(photo_name + ".jpg")
+        #             os.remove(photo_name + ".png")
+
+        #     post_id = message.message_id
+        #     database.add(event, post_id)
 
 
 class UpdateEvents(Task):
-    def remove_old(self, log):
-        log.info("Removing old events")
-        notion_api.remove_old_events(msk_today + timedelta(hours=1), log=log)
-        database.remove(msk_today + timedelta(hours=1))
+    def remove_old(self):
+        pass
+        # log.info("Removing old events")
+        # notion_api.remove_old_events(msk_today + timedelta(hours=1), log=log)
+        # database.remove(msk_today + timedelta(hours=1))
 
-    def update_events(self, events, log, table=None):
-        log.info("Checking for existing events")
+    def update_events(self, events, table=None):
+        pass
+        # log.info("Checking for existing events")
 
-        new_events = notion_api.get_new_events(events)
-        log.info(f"New evenst count = {len(new_events)}")
+        # new_events = notion_api.get_new_events(events)
+        # log.info(f"New evenst count = {len(new_events)}")
 
-        log.info("Updating notion table")
-        notion_api.add_events(new_events, msk_today, table=table, log=log)
+        # log.info("Updating notion table")
+        # notion_api.add_events(new_events, msk_today, table=table, log=log)
 
     def run(self):
-        log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
+        pass
+        # log = prefect.utilities.logging.get_logger("TaskRunner.UpdateEvents")
 
-        if utc_today.strftime("%H:%M") in strftime_event_updating:
-            log.info("Start updating events.")
+        # if utc_today.strftime("%H:%M") in strftime_event_updating:
+        #     log.info("Start updating events.")
 
-            self.remove_old(log)
+        #     self.remove_old(log)
 
-            log.info("Getting events from approved organizations for next 7 days")
-            approved_events = events.from_approved_organizations(days=7, log=log)
-            log.info(f"Collected {len(approved_events)} approved events.")
+        #     log.info("Getting events from approved organizations for next 7 days")
+        #     approved_events = events.from_approved_organizations(days=7, log=log)
+        #     log.info(f"Collected {len(approved_events)} approved events.")
 
-            self.update_events(approved_events, log, table=notion_api.table3)
+        #     self.update_events(approved_events, log, table=notion_api.table3)
 
-            log.info("Getting new events from other organizations for next 7 days")
-            other_events = events.from_not_approved_organizations(days=7, log=log)
-            log.info(f"Collected {len(other_events)} events")
+        #     log.info("Getting new events from other organizations for next 7 days")
+        #     other_events = events.from_not_approved_organizations(days=7, log=log)
+        #     log.info(f"Collected {len(other_events)} events")
 
-            self.update_events(other_events, log, table=notion_api.table1)
+        #     self.update_events(other_events, log, table=notion_api.table1)
 
-            notion_count = notion_api.events_count()
+        #     notion_count = notion_api.events_count()
 
-            log.info(f"Events count in notion table: {notion_count}")
+        #     log.info(f"Events count in notion table: {notion_count}")
 
 
 class Formatter(logging.Formatter):
@@ -374,22 +436,16 @@ def run():
 
     schedule = Schedule(clocks=schedule_clocks, filters=[scheduling_filter])
 
-    # create tasks graph
-    prepare_events = PrepareEvents()
-    is_empty_check = IsEmptyCheck()
-    posting_event = PostingEvent()
-    update_events = UpdateEvents()
-
     edges = [
-        Edge(prepare_events, is_empty_check),
-        Edge(is_empty_check, posting_event),
-        Edge(posting_event, update_events),
+        PrepareEvents(log),
+        IsEmptyCheck(log),
+        PostingEvent(log),
+        UpdateEvents(log),
     ]
 
     flow = Flow(
         name="DavaiSNami",
-        schedule=schedule,
-        edges=edges,
+        edges=tasks.get_edges(),
     )
 
     # prepare logging
