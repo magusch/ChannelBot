@@ -15,7 +15,7 @@ DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
 DATABASE_URL = os.environ.get("DATABASE_URL")
-TABLE_NAME = "dev_events"
+TABLE_NAME = "testing_events"
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "

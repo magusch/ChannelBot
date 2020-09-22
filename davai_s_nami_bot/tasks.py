@@ -10,7 +10,10 @@ class Task:
         self.log = log.getChild(self.__class__.__name__)
 
     @abstractmethod
-    def run(self) -> None: pass
+    def run(self) -> None:
+        """
+        Running task.
+        """
 
     def is_need_running(self, msk_today) -> bool:
         """
@@ -122,13 +125,13 @@ class CheckEventStatus(Task):
 
 class MoveApproved(Task):
     def run(self, msk_today) -> None:
-        self.log.debug("Move approved events from table1 and table2 to table3")
+        self.log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=self.log)
 
 
 class IsEmptyCheck(Task):
     def run(self, msk_today) -> None:
-        self.log.debug("Running task")
+        self.log.info("Check for available events in table 3")
 
         not_published_count = notion_api.not_published_count()
         text = None

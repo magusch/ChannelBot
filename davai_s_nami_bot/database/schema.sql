@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS "dev_events" (
+CREATE TABLE IF NOT EXISTS "testing_events" (
     "id" TEXT UNIQUE,
     "title" TEXT NOT NULL,
     "post_id" INTEGER,
