@@ -24,7 +24,7 @@ MONTHNAMES = {
     11: "ноября",
     12: "декабря",
 }
-
+MIN_POSTING_HOUR_INTERVAL = 2  # minimum hour between two posting times
 
 
 def weekday_name(dt):

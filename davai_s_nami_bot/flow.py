@@ -1,10 +1,13 @@
 import pytz
+import time
 from datetime import datetime
 
 from . import notion_api
 
 
 MSK_TZ = pytz.timezone("Europe/Moscow")
+MSK_UTCOFFSET = MSK_TZ.utcoffset(datetime.utcnow())
+STRFTIME = "%Y-%m-%dT%H:%M:%S"
 
 
 class Flow:
@@ -16,21 +19,20 @@ class Flow:
     def run(self):
         while True:
             utc_today = datetime.utcnow().replace(second=00, microsecond=00)
-            msk_today = utc_today + MSK_TZ.utcoffset(utc_today)
+            msk_today = utc_today + MSK_UTCOFFSET
 
             self._run(msk_today=msk_today)
 
-            # clear function cache (avoid overflow)
-            notion_api.next_posting_time.cache_clear()
-            notion_api.next_updating_time.cache_clear()
-
-            next_time = notion_api.next_task_time()
-            naptime = (next_time - msk_today).second
+            next_time = notion_api.next_task_time(msk_today)
 
             self.log.info(
                 "Waiting next scheduled time in %s",
                 next_time.strftime(STRFTIME)
             )
+
+            naptime = (
+                (next_time - MSK_UTCOFFSET) - datetime.utcnow()
+            ).seconds
             time.sleep(naptime)
 
     def _run(self, msk_today):

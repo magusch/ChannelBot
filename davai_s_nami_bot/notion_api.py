@@ -279,14 +279,13 @@ def _get_times(column) -> List:
     таблица "Постинг в канал")
     """
     seconds = dict(second=00, microsecond=00)
-    today = MSK_TZ.localize(
-        datetime.utcnow().replace(**seconds)
-    )
+    utc_today = datetime.utcnow().replace(**seconds)
+    msk_today = utc_today + MSK_TZ.utcoffset(utc_today)
 
     times = list()
     for row in posting_times_table.collection.get_rows():
         hour, minute = map(int, row.get_property(column).split(":"))
-        times.append(today.replace(hour=hour, minute=minute))
+        times.append(msk_today.replace(hour=hour, minute=minute))
 
     return times
 
@@ -324,5 +323,15 @@ def next_updating_time(msk_today):
                 or (msk_today.hour == hour and msk_today.minute > minute)
             ):
                 update_time += timedelta(days=1)
+
+    return update_time
+
+
+def next_task_time(msk_today):
+    postin_time = next_posting_time()
+    update_time = next_updating_time(msk_today)
+
+    if postin_time - msk_today < update_time - msk_today:
+        return postin_time
 
     return update_time

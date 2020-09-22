@@ -2,6 +2,7 @@ from abc import abstractmethod
 from datetime import timedelta
 
 from . import notion_api
+from . import posting
 
 
 class Task:
@@ -11,7 +12,7 @@ class Task:
     @abstractmethod
     def run(self) -> None: pass
 
-    def is_need_running(self) -> bool:
+    def is_need_running(self, msk_today) -> bool:
         """
         By default is True.
         """
@@ -70,44 +71,63 @@ class CheckEventStatus(Task):
 
         while True:
             day_schedule = next(datetimes_schecule)
-            for posting_datetime in day_schedule:
-                yield posting_datetime
+            yield from day_schedule
 
     def run(self, msk_today) -> None:
         self.log.info("Check events posting status")
 
         posting_datetimes = self.posting_datetimes(msk_today)
+        posting_datetime = next(posting_datetimes)
+
         for row in notion_api.table3.collection.get_rows():
+            if row.status == "Posted":
+                continue
+
             if row.status is None:
                 notion_api.set_property(row, "status", "Ready to post")
 
-            if row.status == "Posted" or row.posting_datetime is not None:
-                continue
+            if row.posting_datetime is None:
+                if row.status == "Skip posting time":
+                    posting_datetime = next(posting_datetimes)  # skip time
+                    notion_api.set_property(row, "status", "Ready to post")
 
-            elif row.status == "Skip posting time":
-                next(posting_datetimes)  # skip time
-                posting_datetime = next(posting_datetimes)
-                notion_api.set_property(row, "status", "Ready to post")
-
-            elif row.status == "Ready to post":
-                posting_datetime = next(posting_datetimes)
+                notion_api.set_property(
+                    row, "posting_datetime", posting_datetime, log=self.log
+                )
 
             else:
+                while row.posting_datetime.start >= posting_datetime:
+                    posting_datetime = next(posting_datetimes)
+
+                if row.status == "Skip posting time":
+                    posting_datetime = next(posting_datetimes)  # skip time
+                    notion_api.set_property(row, "status", "Ready to post")
+
+                    notion_api.set_property(
+                        row, "posting_datetime", posting_datetime, log=self.log
+                    )
+
+                if row.posting_datetime.start < msk_today:
+                    raise ValueError(
+                        "Unexcepteble error: posting_datetime is in the past!\n"
+                        "Please, check table 3,\nevent title: {}\nevent id: {}."
+                        .format(row.Title, row.Event_id)
+                    )
+
+            if row.status != "Ready to post":
                 raise ValueError(f"Unavailable posting status: {row.status}")
 
-            notion_api.set_property(
-                row, "posting_datetime", posting_datetime, log=self.log
-            )
+            posting_datetime = next(posting_datetimes)
 
 
 class MoveApproved(Task):
-    def run(self) -> None:
+    def run(self, msk_today) -> None:
         self.log.debug("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=self.log)
 
 
 class IsEmptyCheck(Task):
-    def run(self) -> None:
+    def run(self, msk_today) -> None:
         self.log.debug("Running task")
 
         not_published_count = notion_api.not_published_count()
@@ -127,7 +147,7 @@ class IsEmptyCheck(Task):
 
 
 class PostingEvent(Task):
-    def run(self) -> None:
+    def run(self, msk_today) -> None:
         self.log.info("Check posting status")
 
         event = notion_api.next_event_to_channel()
@@ -202,7 +222,7 @@ class UpdateEvents(Task):
         self.log.info("Updating notion table")
         notion_api.add_events(new_events, msk_today, table=table, log=self.log)
 
-    def run(self):
+    def run(self, msk_today):
         self.log.info("Start updating events.")
 
         self.remove_old()
@@ -229,8 +249,8 @@ class UpdateEvents(Task):
 
 def get_edges(log):
     return [
-        CheckEventStatus(log),
         MoveApproved(log),
+        CheckEventStatus(log),
         IsEmptyCheck(log),
         PostingEvent(log),
         UpdateEvents(log),
