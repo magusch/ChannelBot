@@ -19,11 +19,17 @@ class Flow:
             msk_today = utc_today + MSK_TZ.utcoffset(utc_today)
 
             self._run(msk_today=msk_today)
+
+            # clear function cache (avoid overflow)
+            notion_api.next_posting_time.cache_clear()
+            notion_api.next_updating_time.cache_clear()
+
             next_time = notion_api.next_task_time()
             naptime = (next_time - msk_today).second
 
             self.log.info(
-                "Waiting next scheduled time in %s", next_time.strftime(STRFTIME)
+                "Waiting next scheduled time in %s",
+                next_time.strftime(STRFTIME)
             )
             time.sleep(naptime)
 

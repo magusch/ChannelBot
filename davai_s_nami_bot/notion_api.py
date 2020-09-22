@@ -256,26 +256,6 @@ def events_count():
     return count
 
 
-def get_posting_times():
-    weekday_times = list()
-    weekend_times = list()
-
-    for row in notion_posting_time.collection.get_rows():
-        weekday_times.append(row.get_property("weekday"))
-        weekend_times.append(row.get_property("weekend"))
-
-    return weekday_times, weekend_times
-
-
-def get_everyday_times():
-    everyday_times = dict()
-
-    for row in notion_everyday_times.collection.get_rows():
-        everyday_times[row.get_property("name")] = row.get_property("everyday")
-
-    return everyday_times
-
-
 def update_table_views():
     # 💫 some magic 💫
     # WARNING: if running background, need `> /dev/null`
@@ -295,7 +275,8 @@ def get_weekend_posting_times() -> List:
 def _get_times(column) -> List:
     """
     Return cell value from notion table:
-    ("Wiki проекта" -> "Расписание выполнения задач" таблица "Постинг в канал")
+    ("Wiki проекта" -> "Расписание выполнения задач"
+    таблица "Постинг в канал")
     """
     seconds = dict(second=00, microsecond=00)
     today = MSK_TZ.localize(
@@ -308,3 +289,40 @@ def _get_times(column) -> List:
         times.append(today.replace(hour=hour, minute=minute))
 
     return times
+
+
+def next_posting_time():
+    """
+    Return next posting times according to notion table 3
+    """
+    for row in table3.collection.get_rows():
+        if row.get_property("Status") == "Ready to post":
+            if row.get_property("posting_datetime") is None:
+                raise ValueError(
+                    "Unexcepteble error: event in table 3 have not "
+                    "posting datetime. Event title: {}."
+                    .format(row.Title)
+                )
+
+            return row.get_property("posting_datetime").start
+
+
+def next_updating_time(msk_today):
+    update_time = None
+
+    for row in everyday_times.collection.get_rows():
+        if row.get_property("name") == "update_events":
+            hour, minute = map(int, row.get_property("everyday").split(":"))
+
+            update_time = msk_today.replace(hour=hour, minute=minute)
+
+            # check for adding one day. Example:
+            # if msk_today = 2020-01-01 16:00 and hour = 00, minute = 00
+            # then, resulting update_time is 2020-01-02 00:00 (+ one day to msk_today)
+            if (
+                msk_today.hour > hour
+                or (msk_today.hour == hour and msk_today.minute > minute)
+            ):
+                update_time += timedelta(days=1)
+
+    return update_time
