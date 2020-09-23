@@ -110,6 +110,7 @@ class CheckEventStatus(Task):
                 notion_api.set_property(
                     row, "posting_datetime", posting_datetime, log=self.log
                 )
+                posting_datetime = next(posting_datetimes)
 
             else:
                 while row.posting_datetime.start >= posting_datetime:
@@ -122,6 +123,7 @@ class CheckEventStatus(Task):
                     notion_api.set_property(
                         row, "posting_datetime", posting_datetime, log=self.log
                     )
+                    posting_datetime = next(posting_datetimes)
 
                 if row.posting_datetime.start < msk_today:
                     raise ValueError(
@@ -132,8 +134,6 @@ class CheckEventStatus(Task):
 
             if row.status != "Ready to post":
                 raise ValueError(f"Unavailable posting status: {row.status}")
-
-            posting_datetime = next(posting_datetimes)
 
 
 class MoveApproved(Task):

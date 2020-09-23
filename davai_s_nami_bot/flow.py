@@ -26,13 +26,8 @@ class Flow:
                 next_time.strftime(STRFTIME)
             )
 
-            naptime = (next_time - MSK_UTCOFFSET) - datetime.utcnow()
-            if naptime.days < 0:
-                naptime_seconds = 0
-            else:
-                naptime_seconds = naptime.seconds
-
-            time.sleep(naptime_seconds)
+            naptime = datetime.utcnow() - (next_time - MSK_UTCOFFSET)
+            time.sleep(naptime.seconds)
 
             self.log.info("Starting flow run.")
 
@@ -58,7 +53,6 @@ class Flow:
                         "Error msg:\n",
                         exc_info=True,
                     )
-
 
             else:
                 self.log.info("No need running, skip")

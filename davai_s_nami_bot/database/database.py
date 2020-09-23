@@ -2,12 +2,12 @@ import os
 from collections import namedtuple
 
 import psycopg2
+from psycopg2 import sql
 
 
 __all__ = (
     "add",
     "remove",
-    "event_by_date",
 )
 
 TAGS = ["id", "title", "post_id", "date_from", "date_to"]
@@ -15,11 +15,11 @@ DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
 DATABASE_URL = os.environ.get("DATABASE_URL")
-TABLE_NAME = "dev_events"
+TABLE_NAME = "test_events"
 
 is_table_exists = (
     "SELECT table_name FROM information_schema.tables "
-    f"WHERE table_name='{TABLE_NAME}'"
+    "WHERE table_name = %s"
 )
 if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
@@ -32,7 +32,7 @@ def get_db_connection():
     db_conn = psycopg2.connect(DATABASE_URL)
     db_cur = db_conn.cursor()
 
-    db_cur.execute(is_table_exists)
+    db_cur.execute(is_table_exists, (TABLE_NAME,))
     if not db_cur.fetchall():
         with open(SCHEMA_PATH) as file:
             db_cur.execute(file.read())
@@ -82,10 +82,17 @@ def _get(script):
 
 def add(event, post_id):
     script = (
-        f"INSERT INTO {TABLE_NAME} "
-        f"({', '.join(TAGS)}) values "
+        sql.SQL(
+            "INSERT INTO {table} ({fields}) values "
+            "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
+        )
+        .format(
+            table=sql.Identifier(TABLE_NAME),
+            fields=sql.SQL(", ").join([
+                sql.Identifier(tag) for tag in TAGS
+            ])
+        )
     )
-    placeholder = "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
 
     data = [
         event.Event_id,
@@ -95,36 +102,12 @@ def add(event, post_id):
         None if event.To_date is None else event.To_date.start,
     ]
 
-    _insert(script + placeholder, data)
+    _insert(script, data)
 
 
 def remove(date):
-    script = (
+    script = sql.SQL(
         "DELETE FROM {table} WHERE date_from < cast(%s as TIMESTAMP)"
-        .format(table=TABLE_NAME)
-    )
+    ).format(table=sql.Identifier(TABLE_NAME))
 
-    _insert(script, [date])
-
-
-def event_by_date(dt):
-    """
-    Required for dt (type datetime):
-    - hours = 0
-    - minutes = 0
-    - seconds = 0
-    - microseconds = 0
-
-    Only year, month and day.
-    """
-    script = (
-        f"SELECT ({', '.join(TAGS)}) FROM {TABLE_NAME}"
-        "WHERE date_from = cast(%s as TIMESTAMP)"
-    )
-
-    events = list()
-    for values in _get(script):
-        events.append(
-            dict(title=values[1], post_id=values[2])
-        )
-    return events
+    _insert(script, (date,))
