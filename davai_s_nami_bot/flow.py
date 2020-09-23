@@ -2,25 +2,20 @@ import pytz
 import time
 from datetime import datetime
 
+from .datetime_utils import MSK_UTCOFFSET, STRFTIME, get_msk_today
 from . import notion_api
-
-
-MSK_TZ = pytz.timezone("Europe/Moscow")
-MSK_UTCOFFSET = MSK_TZ.utcoffset(datetime.utcnow())
-STRFTIME = "%Y-%m-%dT%H:%M:%S"
 
 
 class Flow:
     def __init__(self, name, edges, log, bot):
         self._name = name
         self._edges = edges
-        self.log = log
+        self.log = log.getChild("FlowRunner")
         self.bot = bot
 
     def run(self):
         while True:
-            utc_today = datetime.utcnow().replace(second=00, microsecond=00)
-            msk_today = utc_today + MSK_UTCOFFSET
+            msk_today = get_msk_today()
 
             self._run(msk_today=msk_today)
 
@@ -39,7 +34,31 @@ class Flow:
 
             time.sleep(naptime_seconds)
 
+            self.log.info("Starting flow run.")
+
     def _run(self, msk_today):
         for task in self._edges:
+            task_name = task.__class__.__name__
+
+            self.log.info(f"Task {task_name}: Starting task")
+
             if task.is_need_running(msk_today):
-                task.run(msk_today, self.bot)
+                self.log.info("Need running")
+
+                try:
+                    task.run(msk_today, self.bot)
+
+                    self.log.info(
+                        f"Task {task_name!r}: finished task run for task "
+                        "with final state: Success"
+                    )
+                except Exception as e:
+                    self.log.error(
+                        f"Task {task.__class__.__name__} has failed. "
+                        "Error msg:\n",
+                        exc_info=True,
+                    )
+
+
+            else:
+                self.log.info("No need running, skip")

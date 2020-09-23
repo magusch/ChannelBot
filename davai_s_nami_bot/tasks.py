@@ -10,6 +10,7 @@ import requests
 from . import database
 from . import notion_api
 from . import posting
+from .logger import LOG_FILE
 
 
 class Task:
@@ -263,6 +264,14 @@ class UpdateEvents(Task):
         return msk_today == notion_api.next_updating_time(msk_today)
 
 
+class SendLogsByTelegram(Task):
+    def run(self, msk_today, bot):
+        with open(LOG_FILE, "r+b") as logs:
+            bot.send_document(self.DEV_CHANNEL_ID, logs)
+            logs.truncate(0)
+            logs.write(b"")
+
+
 def get_edges(log):
     return [
         MoveApproved(log),
@@ -270,4 +279,5 @@ def get_edges(log):
         IsEmptyCheck(log),
         PostingEvent(log),
         UpdateEvents(log),
+        SendLogsByTelegram(log),
     ]

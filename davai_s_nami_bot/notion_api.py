@@ -10,6 +10,7 @@ import requests
 
 from notion.client import NotionClient
 
+from .datetime_utils import get_msk_today
 from . import posting
 
 
@@ -29,7 +30,6 @@ NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
 NOTION_POSTING_TIMES_URL = os.environ.get("NOTION_POSTING_TIMES_URL")
 NOTION_EVERYDAY_TIMES_URL = os.environ.get("NOTION_EVERYDAY_TIMES_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
-MSK_TZ = pytz.timezone('Europe/Moscow')
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
@@ -278,9 +278,7 @@ def _get_times(column) -> List:
     ("Wiki проекта" -> "Расписание выполнения задач"
     таблица "Постинг в канал")
     """
-    seconds = dict(second=00, microsecond=00)
-    utc_today = datetime.utcnow().replace(**seconds)
-    msk_today = utc_today + MSK_TZ.utcoffset(utc_today)
+    msk_today = get_msk_today()
 
     times = list()
     for row in posting_times_table.collection.get_rows():
