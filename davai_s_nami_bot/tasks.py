@@ -1,6 +1,13 @@
+import os
 from abc import abstractmethod
 from datetime import timedelta
+from io import BytesIO
 
+import PIL
+from PIL import Image
+import requests
+
+from . import database
 from . import notion_api
 from . import posting
 
@@ -8,9 +15,14 @@ from . import posting
 class Task:
     def __init__(self, log):
         self.log = log.getChild(self.__class__.__name__)
+        self.CHANNEL_ID = os.environ.get("CHANNEL_ID")
+        self.DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
+
+        if self.CHANNEL_ID is None or self.DEV_CHANNEL_ID is None:
+            raise ValueError("Some environment variables were not found")
 
     @abstractmethod
-    def run(self) -> None:
+    def run(self, msk_today, bot) -> None:
         """
         Running task.
         """
@@ -76,7 +88,7 @@ class CheckEventStatus(Task):
             day_schedule = next(datetimes_schecule)
             yield from day_schedule
 
-    def run(self, msk_today) -> None:
+    def run(self, msk_today, *args) -> None:
         self.log.info("Check events posting status")
 
         posting_datetimes = self.posting_datetimes(msk_today)
@@ -124,13 +136,13 @@ class CheckEventStatus(Task):
 
 
 class MoveApproved(Task):
-    def run(self, msk_today) -> None:
+    def run(self, msk_today, *args) -> None:
         self.log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=self.log)
 
 
 class IsEmptyCheck(Task):
-    def run(self, msk_today) -> None:
+    def run(self, msk_today, bot) -> None:
         self.log.info("Check for available events in table 3")
 
         not_published_count = notion_api.not_published_count()
@@ -145,12 +157,13 @@ class IsEmptyCheck(Task):
             )
 
         if text:
-            bot.send_message(chat_id=DEV_CHANNEL_ID, text=text)
-
+            bot.send_message(chat_id=self.DEV_CHANNEL_ID, text=text)
 
 
 class PostingEvent(Task):
-    def run(self, msk_today) -> None:
+    IMG_MAXSIZE = (1920, 1080)
+
+    def run(self, msk_today, bot) -> None:
         self.log.info("Check posting status")
 
         event = notion_api.next_event_to_channel()
@@ -164,15 +177,15 @@ class PostingEvent(Task):
 
         if photo_url is None:
             message = bot.send_message(
-                chat_id=CHANNEL_ID,
+                chat_id=self.CHANNEL_ID,
                 text=post,
                 disable_web_page_preview=True,
             )
 
         else:
             with Image.open(BytesIO(requests.get(photo_url).content)) as img:
-                photo_name = str(event.Event_id)
-                img.thumbnail(maxsize, PIL.Image.ANTIALIAS)
+                photo_name = "img"
+                img.thumbnail(self.IMG_MAXSIZE, PIL.Image.ANTIALIAS)
 
                 if img.mode == "CMYK":
                     # can't save CMYK as PNG
@@ -195,7 +208,7 @@ class PostingEvent(Task):
 
                 with open(photo_path, "rb") as photo:
                     message = bot.send_photo(
-                        chat_id=CHANNEL_ID,
+                        chat_id=self.CHANNEL_ID,
                         photo=photo,
                         caption=post,
                     )
@@ -225,7 +238,7 @@ class UpdateEvents(Task):
         self.log.info("Updating notion table")
         notion_api.add_events(new_events, msk_today, table=table, log=self.log)
 
-    def run(self, msk_today):
+    def run(self, msk_today, *args):
         self.log.info("Start updating events.")
 
         self.remove_old()
