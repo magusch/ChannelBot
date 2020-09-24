@@ -4,6 +4,7 @@ from typing import List
 import os
 import time
 import pytz
+import warnings
 from functools import partial
 
 import requests
@@ -131,7 +132,7 @@ def remove_old_events(msk_date, log=None):
 
         for row in table.collection.get_rows():
             from_date = row.get_property("From_date").start
-            if isinstance(from_date, date):
+            if not isinstance(from_date, datetime) and isinstance(from_date, date):
                 from_date = datetime.combine(from_date, datetime.min.time())
 
             if from_date < msk_date:
@@ -264,22 +265,20 @@ def update_table_views():
         print(t.collection.parent.views)
 
 
-def get_weekday_posting_times() -> List:
-    return _get_times(column="weekday")
+def get_weekday_posting_times(msk_today) -> List:
+    return _get_times(msk_today, column="weekday")
 
 
-def get_weekend_posting_times() -> List:
-    return _get_times(column="weekend")
+def get_weekend_posting_times(msk_today) -> List:
+    return _get_times(msk_today, column="weekend")
 
 
-def _get_times(column) -> List:
+def _get_times(msk_today, column) -> List:
     """
     Return cell value from notion table:
     ("Wiki проекта" -> "Расписание выполнения задач"
     таблица "Постинг в канал")
     """
-    msk_today = get_msk_today()
-
     times = list()
     for row in posting_times_table.collection.get_rows():
         hour, minute = map(int, row.get_property(column).split(":"))
@@ -303,35 +302,104 @@ def next_posting_time(reference):
                     .format(row.Title)
                 )
 
-            return row.get_property("posting_datetime").start
+            elif row.get_property("posting_datetime").start < reference:
+                # skip for events that posting time in past
+                continue
+
+            else:
+                notion_date = row.get_property("posting_datetime")
+                if not hasattr(notion_date, "start"):
+                    raise TypeError(
+                        f"For event {row.get_property('Title')!r} "
+                        "posting datetime has incorrect type. "
+                        "Required 'NotionDate', received {notion_date.__class__.__name__!r}"
+                    )
+
+                posting_time = notion_date.start
+
+                if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
+                    raise TypeError(
+                        f"For event {row.get_property('Title')!r} "
+                        "posting datetime without hour and minute. "
+                        "Please check event in table 3 (add hours and minutes)."
+                    )
+
+                # posting_time is ok
+                break
 
 
-def next_updating_time(msk_today):
+    return posting_time
+
+
+def next_updating_time(reference):
     update_time = None
 
     for row in everyday_times.collection.get_rows():
-        if row.get_property("name") == "update_events":
-            hour, minute = map(int, row.get_property("everyday").split(":"))
+        parameter_name = row.get_property("name")
 
-            update_time = msk_today.replace(hour=hour, minute=minute)
+        if parameter_name is not None and parameter_name == "update_events":
+            everyday_str = row.get_property("everyday")
+            if not isinstance(everyday_str, str):
+                raise TypeError(
+                    "Incorrect type updating time in notion wiki. "
+                    f"Required 'string', received {everyday_str.__class__.__name__!r}"
+                )
+
+            everyday_list = everyday_str.split(":")
+            if len(everyday_list) != 2:
+                raise TypeError(
+                    "Failed to parse everyday updating time. "
+                    "Required time format is string like: HH:MM, "
+                    f"received: {everyday_str!r}"
+                )
+
+            hour, minute = everyday_list
+
+            if not hour.isdigit() or not minute.isdigit():
+                raise TypeError(
+                    "Failed type casting for everyday updating time."
+                    "Required type for hour and minute is 'int', "
+                    f"received: {everyday_str!r}"
+                )
+
+            hour, minute = int(hour), int(minute)
+            update_time = reference.replace(hour=hour, minute=minute)
 
             # check for adding one day. Example:
-            # if msk_today = 2020-01-01 16:00 and hour = 00, minute = 00
-            # then, resulting update_time is 2020-01-02 00:00 (+ one day to msk_today)
+            # if reference = 2020-01-01 16:00 and hour = 00, minute = 00
+            # then, resulting update_time is 2020-01-02 00:00 (+ one day to reference)
             if (
-                msk_today.hour > hour
-                or (msk_today.hour == hour and msk_today.minute > minute)
+                reference.hour > hour
+                or (reference.hour == hour and reference.minute > minute)
             ):
                 update_time += timedelta(days=1)
 
-    return update_time
-
-
-def next_task_time(msk_today):
-    postin_time = next_posting_time()
-    update_time = next_updating_time(msk_today)
-
-    if postin_time - msk_today < update_time - msk_today:
-        return postin_time
+            break
 
     return update_time
+
+
+def next_task_time(msk_today, log):
+    task_time = None
+
+    posting_time = next_posting_time(reference=msk_today)
+    update_time = next_updating_time(reference=msk_today)
+
+    if posting_time is None and update_time is None:
+        raise ValueError("Don't found event for posting and updating time!")
+
+    elif posting_time is None:
+        log.warning("Don't event for posting! Continue with updating time.")
+        task_time = update_time
+
+    elif update_time is None:
+        log.warning("Don't found updating time! Continue with posting time.")
+        task_time = posting_time
+
+    elif update_time - msk_today < posting_time - msk_today:
+        task_time = update_time
+
+    else:
+        task_time = posting_time
+
+    return task_time

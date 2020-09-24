@@ -10,6 +10,7 @@ import requests
 from . import database
 from . import notion_api
 from . import posting
+from . import events
 from .logger import LOG_FILE
 
 
@@ -138,6 +139,8 @@ class CheckEventStatus(Task):
 
 class MoveApproved(Task):
     def run(self, msk_today, *args) -> None:
+        notion_api.update_table_views()
+
         self.log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved(log=self.log)
 
