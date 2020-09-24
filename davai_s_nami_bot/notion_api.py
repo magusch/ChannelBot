@@ -302,7 +302,7 @@ def next_posting_time(reference):
                     .format(row.Title)
                 )
 
-            elif row.get_property("posting_datetime").start < reference:
+            if row.get_property("posting_datetime").start < reference:
                 # skip for events that posting time in past
                 continue
 
@@ -388,7 +388,7 @@ def next_task_time(msk_today, log):
     if posting_time is None and update_time is None:
         raise ValueError("Don't found event for posting and updating time!")
 
-    elif posting_time is None:
+    if posting_time is None:
         log.warning("Don't event for posting! Continue with updating time.")
         task_time = update_time
 
