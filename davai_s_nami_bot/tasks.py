@@ -49,8 +49,8 @@ class CheckEventStatus(Task):
         )
 
     def datetimes_schecule(self, msk_today):
-        weekday = notion_api.get_weekday_posting_times()
-        weekend = notion_api.get_weekend_posting_times()
+        weekday = notion_api.get_weekday_posting_times(msk_today)
+        weekend = notion_api.get_weekend_posting_times(msk_today)
 
         current_day_datetimes = list()
         if self.is_weekday(msk_today):
@@ -221,16 +221,17 @@ class PostingEvent(Task):
         database.add(event, post_id)
 
     def is_need_running(self, msk_today) -> bool:
-        return msk_today == notion_api.next_posting_time()
+        posting_time = notion_api.next_posting_time(msk_today)
+        return posting_time is not None and msk_today == posting_time
 
 
 class UpdateEvents(Task):
-    def remove_old(self):
+    def remove_old(self, msk_today):
         self.log.info("Removing old events")
         notion_api.remove_old_events(msk_today + timedelta(hours=1), log=self.log)
         database.remove(msk_today + timedelta(hours=1))
 
-    def update_events(self, events, table=None):
+    def update_events(self, events, msk_today, table=None):
         self.log.info("Checking for existing events")
 
         new_events = notion_api.get_new_events(events)
@@ -242,26 +243,28 @@ class UpdateEvents(Task):
     def run(self, msk_today, *args):
         self.log.info("Start updating events.")
 
-        self.remove_old()
+        self.remove_old(msk_today)
 
         self.log.info("Getting events from approved organizations for next 7 days")
         approved_events = events.from_approved_organizations(days=7, log=self.log)
         self.log.info(f"Collected {len(approved_events)} approved events.")
 
-        self.update_events(approved_events, table=notion_api.table3)
+        self.update_events(approved_events, msk_today, table=notion_api.table3)
 
         self.log.info("Getting new events from other organizations for next 7 days")
         other_events = events.from_not_approved_organizations(days=7, log=self.log)
         self.log.info(f"Collected {len(other_events)} events")
 
-        self.update_events(other_events, table=notion_api.table1)
+        self.update_events(other_events, msk_today, table=notion_api.table1)
 
         notion_count = notion_api.events_count()
 
         self.log.info(f"Events count in notion table: {notion_count}")
 
     def is_need_running(self, msk_today) -> bool:
-        return msk_today == notion_api.next_updating_time(msk_today)
+        updating_time = notion_api.next_updating_time(msk_today)
+
+        return updating_time is not None and msk_today == updating_time
 
 
 class SendLogsByTelegram(Task):

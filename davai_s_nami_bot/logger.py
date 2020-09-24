@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from .datetime_utils import MSK_UTCOFFSET, STRFTIME
+from .datetime_utils import STRFTIME
 
 
 LOG_FILE = "bot_logs.txt"

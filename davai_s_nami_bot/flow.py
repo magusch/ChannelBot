@@ -1,8 +1,7 @@
 import pytz
 import time
-from datetime import datetime
 
-from .datetime_utils import MSK_UTCOFFSET, STRFTIME, get_msk_today
+from .datetime_utils import STRFTIME, get_msk_today
 from . import notion_api
 
 
@@ -15,19 +14,26 @@ class Flow:
 
     def run(self):
         while True:
-            msk_today = get_msk_today()
+            msk_today = get_msk_today(replace_seconds=True)
 
             self._run(msk_today=msk_today)
 
-            next_time = notion_api.next_task_time(msk_today)
+            # refresh today time
+            next_time = notion_api.next_task_time(
+                msk_today=get_msk_today(replace_seconds=True), log=self.log
+            )
 
             self.log.info(
                 "Waiting next scheduled time in %s",
                 next_time.strftime(STRFTIME)
             )
 
-            naptime = datetime.utcnow() - (next_time - MSK_UTCOFFSET)
-            time.sleep(naptime.seconds)
+            naptime = max(
+                (next_time - get_msk_today()).total_seconds(), 0
+            )
+
+            print("naptime in seconds:", naptime)
+            time.sleep(naptime)
 
             self.log.info("Starting flow run.")
 

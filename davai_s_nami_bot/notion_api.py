@@ -288,10 +288,12 @@ def _get_times(column) -> List:
     return times
 
 
-def next_posting_time():
+def next_posting_time(reference):
     """
     Return next posting times according to notion table 3
     """
+    posting_time = None
+
     for row in table3.collection.get_rows():
         if row.get_property("Status") == "Ready to post":
             if row.get_property("posting_datetime") is None:
