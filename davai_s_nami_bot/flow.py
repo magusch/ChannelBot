@@ -24,15 +24,15 @@ class Flow:
             )
 
             self.log.info(
-                "Waiting next scheduled time in %s",
+                "Waiting next scheduled time in %s,",
                 next_time.strftime(STRFTIME)
             )
 
-            naptime = max(
-                (next_time - get_msk_today()).total_seconds(), 0
-            )
+            period_to_next_time = next_time - get_msk_today()
+            self.log.info(f"in {period_to_next_time.as_interval()}")
 
-            print("naptime in seconds:", naptime)
+            naptime = max(period_to_next_time.total_seconds(), 0)
+
             time.sleep(naptime)
 
             self.log.info("Starting flow run.")
