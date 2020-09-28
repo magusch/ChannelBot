@@ -8,8 +8,8 @@ import warnings
 from functools import partial
 
 import requests
-
 from notion.client import NotionClient
+from notion.block.collection.view import TableView
 
 from .datetime_utils import get_msk_today
 from . import posting
@@ -403,3 +403,19 @@ def next_task_time(msk_today, log):
         task_time = posting_time
 
     return task_time
+
+
+def is_monotonic(arr):
+    return all([i > j for i, j in zip(arr[1:], arr[:-1])])
+
+
+def check_posting_datetime():
+    """
+    Required nonempty posting_datetime field in all items in table3!
+    """
+    rows = [r for r in table3.collection.get_rows() if r.status in ["Ready to post", "Skip posting time"]]
+    posting_datetimes = [row.posting_datetime.start for row in rows]
+
+    if not is_monotonic(posting_datetimes):
+        for row, ptime in zip(rows, sorted(posting_datetimes)):
+            set_property(row, "Posting_datetime", ptime)

@@ -70,6 +70,8 @@ class Flow:
                         text=(
                             f"Task {task.__class__.__name__} has failed. "
                             f"Error msg:\n{e.args[0]}"
+                        ),
+                        parse_mode="html",
                     )
 
                     raise e

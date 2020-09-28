@@ -137,6 +137,8 @@ class CheckEventStatus(Task):
             if row.status != "Ready to post":
                 raise ValueError(f"Unavailable posting status: {row.status}")
 
+        notion_api.check_posting_datetime()  # in table 3
+
 
 class MoveApproved(Task):
     def run(self, msk_today, *args) -> None:
