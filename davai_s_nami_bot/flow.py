@@ -65,6 +65,13 @@ class Flow:
                     )
 
                 except PostingDatetimeError as e:
+                    self.bot.send_message(
+                        chat_id=self.DEV_CHANNEL_ID,
+                        text=(
+                            f"Task {task.__class__.__name__} has failed. "
+                            f"Error msg:\n{e.args[0]}"
+                    )
+
                     raise e
 
                 except Exception as e:
