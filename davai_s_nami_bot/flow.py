@@ -2,6 +2,7 @@ import pytz
 import time
 
 from .datetime_utils import STRFTIME, get_msk_today
+from .exceptions import PostingDatetimeError
 from . import notion_api
 
 
@@ -61,6 +62,10 @@ class Flow:
                         f"Task {task_name!r}: finished task run for task "
                         "with final state: Success"
                     )
+
+                except PostingDatetimeError as e:
+                    raise e
+
                 except Exception as e:
                     self.log.error(
                         f"Task {task.__class__.__name__} has failed. "

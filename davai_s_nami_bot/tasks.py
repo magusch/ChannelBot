@@ -11,6 +11,7 @@ from . import database
 from . import notion_api
 from . import posting
 from . import events
+from .exceptions import PostingDatetimeError
 from .logger import LOG_FILE
 
 
@@ -127,7 +128,7 @@ class CheckEventStatus(Task):
                     posting_datetime = next(posting_datetimes)
 
                 if row.posting_datetime.start < msk_today:
-                    raise ValueError(
+                    raise PostingDatetimeError(
                         "Unexcepteble error: posting_datetime is in the past!\n"
                         "Please, check table 3,\nevent title: {}\nevent id: {}."
                         .format(row.Title, row.Event_id)
