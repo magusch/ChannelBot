@@ -227,7 +227,7 @@ class PostingEvent(Task):
         database.add(event, post_id)
 
     def is_need_running(self, msk_today) -> bool:
-        posting_time = notion_api.next_posting_time(msk_today)
+        posting_time = notion_api.next_posting_time(msk_today, self.log)
         return posting_time is not None and msk_today == posting_time
 
 
@@ -268,17 +268,9 @@ class UpdateEvents(Task):
         self.log.info(f"Events count in notion table: {notion_count}")
 
     def is_need_running(self, msk_today) -> bool:
-        updating_time = notion_api.next_updating_time(msk_today)
+        updating_time = notion_api.next_updating_time(msk_today, self.log)
 
         return updating_time is not None and msk_today == updating_time
-
-
-class SendLogsByTelegram(Task):
-    def run(self, msk_today, bot):
-        with open(LOG_FILE, "r+b") as logs:
-            bot.send_document(self.DEV_CHANNEL_ID, logs)
-            logs.truncate(0)
-            logs.write(b"")
 
 
 def get_edges(log):
@@ -288,5 +280,4 @@ def get_edges(log):
         IsEmptyCheck(log),
         PostingEvent(log),
         UpdateEvents(log),
-        SendLogsByTelegram(log),
     ]

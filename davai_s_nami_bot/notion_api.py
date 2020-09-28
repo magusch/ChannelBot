@@ -9,7 +9,6 @@ from functools import partial
 
 import requests
 from notion.client import NotionClient
-from notion.block.collection.view import TableView
 
 from .datetime_utils import get_msk_today
 from . import posting
@@ -31,6 +30,7 @@ NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
 NOTION_POSTING_TIMES_URL = os.environ.get("NOTION_POSTING_TIMES_URL")
 NOTION_EVERYDAY_TIMES_URL = os.environ.get("NOTION_EVERYDAY_TIMES_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
+DEFAULT_UPDATING_STRFTIME = "00:00"
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
@@ -287,7 +287,7 @@ def _get_times(msk_today, column) -> List:
     return times
 
 
-def next_posting_time(reference):
+def next_posting_time(reference, log):
     """
     Return next posting times according to notion table 3
     """
@@ -296,43 +296,51 @@ def next_posting_time(reference):
     for row in table3.collection.get_rows():
         if row.get_property("Status") == "Ready to post":
             if row.get_property("posting_datetime") is None:
-                raise ValueError(
-                    "Unexcepteble error: event in table 3 have not "
+                log.warn(
+                    "Unexcepteble warning: event in table 3 have not "
                     "posting datetime. Event title: {}."
                     .format(row.Title)
                 )
+                # to next valid event
+                continue
 
-            if row.get_property("posting_datetime").start < reference:
+            notion_date = row.get_property("posting_datetime")
+
+            if not hasattr(notion_date, "start"):
+                log.warn(
+                    f"For event {row.get_property('Title')!r} "
+                    "posting datetime has incorrect type. "
+                    "Required 'NotionDate', received {notion_date.__class__.__name__!r}"
+                )
+                continue
+
+            posting_time = notion_date.start
+
+            if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
+                log.warn(
+                    f"For event {row.get_property('Title')!r} "
+                    "posting datetime without hour and minute. "
+                    "Please check event in table 3 (add hours and minutes)."
+                )
+                continue
+
+            if posting_time < reference:
+                log.warn(
+                    "Warning: event in table 3 have posting datetime in the past.\n"
+                    f"Event title: {row.Title},\nevent id: {row.Event_id}"
+                )
                 # skip for events that posting time in past
                 continue
 
-            else:
-                notion_date = row.get_property("posting_datetime")
-                if not hasattr(notion_date, "start"):
-                    raise TypeError(
-                        f"For event {row.get_property('Title')!r} "
-                        "posting datetime has incorrect type. "
-                        "Required 'NotionDate', received {notion_date.__class__.__name__!r}"
-                    )
-
-                posting_time = notion_date.start
-
-                if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
-                    raise TypeError(
-                        f"For event {row.get_property('Title')!r} "
-                        "posting datetime without hour and minute. "
-                        "Please check event in table 3 (add hours and minutes)."
-                    )
-
-                # posting_time is ok
-                break
-
+            # posting_time is ok
+            break
 
     return posting_time
 
 
-def next_updating_time(reference):
+def next_updating_time(reference, log):
     update_time = None
+    with_warn = False
 
     for row in everyday_times.collection.get_rows():
         parameter_name = row.get_property("name")
@@ -340,29 +348,49 @@ def next_updating_time(reference):
         if parameter_name is not None and parameter_name == "update_events":
             everyday_str = row.get_property("everyday")
             if not isinstance(everyday_str, str):
-                raise TypeError(
+                log.warn(
                     "Incorrect type updating time in notion wiki. "
-                    f"Required 'string', received {everyday_str.__class__.__name__!r}"
+                    f"Required 'string', received {everyday_str.__class__.__name__!r}.\n"
                 )
+                with_warn = True
+                everyday_str = DEFAULT_UPDATING_STRFTIME
 
             everyday_list = everyday_str.split(":")
             if len(everyday_list) != 2:
-                raise TypeError(
+                log.warn(
                     "Failed to parse everyday updating time. "
                     "Required time format is string like: HH:MM, "
-                    f"received: {everyday_str!r}"
+                    f"received: {everyday_str!r}\n"
                 )
+                with_warn = True
+                everyday_list = DEFAULT_UPDATING_STRFTIME.split(":")
 
             hour, minute = everyday_list
 
             if not hour.isdigit() or not minute.isdigit():
-                raise TypeError(
+                log.warn(
                     "Failed type casting for everyday updating time."
                     "Required type for hour and minute is 'int', "
-                    f"received: {everyday_str!r}"
+                    f"received: {everyday_str!r}\n"
                 )
+                with_warn = True
+                hour, minute = DEFAULT_UPDATING_STRFTIME.split(":")
 
             hour, minute = int(hour), int(minute)
+
+            if not (0 <= hour <= 24) or not (0 <= minute <= 59):
+                log.warn(
+                    "Incorrect hour or minute value!\nHour must be from 0 to 23, "
+                    "minute must be from 0 to 59."
+                )
+                with_warn = True
+                hour, minute = map(int, DEFAULT_UPDATING_STRFTIME.split(":"))
+
+            if with_warn:
+                log.warn(
+                    "Set update time as default: {DEFAULT_UPDATING_STRFTIME!r}"
+                )
+
             update_time = reference.replace(hour=hour, minute=minute)
 
             # check for adding one day. Example:
@@ -382,10 +410,11 @@ def next_updating_time(reference):
 def next_task_time(msk_today, log):
     task_time = None
 
-    posting_time = next_posting_time(reference=msk_today)
-    update_time = next_updating_time(reference=msk_today)
+    posting_time = next_posting_time(reference=msk_today, log=log)
+    update_time = next_updating_time(reference=msk_today, log=log)
 
     if posting_time is None and update_time is None:
+        # something bad happening
         raise ValueError("Don't found event for posting and updating time!")
 
     if posting_time is None:

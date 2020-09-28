@@ -23,3 +23,10 @@ def get_logger():
     logger.parent.handlers[0].setFormatter(formatter)
 
     return logger
+
+
+def send_logs(bot, chat_id):
+    with open(LOG_FILE, "r+b") as logs:
+        bot.send_document(chat_id, logs)
+        logs.truncate(0)
+        logs.write(b"")
