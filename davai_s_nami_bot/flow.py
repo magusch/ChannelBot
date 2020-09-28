@@ -12,6 +12,8 @@ class Flow:
         self.log = log.getChild("FlowRunner")
         self.bot = bot
 
+        self.DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
+
     def run(self):
         while True:
             msk_today = get_msk_today(replace_seconds=True)
@@ -23,13 +25,19 @@ class Flow:
                 msk_today=get_msk_today(replace_seconds=True), log=self.log
             )
 
-            self.log.info(
-                "Waiting next scheduled time in %s,",
-                next_time.strftime(STRFTIME)
-            )
-
             period_to_next_time = next_time - get_msk_today()
             self.log.info(f"in {period_to_next_time.as_interval()}")
+
+            self.bot.send_message(
+                chat_id=self.DEV_CHANNEL_ID,
+                text=(
+                    "Waiting next scheduled time in {time}, {delta} left"
+                    .format(
+                        time=next_time.strftime(STRFTIME),
+                        delta=period_to_next_time.as_interval(),
+                    )
+                ),
+            )
 
             naptime = max(period_to_next_time.total_seconds(), 0)
 
