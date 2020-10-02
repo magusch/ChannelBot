@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 
 
 WEEKNAMES = {
@@ -142,6 +143,9 @@ def parse_from_date(event):
     return event.date_from
 
 def parse_to_date(event):
+    if event.date_to is None:
+        return event.date_form + timedelta(hours=2)
+
     return event.date_to
 
 

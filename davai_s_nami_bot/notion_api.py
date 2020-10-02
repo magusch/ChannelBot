@@ -131,7 +131,7 @@ def remove_old_events(msk_date, log=None):
     for table, check_func in zip(tables, check_funcs):
 
         for row in table.collection.get_rows():
-            from_date = row.get_property("From_date").start
+            from_date = row.get_property("To_date").start
             if not isinstance(from_date, datetime) and isinstance(from_date, date):
                 from_date = datetime.combine(from_date, datetime.min.time())
 
