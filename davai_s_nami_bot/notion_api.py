@@ -129,13 +129,18 @@ def remove_old_events(msk_date, log=None):
     )
 
     for table, check_func in zip(tables, check_funcs):
+        if table is table3:
+            event_date_field = "To_date"
+        else:
+            event_date_field = "From_date"
 
         for row in table.collection.get_rows():
-            from_date = row.get_property("To_date").start
-            if not isinstance(from_date, datetime) and isinstance(from_date, date):
-                from_date = datetime.combine(from_date, datetime.min.time())
+            event_date = row.get_property(event_date_field).start
 
-            if from_date < msk_date:
+            if not isinstance(event_date, datetime) and isinstance(event_date, date):
+                event_date = datetime.combine(event_date, datetime.min.time())
+
+            if event_date < msk_date:
                 remove_row(row, log=log)
 
             elif check_func:
