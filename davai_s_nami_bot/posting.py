@@ -144,7 +144,7 @@ def parse_from_date(event):
 
 def parse_to_date(event):
     if event.date_to is None:
-        return event.date_form + timedelta(hours=2)
+        return event.date_from + timedelta(hours=2)
 
     return event.date_to
 
