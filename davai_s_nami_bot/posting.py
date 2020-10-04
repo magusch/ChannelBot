@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 
 
 WEEKNAMES = {
@@ -24,7 +25,7 @@ MONTHNAMES = {
     11: "ноября",
     12: "декабря",
 }
-
+MIN_POSTING_HOUR_INTERVAL = 2  # minimum hour between two posting times
 
 
 def weekday_name(dt):
@@ -142,6 +143,9 @@ def parse_from_date(event):
     return event.date_from
 
 def parse_to_date(event):
+    if event.date_to is None:
+        return event.date_from + timedelta(hours=2)
+
     return event.date_to
 
 

@@ -1,13 +1,16 @@
 from datetime import date, datetime, timedelta
 from collections import namedtuple
+from typing import List
 import os
 import time
+import pytz
+import warnings
 from functools import partial
 
 import requests
-
 from notion.client import NotionClient
 
+from .datetime_utils import get_msk_today
 from . import posting
 
 
@@ -24,12 +27,17 @@ NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
 NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
+NOTION_POSTING_TIMES_URL = os.environ.get("NOTION_POSTING_TIMES_URL")
+NOTION_EVERYDAY_TIMES_URL = os.environ.get("NOTION_EVERYDAY_TIMES_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
+DEFAULT_UPDATING_STRFTIME = "00:00"
 
 notion_client = NotionClient(token_v2=NOTION_TOKEN_V2)
 table1 = notion_client.get_collection_view(NOTION_TABLE1_URL)
 table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
+posting_times_table = notion_client.get_collection_view(NOTION_POSTING_TIMES_URL)
+everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIMES_URL)
 
 
 def connection_wrapper(func):
@@ -121,13 +129,18 @@ def remove_old_events(msk_date, log=None):
     )
 
     for table, check_func in zip(tables, check_funcs):
+        if table is table3:
+            event_date_field = "To_date"
+        else:
+            event_date_field = "From_date"
 
         for row in table.collection.get_rows():
-            from_date = row.get_property("From_date").start
-            if isinstance(from_date, date):
-                from_date = datetime.combine(from_date, datetime.min.time())
+            event_date = row.get_property(event_date_field).start
 
-            if from_date < msk_date:
+            if not isinstance(event_date, datetime) and isinstance(event_date, date):
+                event_date = datetime.combine(event_date, datetime.min.time())
+
+            if event_date < msk_date:
                 remove_row(row, log=log)
 
             elif check_func:
@@ -249,29 +262,194 @@ def events_count():
     return count
 
 
-def get_posting_times():
-    weekday_times = list()
-    weekend_times = list()
-
-    for row in notion_posting_time.collection.get_rows():
-        weekday_times.append(row.get_property("weekday"))
-        weekend_times.append(row.get_property("weekend"))
-
-    return weekday_times, weekend_times
-
-
-def get_everyday_times():
-    everyday_times = dict()
-
-    for row in notion_everyday_times.collection.get_rows():
-        everyday_times[row.get_property("name")] = row.get_property("everyday")
-
-    return everyday_times
-
-
 def update_table_views():
     # 💫 some magic 💫
     # WARNING: if running background, need `> /dev/null`
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)
+
+
+def get_weekday_posting_times(msk_today) -> List:
+    return _get_times(msk_today, column="weekday")
+
+
+def get_weekend_posting_times(msk_today) -> List:
+    return _get_times(msk_today, column="weekend")
+
+
+def _get_times(msk_today, column) -> List:
+    """
+    Return cell value from notion table:
+    ("Wiki проекта" -> "Расписание выполнения задач"
+    таблица "Постинг в канал")
+    """
+    times = list()
+    for row in posting_times_table.collection.get_rows():
+        hour, minute = map(int, row.get_property(column).split(":"))
+        times.append(msk_today.replace(hour=hour, minute=minute))
+
+    return times
+
+
+def next_posting_time(reference, log):
+    """
+    Return next posting times according to notion table 3
+    """
+    posting_time = None
+
+    for row in table3.collection.get_rows():
+        if row.get_property("Status") == "Ready to post":
+            if row.get_property("posting_datetime") is None:
+                log.warn(
+                    "Unexcepteble warning: event in table 3 have not "
+                    "posting datetime. Event title: {}."
+                    .format(row.Title)
+                )
+                # to next valid event
+                continue
+
+            notion_date = row.get_property("posting_datetime")
+
+            if not hasattr(notion_date, "start"):
+                log.warn(
+                    f"For event {row.get_property('Title')!r} "
+                    "posting datetime has incorrect type. "
+                    "Required 'NotionDate', received {notion_date.__class__.__name__!r}"
+                )
+                continue
+
+            posting_time = notion_date.start
+
+            if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
+                log.warn(
+                    f"For event {row.get_property('Title')!r} "
+                    "posting datetime without hour and minute. "
+                    "Please check event in table 3 (add hours and minutes)."
+                )
+                continue
+
+            if posting_time < reference:
+                log.warn(
+                    "Warning: event in table 3 have posting datetime in the past.\n"
+                    f"Event title: {row.Title},\nevent id: {row.Event_id}"
+                )
+                # skip for events that posting time in past
+                continue
+
+            # posting_time is ok
+            break
+
+    return posting_time
+
+
+def next_updating_time(reference, log):
+    update_time = None
+    with_warn = False
+
+    for row in everyday_times.collection.get_rows():
+        parameter_name = row.get_property("name")
+
+        if parameter_name is not None and parameter_name == "update_events":
+            everyday_str = row.get_property("everyday")
+            if not isinstance(everyday_str, str):
+                log.warn(
+                    "Incorrect type updating time in notion wiki. "
+                    f"Required 'string', received {everyday_str.__class__.__name__!r}.\n"
+                )
+                with_warn = True
+                everyday_str = DEFAULT_UPDATING_STRFTIME
+
+            everyday_list = everyday_str.split(":")
+            if len(everyday_list) != 2:
+                log.warn(
+                    "Failed to parse everyday updating time. "
+                    "Required time format is string like: HH:MM, "
+                    f"received: {everyday_str!r}\n"
+                )
+                with_warn = True
+                everyday_list = DEFAULT_UPDATING_STRFTIME.split(":")
+
+            hour, minute = everyday_list
+
+            if not hour.isdigit() or not minute.isdigit():
+                log.warn(
+                    "Failed type casting for everyday updating time."
+                    "Required type for hour and minute is 'int', "
+                    f"received: {everyday_str!r}\n"
+                )
+                with_warn = True
+                hour, minute = DEFAULT_UPDATING_STRFTIME.split(":")
+
+            hour, minute = int(hour), int(minute)
+
+            if not (0 <= hour <= 24) or not (0 <= minute <= 59):
+                log.warn(
+                    "Incorrect hour or minute value!\nHour must be from 0 to 23, "
+                    "minute must be from 0 to 59."
+                )
+                with_warn = True
+                hour, minute = map(int, DEFAULT_UPDATING_STRFTIME.split(":"))
+
+            if with_warn:
+                log.warn(
+                    "Set update time as default: {DEFAULT_UPDATING_STRFTIME!r}"
+                )
+
+            update_time = reference.replace(hour=hour, minute=minute)
+
+            # check for adding one day. Example:
+            # if reference = 2020-01-01 16:00 and hour = 00, minute = 00
+            # then, resulting update_time is 2020-01-02 00:00 (+ one day to reference)
+            if (
+                reference.hour > hour
+                or (reference.hour == hour and reference.minute > minute)
+            ):
+                update_time += timedelta(days=1)
+
+            break
+
+    return update_time
+
+
+def next_task_time(msk_today, log):
+    task_time = None
+
+    posting_time = next_posting_time(reference=msk_today, log=log)
+    update_time = next_updating_time(reference=msk_today, log=log)
+
+    if posting_time is None and update_time is None:
+        # something bad happening
+        raise ValueError("Don't found event for posting and updating time!")
+
+    if posting_time is None:
+        log.warning("Don't event for posting! Continue with updating time.")
+        task_time = update_time
+
+    elif update_time is None:
+        log.warning("Don't found updating time! Continue with posting time.")
+        task_time = posting_time
+
+    elif update_time - msk_today < posting_time - msk_today:
+        task_time = update_time
+
+    else:
+        task_time = posting_time
+
+    return task_time
+
+
+def is_monotonic(arr):
+    return all([i > j for i, j in zip(arr[1:], arr[:-1])])
+
+
+def check_posting_datetime():
+    """
+    Required nonempty posting_datetime field in all items in table3!
+    """
+    rows = [r for r in table3.collection.get_rows() if r.status in ["Ready to post", "Skip posting time"]]
+    posting_datetimes = [row.posting_datetime.start for row in rows]
+
+    if not is_monotonic(posting_datetimes):
+        for row, ptime in zip(rows, sorted(posting_datetimes)):
+            set_property(row, "Posting_datetime", ptime)

@@ -87,7 +87,7 @@ def not_approved_organization_filter(events):
             or "финанс" in event.title.lower()
             or not event.is_registration_open
             or (event.date_to is not None and event.date_to - event.date_from > two_days)
-            or event.poster_imag == None
+            or event.poster_imag is None
         ):
             continue
 
