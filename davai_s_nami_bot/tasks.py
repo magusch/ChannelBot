@@ -194,6 +194,10 @@ class PostingEvent(Task):
                 photo_name = "img"
                 img.thumbnail(self.IMG_MAXSIZE, PIL.Image.ANTIALIAS)
 
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                # TODO: if line above work fine, this isn't necessary
                 if img.mode == "CMYK":
                     # can't save CMYK as PNG
                     img.save(photo_name + ".jpg", "jpeg")
@@ -201,9 +205,6 @@ class PostingEvent(Task):
 
                 else:
                     img.save(photo_name + ".png", "png")
-                    if img.mode == "RGBA":
-                        # jpeg does not support transparency
-                        img = img.convert("RGB")
                     img.save(photo_name + ".jpg", "jpeg")
 
                     image_size = os.path.getsize(photo_name + ".png") / 1_000_000
