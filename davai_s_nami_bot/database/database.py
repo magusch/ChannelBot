@@ -10,7 +10,7 @@ __all__ = (
     "remove",
 )
 
-TAGS = ["id", "title", "post_id", "date_from", "date_to"]
+TAGS = ["id", "title", "post_id", "date_from", "date_to", "price"]
 DB_FOLDER = os.path.dirname(__file__)
 SCHEMA_NAME = "schema.sql"
 SCHEMA_PATH = os.path.join(DB_FOLDER, SCHEMA_NAME)
@@ -84,7 +84,7 @@ def add(event, post_id):
     script = (
         sql.SQL(
             "INSERT INTO {table} ({fields}) values "
-            "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
+            "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP)), %s"
         )
         .format(
             table=sql.Identifier(TABLE_NAME),
@@ -100,6 +100,7 @@ def add(event, post_id):
         post_id,
         None if event.From_date is None else event.From_date.start,
         None if event.To_date is None else event.To_date.start,
+        None if event.price is None else event.price
     ]
 
     _insert(script, data)
