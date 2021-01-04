@@ -134,6 +134,8 @@ def parse_post(event):
 
     return title + post_text + footer
 
+def parse_price(event):
+    return event.price
 
 def parse_url(event):
     return event.url
