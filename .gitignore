@@ -1,3 +1,6 @@
+/.idea
+.DS_Store
+prod_constants
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -125,11 +128,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
-# macOs
-.DS_Store
-
 # Pyre type checker
 .pyre/
 
 .vscode/
 misk
+*.database

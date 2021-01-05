@@ -22,6 +22,7 @@ TAGS_TO_NOTION = {
     "To_date": posting.parse_to_date,
     "Image": posting.parse_image,
     "Event_id": posting.parse_id,
+    "Price": posting.parse_price
 }
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
