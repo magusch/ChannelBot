@@ -134,6 +134,38 @@ def parse_post(event):
 
     return title + post_text + footer
 
+def parse_title_date(event):
+    title_date = "{day} {month}".format(
+        day=event.date_from.day,
+        month=month_name(event.date_from),
+    )
+    if event.date_to:
+        if event.date_to.day!=event.date_from.day:
+            title_date+=" - {day} {month}".format(
+                day=event.date_to.day,
+                month=month_name(event.date_to),
+            )
+    return title_date
+
+def parse_post_text(event):
+    post_text = (
+        event.post_text.strip()
+            .replace("`", "\`")
+            .replace("_", "\_")
+            .replace("*", "\*")
+    )
+    return post_text
+
+def parse_footer(event):
+    date_from_to = date_to_post(event.date_from, event.date_to)
+    footer = (
+        "\n\n"
+        f"**Где:** {event.place_name}, {event.adress} \n"
+        f"**Когда:** {date_from_to} \n"
+        f"**Вход:** [{event.price}] ({event.url})"
+    )
+    return footer
+
 def parse_price(event):
     return event.price
 
