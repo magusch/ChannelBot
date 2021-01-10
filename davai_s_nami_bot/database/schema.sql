@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS "dev_events" (
     "title" TEXT NOT NULL,
     "post_id" INTEGER,
     "date_from" TIMESTAMP,
-    "date_to" TIMESTAMP
+    "date_to" TIMESTAMP,
+    "price" TEXT NOT NULL
 );
 
 
