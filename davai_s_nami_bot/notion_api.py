@@ -158,7 +158,10 @@ def check_for_move_to_table2(record, date, days=None, log=None):
 
 
 def check_explored_date(record, date, days=None, log=None):
-    if record.explored_date.start + timedelta(days=days) < date:
+    if record.explored_date:
+        if record.explored_date.start + timedelta(days=days) < date:
+            remove_row(record, log=log)
+    else:
         remove_row(record, log=log)
 
 
@@ -244,6 +247,7 @@ def get_new_events(events):
             new_events.append(event)
 
     return new_events
+
 
 def not_published_count():
     count = 0
