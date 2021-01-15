@@ -31,10 +31,6 @@ def check_event_status():
     return CheckEventStatus(log=logging.getLogger())
 
 
-def ids_for_check_event_status(args):
-    return f"{args}"
-
-
 @pytest.mark.parametrize(
     "msk_today, status, posting_datetime",
     [
@@ -44,7 +40,7 @@ def ids_for_check_event_status(args):
         (MSK_TODAY, "Ready to post", MSK_TODAY + HOUR_1),
         (MSK_TODAY, "Ready to post", None),
     ],
-    ids=ids_for_check_event_status,
+    ids=lambda args: f"{args}",
 )
 def test_check_event_status(monkeypatch, check_event_status, msk_today, status, posting_datetime):
     class NotionRow:

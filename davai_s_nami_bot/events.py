@@ -120,29 +120,41 @@ def _get_events(parser, *args, **kwargs):
     return parser.get_events(*args, **kwargs)
 
 
-def from_approved_organizations(days, log, **kwargs):
+def from_approved_organizations(days, log):
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
+    Currently, only from Timepad.
     """
+    return timepad_approved_organizations(days, log=log)
+
+
+def timepad_aproved_organizations(days, log=None):
     return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
         log,
         events_filter=approved_organization_filter,
-        **kwargs,
     )
 
 
 def from_not_approved_organizations(days, log):
-    timepad_events = get_timepad_events(
+    return (
+        timepad_others_organizations(days, log=log)
+        + radario_others_organizations(days, log=log)
+    )
+
+
+def timepad_others_organizations(days, log=None):
+    return get_timepad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
         log=log,
         events_filter=not_approved_organization_filter,
     )
-    radario_events = get_radario_events(days, log=log)
 
-    return timepad_events + radario_events
+
+def radario_others_organizations(days, log=None):
+    return get_radario_events(days, log=log)
 
 
 def get_timepad_events(days, request_params, log, events_filter=None, with_online=True):

@@ -30,6 +30,9 @@ NOTION_TABLE2_URL = os.environ.get("NOTION_TABLE2_URL")
 NOTION_TABLE3_URL = os.environ.get("NOTION_TABLE3_URL")
 NOTION_POSTING_TIMES_URL = os.environ.get("NOTION_POSTING_TIMES_URL")
 NOTION_EVERYDAY_TIMES_URL = os.environ.get("NOTION_EVERYDAY_TIMES_URL")
+NOTION_TEST_TABLE1_URL = os.environ.get("NOTION_TEST_TABLE1_URL")
+NOTION_TEST_TABLE2_URL = os.environ.get("NOTION_TEST_TABLE2_URL")
+NOTION_TEST_TABLE3_URL = os.environ.get("NOTION_TEST_TABLE3_URL")
 MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
@@ -39,6 +42,11 @@ table2 = notion_client.get_collection_view(NOTION_TABLE2_URL)
 table3 = notion_client.get_collection_view(NOTION_TABLE3_URL)
 posting_times_table = notion_client.get_collection_view(NOTION_POSTING_TIMES_URL)
 everyday_times = notion_client.get_collection_view(NOTION_EVERYDAY_TIMES_URL)
+
+##### for tests
+test_notion_table1 = notion_client.get_collection_view(NOTION_TEST_TABLE1_URL)
+test_notion_table2 = notion_client.get_collection_view(NOTION_TEST_TABLE2_URL)
+test_notion_table3 = notion_client.get_collection_view(NOTION_TEST_TABLE3_URL)
 
 
 def connection_wrapper(func):
@@ -52,7 +60,13 @@ def connection_wrapper(func):
                 if attempts_count == MAX_NUMBER_CONNECTION_ATTEMPTS:
                     raise e
 
-                log.warning(f"Retry (raised exception):\n", exc_info=True)
+                warning_msg = "Retry (raised exception)"
+
+                if log:
+                    log.warning(warning_msg + "\n", exc_info=True)
+                else:
+                    warnings.warn(warning_msg)
+
                 attempts_count += 1
 
     return wrapper
