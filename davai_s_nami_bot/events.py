@@ -202,15 +202,19 @@ def get_radario_events(days, events_filter=None, log=None):
         "show",
     ]
     today = date.today()
-    date_from = today
-    date_to = today + timedelta(days=days)
+    date_from = today.strftime(Radario.DATETIME_STRF)
+    date_to = (today + timedelta(days=days)).strftime(Radario.DATETIME_STRF)
+
+    request_params = {
+        "from": date_from,
+        "to": date_to,
+        "category": category,
+    }
 
     new_events = _get_events(
         radario_parser,
+        request_params=request_params,
         log=log,
-        date_from=date_from,
-        date_to=date_to,
-        category=category,
     )
 
     if events_filter:
