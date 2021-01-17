@@ -25,26 +25,26 @@ class Task:
 
 
 class CheckEventStatus(Task):
-    def is_weekday(self, dt):
+    def _is_weekday(self, dt):
         return dt.weekday() in [0, 1, 2, 3, 4]
 
-    def in_past(self, dt, msk_today):
+    def _in_past(self, dt, msk_today):
         return dt.hour < msk_today.hour or (
             dt.hour == msk_today.hour and dt.minute < msk_today.minute
         )
 
-    def datetimes_schecule(self, msk_today):
+    def _datetimes_schecule(self, msk_today):
         weekday = notion_api.get_weekday_posting_times(msk_today)
         weekend = notion_api.get_weekend_posting_times(msk_today)
 
         current_day_datetimes = list()
-        if self.is_weekday(msk_today):
+        if self._is_weekday(msk_today):
             today_datetimes = weekday
         else:
             today_datetimes = weekend
 
         for dt in today_datetimes:
-            if not self.in_past(dt, msk_today):
+            if not self._in_past(dt, msk_today):
                 current_day_datetimes.append(
                     dt.replace(
                         year=msk_today.year,
@@ -64,11 +64,11 @@ class CheckEventStatus(Task):
                 day=msk_today.day,
             )
 
-            datetimes = weekday if self.is_weekday(msk_today) else weekend
+            datetimes = weekday if self._is_weekday(msk_today) else weekend
             yield [i.replace(**ymd) for i in datetimes]
 
-    def posting_datetimes(self, msk_today):
-        datetimes_schecule = self.datetimes_schecule(msk_today)
+    def _posting_datetimes(self, msk_today):
+        datetimes_schecule = self._datetimes_schecule(msk_today)
 
         while True:
             day_schedule = next(datetimes_schecule)
@@ -77,7 +77,7 @@ class CheckEventStatus(Task):
     def run(self, msk_today, *args) -> None:
         self.log.info("Check events posting status")
 
-        posting_datetimes = self.posting_datetimes(msk_today)
+        posting_datetimes = self._posting_datetimes(msk_today)
         posting_datetime = next(posting_datetimes)
 
         for row in notion_api.table3.collection.get_rows():
@@ -164,12 +164,12 @@ class PostingEvent(Task):
 
 
 class UpdateEvents(Task):
-    def remove_old(self, msk_today):
+    def _remove_old(self, msk_today):
         self.log.info("Removing old events")
         notion_api.remove_old_events(msk_today + timedelta(hours=1))
         database.remove(msk_today + timedelta(hours=1))
 
-    def update_events(self, events, msk_today, table=None):
+    def _update_events(self, events, msk_today, table=None):
         self.log.info("Checking for existing events")
 
         new_events = notion_api.get_new_events(events)
@@ -181,19 +181,19 @@ class UpdateEvents(Task):
     def run(self, msk_today, *args):
         self.log.info("Start updating events.")
 
-        self.remove_old(msk_today)
+        self._remove_old(msk_today)
 
         self.log.info("Getting events from approved organizations for next 7 days")
         approved_events = events.from_approved_organizations(days=7)
         self.log.info(f"Collected {len(approved_events)} approved events.")
 
-        self.update_events(approved_events, msk_today, table=notion_api.table3)
+        self._update_events(approved_events, msk_today, table=notion_api.table3)
 
         self.log.info("Getting new events from other organizations for next 7 days")
         other_events = events.from_not_approved_organizations(days=7)
         self.log.info(f"Collected {len(other_events)} events")
 
-        self.update_events(other_events, msk_today, table=notion_api.table1)
+        self._update_events(other_events, msk_today, table=notion_api.table1)
 
         notion_count = notion_api.events_count()
 
