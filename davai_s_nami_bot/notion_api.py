@@ -216,6 +216,12 @@ def move_row(row, to_table, with_remove=True):
         remove_row(row)
 
 
+def notion_row_to_event(row):
+    return namedtuple("event", list(TAGS_TO_NOTION.keys()))(
+        **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
+    )
+
+
 def next_event_to_channel():
     """
     Getting next event (namedtuple) from table 3 (from up to down).
@@ -226,9 +232,7 @@ def next_event_to_channel():
     for row in rows:
         if row.status != "Posted":
             if row.status == "Ready to post":
-                event = namedtuple("event", list(TAGS_TO_NOTION.keys()))(
-                    **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
-                )
+                event = notion_row_to_event(row)
                 set_property(row, "status", "Posted")
 
             elif row.status == "Ready to skiped posting time":
