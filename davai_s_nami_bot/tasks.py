@@ -109,9 +109,7 @@ class CheckEventStatus(Task):
                     posting_datetime = next(posting_datetimes)  # skip time
                     notion_api.set_property(row, "status", "Ready to post")
 
-                notion_api.set_property(
-                    row, "posting_datetime", posting_datetime, log=self.log
-                )
+                notion_api.set_property(row, "posting_datetime", posting_datetime)
                 posting_datetime = next(posting_datetimes)
 
             else:
@@ -122,9 +120,7 @@ class CheckEventStatus(Task):
                     posting_datetime = next(posting_datetimes)  # skip time
                     notion_api.set_property(row, "status", "Ready to post")
 
-                    notion_api.set_property(
-                        row, "posting_datetime", posting_datetime, log=self.log
-                    )
+                    notion_api.set_property(row, "posting_datetime", posting_datetime)
                     posting_datetime = next(posting_datetimes)
 
                 if row.posting_datetime.start < msk_today:
@@ -145,7 +141,7 @@ class MoveApproved(Task):
         notion_api.update_table_views()
 
         self.log.info("Move approved events from table1 and table2 to table3")
-        notion_api.move_approved(log=self.log)
+        notion_api.move_approved()
 
 
 class IsEmptyCheck(Task):
@@ -228,14 +224,14 @@ class PostingEvent(Task):
         database.add(event, post_id)
 
     def is_need_running(self, msk_today) -> bool:
-        posting_time = notion_api.next_posting_time(msk_today, self.log)
+        posting_time = notion_api.next_posting_time(msk_today)
         return posting_time is not None and msk_today == posting_time
 
 
 class UpdateEvents(Task):
     def remove_old(self, msk_today):
         self.log.info("Removing old events")
-        notion_api.remove_old_events(msk_today + timedelta(hours=1), log=self.log)
+        notion_api.remove_old_events(msk_today + timedelta(hours=1))
         database.remove(msk_today + timedelta(hours=1))
 
     def update_events(self, events, msk_today, table=None):
@@ -245,7 +241,7 @@ class UpdateEvents(Task):
         self.log.info(f"New evenst count = {len(new_events)}")
 
         self.log.info("Updating notion table")
-        notion_api.add_events(new_events, msk_today, table=table, log=self.log)
+        notion_api.add_events(new_events, msk_today, table=table)
 
     def run(self, msk_today, *args):
         self.log.info("Start updating events.")
@@ -253,13 +249,13 @@ class UpdateEvents(Task):
         self.remove_old(msk_today)
 
         self.log.info("Getting events from approved organizations for next 7 days")
-        approved_events = events.from_approved_organizations(days=7, log=self.log)
+        approved_events = events.from_approved_organizations(days=7)
         self.log.info(f"Collected {len(approved_events)} approved events.")
 
         self.update_events(approved_events, msk_today, table=notion_api.table3)
 
         self.log.info("Getting new events from other organizations for next 7 days")
-        other_events = events.from_not_approved_organizations(days=7, log=self.log)
+        other_events = events.from_not_approved_organizations(days=7)
         self.log.info(f"Collected {len(other_events)} events")
 
         self.update_events(other_events, msk_today, table=notion_api.table1)
@@ -269,7 +265,7 @@ class UpdateEvents(Task):
         self.log.info(f"Events count in notion table: {notion_count}")
 
     def is_need_running(self, msk_today) -> bool:
-        updating_time = notion_api.next_updating_time(msk_today, self.log)
+        updating_time = notion_api.next_updating_time(msk_today)
 
         return updating_time is not None and msk_today == updating_time
 

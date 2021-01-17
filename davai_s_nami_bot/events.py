@@ -120,44 +120,42 @@ def _get_events(parser, *args, **kwargs):
     return parser.get_events(*args, **kwargs)
 
 
-def from_approved_organizations(days, log):
+def from_approved_organizations(days):
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
     Currently, only from Timepad.
     """
-    return timepad_approved_organizations(days, log=log)
+    return timepad_approved_organizations(days)
 
 
-def timepad_aproved_organizations(days, log=None):
+def timepad_approved_organizations(days):
     return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
-        log,
         events_filter=approved_organization_filter,
     )
 
 
-def from_not_approved_organizations(days, log):
+def from_not_approved_organizations(days):
     return (
-        timepad_others_organizations(days, log=log)
-        + radario_others_organizations(days, log=log)
+        timepad_others_organizations(days)
+        + radario_others_organizations(days)
     )
 
 
-def timepad_others_organizations(days, log=None):
+def timepad_others_organizations(days):
     return get_timepad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
-        log=log,
         events_filter=not_approved_organization_filter,
     )
 
 
-def radario_others_organizations(days, log=None):
-    return get_radario_events(days, log=log)
+def radario_others_organizations(days):
+    return get_radario_events(days)
 
 
-def get_timepad_events(days, request_params, log, events_filter=None, with_online=True):
+def get_timepad_events(days, request_params, events_filter=None, with_online=True):
     """
     Getting events.
     """
@@ -189,7 +187,6 @@ def get_timepad_events(days, request_params, log, events_filter=None, with_onlin
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
-            log=log,
         )
         new_count = len(new)
 
@@ -204,7 +201,7 @@ def get_timepad_events(days, request_params, log, events_filter=None, with_onlin
     return unique(new_events)  # checking for unique -- just in case
 
 
-def get_radario_events(days, events_filter=None, log=None):
+def get_radario_events(days, events_filter=None):
     category = [
         "concert",
         "theatre",
@@ -223,11 +220,7 @@ def get_radario_events(days, events_filter=None, log=None):
         "category": category,
     }
 
-    new_events = _get_events(
-        radario_parser,
-        request_params=request_params,
-        log=log,
-    )
+    new_events = _get_events(radario_parser, request_params=request_params)
 
     if events_filter:
         new_events = events_filter(new_events)

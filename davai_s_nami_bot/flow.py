@@ -26,7 +26,7 @@ class Flow:
 
             # refresh today time
             next_time = notion_api.next_task_time(
-                msk_today=get_msk_today(replace_seconds=True), log=self.log
+                msk_today=get_msk_today(replace_seconds=True)
             )
 
             period_to_next_time = next_time - get_msk_today()

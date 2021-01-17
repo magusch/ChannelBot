@@ -12,7 +12,7 @@ from davai_s_nami_bot import events, notion_api
 @pytest.mark.parametrize(
     "events",
     [
-        events.timepad_aproved_organizations(days=1),
+        events.timepad_approved_organizations(days=1),
         events.timepad_others_organizations(days=1),
         events.radario_others_organizations(days=1),
     ],
