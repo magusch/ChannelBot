@@ -1,7 +1,6 @@
 import re
 from datetime import timedelta
 
-
 WEEKNAMES = {
     0: "Пн",
     1: "Вт",
@@ -50,9 +49,7 @@ def date_to_post(date_from, date_to):
         e_minute = date_to.minute
 
         if s_day == e_day:
-            start_format = (
-                f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
-            )
+            start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
             end_format = f"{e_hour:02}:{e_minute:02}"
 
         else:
@@ -82,23 +79,13 @@ def create(event):
     post : str
     """
 
-    post = (
-        event.Post
-        .replace("__", "*")
-        .replace("] (", "](")
-        .replace("_", "\_")
-    )
+    post = event.Post.replace("__", "*").replace("] (", "](").replace("_", "\_")
 
     return event.Image, post
 
 
 def parse_title(event):
-    title = (
-        event.title
-        .replace("`", "\`")
-        .replace("_", "\_")
-        .replace("*", "\*")
-    )
+    title = event.title.replace("`", "\`").replace("_", "\_").replace("*", "\*")
 
     return title
 
@@ -119,10 +106,7 @@ def parse_post(event):
     title = f"**{title_date}** {title}\n\n"
 
     post_text = (
-        event.post_text.strip()
-        .replace("`", "\`")
-        .replace("_", "\_")
-        .replace("*", "\*")
+        event.post_text.strip().replace("`", "\`").replace("_", "\_").replace("*", "\*")
     )
 
     footer = (
@@ -134,8 +118,10 @@ def parse_post(event):
 
     return title + post_text + footer
 
+
 def parse_price(event):
     return event.price
+
 
 def parse_url(event):
     return event.url
@@ -143,6 +129,7 @@ def parse_url(event):
 
 def parse_from_date(event):
     return event.date_from
+
 
 def parse_to_date(event):
     if event.date_to is None:

@@ -4,7 +4,6 @@ from functools import lru_cache
 
 from .datetime_utils import STRFTIME
 
-
 LOG_FILE = "bot_logs.txt"
 
 
@@ -25,10 +24,3 @@ def get_logger():
     logger.parent.handlers[0].setFormatter(formatter)
 
     return logger
-
-
-def send_logs(bot, chat_id):
-    with open(LOG_FILE, "r+b") as logs:
-        bot.send_document(chat_id, logs)
-        logs.truncate(0)
-        logs.write(b"")

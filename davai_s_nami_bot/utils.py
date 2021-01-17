@@ -1,6 +1,5 @@
 import os
 
-
 REQUIRED_CONSTANT_NAMES = [
     "TIMEPAD_TOKEN",
     "BOT_TOKEN",
@@ -38,6 +37,7 @@ def read_constants_from_file():
 
     if missing_constants:
         raise ValueError(
-            "Some constants in 'prod_constants' are missing: {}"
-            .format(", ".join(missing_constants))
+            "Some constants in 'prod_constants' are missing: {}".format(
+                ", ".join(missing_constants)
+            )
         )

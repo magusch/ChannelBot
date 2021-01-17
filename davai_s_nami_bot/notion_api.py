@@ -1,19 +1,18 @@
-from datetime import date, datetime, timedelta
-from collections import namedtuple
-from typing import List
 import os
 import time
-import pytz
 import warnings
+from collections import namedtuple
+from datetime import date, datetime, timedelta
 from functools import partial
+from typing import List
 
+import pytz
 import requests
 from notion.client import NotionClient
 
-from .datetime_utils import get_msk_today
 from . import posting
+from .datetime_utils import get_msk_today
 from .logger import get_logger
-
 
 TAGS_TO_NOTION = {
     "Title": posting.parse_title,
@@ -23,7 +22,7 @@ TAGS_TO_NOTION = {
     "To_date": posting.parse_to_date,
     "Image": posting.parse_image,
     "Event_id": posting.parse_id,
-    "Price": posting.parse_price
+    "Price": posting.parse_price,
 }
 NOTION_TOKEN_V2 = os.environ.get("NOTION_TOKEN_V2")
 NOTION_TABLE1_URL = os.environ.get("NOTION_TABLE1_URL")
@@ -179,10 +178,7 @@ def move_approved():
     Moving all approved events (with selected checkbox Approved)
     from table1 and table2 to table3.
     """
-    rows = (
-        list(table1.collection.get_rows())
-        + list(table2.collection.get_rows())
-    )
+    rows = list(table1.collection.get_rows()) + list(table2.collection.get_rows())
 
     for row in rows:
         if row.Approved:
@@ -204,7 +200,7 @@ def add_row(table, update_views=False):
     return table.collection.add_row(update_views=update_views)
 
 
-def move_row(row, to_table):
+def move_row(row, to_table, with_remove=True):
     if to_table is table3:
         # add at the end table
         new_row = add_row(to_table, update_views=True)
@@ -216,7 +212,8 @@ def move_row(row, to_table):
     for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
         set_property(new_row, tag, row.get_property(tag))
 
-    remove_row(row)
+    if with_remove:
+        remove_row(row)
 
 
 def next_event_to_channel():
@@ -318,8 +315,7 @@ def next_posting_time(reference):
             if row.get_property("posting_datetime") is None:
                 notion_log.warn(
                     "Unexcepteble warning: event in table 3 have not "
-                    "posting datetime. Event title: {}."
-                    .format(row.Title)
+                    "posting datetime. Event title: {}.".format(row.Title)
                 )
                 # to next valid event
                 continue
@@ -336,7 +332,9 @@ def next_posting_time(reference):
 
             posting_time = notion_date.start
 
-            if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
+            if not isinstance(posting_time, datetime) and isinstance(
+                posting_time, date
+            ):
                 notion_log.warn(
                     f"For event {row.get_property('Title')!r} "
                     "posting datetime without hour and minute. "
@@ -416,9 +414,8 @@ def next_updating_time(reference):
             # check for adding one day. Example:
             # if reference = 2020-01-01 16:00 and hour = 00, minute = 00
             # then, resulting update_time is 2020-01-02 00:00 (+ one day to reference)
-            if (
-                reference.hour > hour
-                or (reference.hour == hour and reference.minute > minute)
+            if reference.hour > hour or (
+                reference.hour == hour and reference.minute > minute
             ):
                 update_time += timedelta(days=1)
 
@@ -462,7 +459,11 @@ def check_posting_datetime():
     """
     Required nonempty posting_datetime field in all items in table3!
     """
-    rows = [r for r in table3.collection.get_rows() if r.status in ["Ready to post", "Skip posting time"]]
+    rows = [
+        r
+        for r in table3.collection.get_rows()
+        if r.status in ["Ready to post", "Skip posting time"]
+    ]
     posting_datetimes = [row.posting_datetime.start for row in rows]
 
     if not is_monotonic(posting_datetimes):

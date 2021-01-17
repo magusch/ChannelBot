@@ -1,31 +1,18 @@
 import os
 from abc import abstractmethod
 from datetime import timedelta
-from io import BytesIO
 
-import PIL
-from PIL import Image
-import requests
-
-from . import database
-from . import notion_api
-from . import posting
-from . import events
+from . import database, events, notion_api, posting, telegram
 from .exceptions import PostingDatetimeError
-from .logger import LOG_FILE
+from .logger import LOG_FILE, get_logger
 
 
 class Task:
-    def __init__(self, log):
-        self.log = log.getChild(self.__class__.__name__)
-        self.CHANNEL_ID = os.environ.get("CHANNEL_ID")
-        self.DEV_CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID")
-
-        if self.CHANNEL_ID is None or self.DEV_CHANNEL_ID is None:
-            raise ValueError("Some environment variables were not found")
+    def __init__(self):
+        self.log = get_logger().getChild(self.__class__.__name__)
 
     @abstractmethod
-    def run(self, msk_today, bot) -> None:
+    def run(self, msk_today) -> None:
         """
         Running task.
         """
@@ -42,12 +29,8 @@ class CheckEventStatus(Task):
         return dt.weekday() in [0, 1, 2, 3, 4]
 
     def in_past(self, dt, msk_today):
-        return (
-            dt.hour < msk_today.hour
-            or (
-                dt.hour == msk_today.hour
-                and dt.minute < msk_today.minute
-            )
+        return dt.hour < msk_today.hour or (
+            dt.hour == msk_today.hour and dt.minute < msk_today.minute
         )
 
     def datetimes_schecule(self, msk_today):
@@ -126,8 +109,9 @@ class CheckEventStatus(Task):
                 if row.posting_datetime.start < msk_today:
                     raise PostingDatetimeError(
                         "Unexcepteble error: posting_datetime is in the past!\n"
-                        "Please, check table 3,\nevent title: {}\nevent id: {}."
-                        .format(row.Title, row.Event_id)
+                        "Please, check table 3,\nevent title: {}\nevent id: {}.".format(
+                            row.Title, row.Event_id
+                        )
                     )
 
             if row.status != "Ready to post":
@@ -145,7 +129,7 @@ class MoveApproved(Task):
 
 
 class IsEmptyCheck(Task):
-    def run(self, msk_today, bot) -> None:
+    def run(self, msk_today) -> None:
         self.log.info("Check for available events in table 3")
 
         not_published_count = notion_api.not_published_count()
@@ -155,18 +139,14 @@ class IsEmptyCheck(Task):
             text = "Warning: posting last event."
 
         elif not_published_count == 0:
-            text = (
-                "Warning: not found events for posting."
-            )
+            text = "Warning: not found events for posting."
 
         if text:
-            bot.send_message(chat_id=self.DEV_CHANNEL_ID, text=text)
+            telegram.send_message(text, channel="dev")
 
 
 class PostingEvent(Task):
-    IMG_MAXSIZE = (1920, 1080)
-
-    def run(self, msk_today, bot) -> None:
+    def run(self, msk_today) -> None:
         self.log.info("Check posting status")
 
         event = notion_api.next_event_to_channel()
@@ -178,50 +158,7 @@ class PostingEvent(Task):
         self.log.info("Generating post.")
         photo_url, post = posting.create(event)
 
-        if photo_url is None:
-            message = bot.send_message(
-                chat_id=self.CHANNEL_ID,
-                text=post,
-                disable_web_page_preview=True,
-            )
-
-        else:
-            with Image.open(BytesIO(requests.get(photo_url).content)) as img:
-                photo_name = "img"
-                img.thumbnail(self.IMG_MAXSIZE, PIL.Image.ANTIALIAS)
-
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-
-                # TODO: if line above work fine, this isn't necessary
-                if img.mode == "CMYK":
-                    # can't save CMYK as PNG
-                    img.save(photo_name + ".jpg", "jpeg")
-                    photo_path = photo_name + ".jpg"
-
-                else:
-                    img.save(photo_name + ".png", "png")
-                    img.save(photo_name + ".jpg", "jpeg")
-
-                    image_size = os.path.getsize(photo_name + ".png") / 1_000_000
-
-                    if image_size > 5:
-                        photo_path = photo_name + ".jpg"
-                    else:
-                        photo_path = photo_name + ".png"
-
-                with open(photo_path, "rb") as photo:
-                    message = bot.send_photo(
-                        chat_id=self.CHANNEL_ID,
-                        photo=photo,
-                        caption=post,
-                    )
-
-                os.remove(photo_name + ".jpg")
-                os.remove(photo_name + ".png")
-
-        post_id = message.message_id
-        database.add(event, post_id)
+        telegram.send_post(photo_url, post)
 
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)
@@ -270,11 +207,11 @@ class UpdateEvents(Task):
         return updating_time is not None and msk_today == updating_time
 
 
-def get_edges(log):
+def get_edges():
     return [
-        MoveApproved(log),
-        CheckEventStatus(log),
-        IsEmptyCheck(log),
-        PostingEvent(log),
-        UpdateEvents(log),
+        MoveApproved(),
+        CheckEventStatus(),
+        IsEmptyCheck(),
+        PostingEvent(),
+        UpdateEvents(),
     ]

@@ -2,10 +2,9 @@ import time
 from collections import Counter
 from datetime import date, timedelta
 
-from escraper.parsers import Timepad, Radario, ALL_EVENT_TAGS
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
 
 from .notion_api import connection_wrapper
-
 
 BAD_KEYWORDS = (
     "вебинар",
@@ -27,13 +26,13 @@ APPROVED_ORGANIZATIONS = [
 ]
 
 BORING_ORGANIZATIONS = [
-    "185394", #Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
-    "106118", #АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
-    "212547", #Иерусалимская Сказка
-    "146675", #Корни и Крылья https://korni-i-krylya.timepad.ru
-    "252995", #Музей Христианской Культуры
-    "63354", #Семейный досуговый клуб ШтангенЦиркулб
-    "181043", #Фонд
+    "185394",  # Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
+    "106118",  # АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
+    "212547",  # Иерусалимская Сказка
+    "146675",  # Корни и Крылья https://korni-i-krylya.timepad.ru
+    "252995",  # Музей Христианской Культуры
+    "63354",  # Семейный досуговый клуб ШтангенЦиркулб
+    "181043",  # Фонд
 ]
 
 CATEGORY_IDS_EXCLUDE = [
@@ -63,8 +62,7 @@ TIMEPAD_OTHERS_PARAMS = dict(
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
     organization_ids_exclude=(
-        ", ".join(APPROVED_ORGANIZATIONS)
-        + ", " + ", ".join(BORING_ORGANIZATIONS)
+        ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
     ),
     price_max=500,
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
@@ -89,7 +87,9 @@ def not_approved_organization_filter(events):
             event is None
             or "финанс" in event.title.lower()
             or not event.is_registration_open
-            or (event.date_to is not None and event.date_to - event.date_from > two_days)
+            or (
+                event.date_to is not None and event.date_to - event.date_from > two_days
+            )
             or event.poster_imag is None
         ):
             continue
@@ -137,10 +137,7 @@ def timepad_approved_organizations(days):
 
 
 def from_not_approved_organizations(days):
-    return (
-        timepad_others_organizations(days)
-        + radario_others_organizations(days)
-    )
+    return timepad_others_organizations(days) + radario_others_organizations(days)
 
 
 def timepad_others_organizations(days):
