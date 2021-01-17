@@ -6,7 +6,7 @@ import requests
 from PIL import Image
 from telebot import TeleBot
 
-from . import database, logger
+from . import database, logger, posting
 
 TO_CHANNEL = dict(
     dev=os.environ.get("DEV_CHANNEL_ID"),
@@ -51,7 +51,9 @@ def send_message(text, channel):
     )
 
 
-def send_post(photo_url, post):
+def send_post(event):
+    photo_url, post = posting.create(event)
+
     if photo_url is None:
         message = send_message(text, channel="prod")
 

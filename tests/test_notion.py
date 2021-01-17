@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from davai_s_nami_bot import events, notion_api
+from davai_s_nami_bot import events, notion_api, posting, telegram
 from davai_s_nami_bot.notion_api import (
     test_notion_table1,
     test_notion_table2,
@@ -67,7 +67,9 @@ def test_post_event_from_dev_table3():
     or 'test_move_from_dev_table_1_to_dev_table_3').
     """
     for row in test_notion_table3.collection.get_rows():
-        pass
+        event = notion_api.notion_row_to_event(row)
+
+        telegram.send_post(event)
 
 
 def test_move_from_dev_table2_to_dev_table3():

@@ -156,9 +156,7 @@ class PostingEvent(Task):
             return
 
         self.log.info("Generating post.")
-        photo_url, post = posting.create(event)
-
-        telegram.send_post(photo_url, post)
+        telegram.send_post(event)
 
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)
