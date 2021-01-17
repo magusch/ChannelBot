@@ -13,6 +13,11 @@ REQUIRED_CONSTANT_NAMES = [
     "NOTION_EVERYDAY_TIMES_URL",
     "CHANNEL_ID",
     "DEV_CHANNEL_ID",
+    "DATABASE_URL_SITE",  # For future
+    "VK_TOKEN",
+    "VK_USER_ID",
+    "VK_GROUP_ID",
+    "VK_ALBUM_ID"
 ]
 
 
