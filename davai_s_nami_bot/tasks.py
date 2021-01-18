@@ -171,7 +171,6 @@ class IsEmptyCheck(Task):
 class PostingEvent(Task):
     IMG_MAXSIZE = (1920, 1080)
 
-    vk = VK_upload(group_id, album_id)
 
     def run(self, msk_today, bot) -> None:
         self.log.info("Check posting status")
@@ -195,7 +194,7 @@ class PostingEvent(Task):
                 post_for_vk, url = vk.make_vk_post(post)
                 vk.vk_post(post_for_vk, url)
             except:
-                print('bad')
+                print('bad vk post')
         else:
             with Image.open(BytesIO(requests.get(photo_url).content)) as img:
                 photo_name = "img"
@@ -227,14 +226,21 @@ class PostingEvent(Task):
                         photo=photo,
                         caption=post,
                     )
-
+                ##VK upload photo
+                try:
+                    vk_upload = vk.VKUpload
+                    vk_attachments = vk_upload.upload_and_save_photo(photo_path)
+                except:
+                    print('Bad vk upload')
+                    vk_attachments=''
                 os.remove(photo_name + ".jpg")
                 os.remove(photo_name + ".png")
-        try:
-            post_for_vk, url = vk.make_vk_post(post)
-            vk.vk_post(post_for_vk, url)
-        except:
-            print('bad')
+            try:
+                post_for_vk, url = vk.make_vk_post(post)
+                vk_attachments+=vk_attachments+','+url
+                vk.vk_post(post_for_vk, vk_attachments)
+            except:
+                print('bad')
         post_id = message.message_id
         database.add(event, post_id)
 
