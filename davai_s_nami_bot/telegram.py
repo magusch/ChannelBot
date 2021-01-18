@@ -20,13 +20,6 @@ bot = TeleBot(
 )
 
 
-def get_bot():
-    return TeleBot(
-        token=os.environ.get("BOT_TOKEN"),
-        parse_mode="Markdown",
-    )
-
-
 def send_logs():
     with open(logger.LOG_FILE, "r+b") as logs:
         bot.send_document(TO_CHANNEL["dev"], logs)
