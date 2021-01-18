@@ -31,8 +31,12 @@ notion_client = NotionClient(token_v2=os.environ.get("NOTION_TOKEN_V2"))
 table1 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE1_URL"))
 table2 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE2_URL"))
 table3 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE3_URL"))
-posting_times_table = notion_client.get_collection_view(os.environ.get("NOTION_POSTING_TIMES_URL"))
-everyday_times = notion_client.get_collection_view(os.environ.get("NOTION_EVERYDAY_TIMES_URL"))
+posting_times_table = notion_client.get_collection_view(
+    os.environ.get("NOTION_POSTING_TIMES_URL")
+)
+everyday_times = notion_client.get_collection_view(
+    os.environ.get("NOTION_EVERYDAY_TIMES_URL")
+)
 
 notion_log = get_logger().getChild("NotionAPI")
 

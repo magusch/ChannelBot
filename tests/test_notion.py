@@ -9,10 +9,15 @@ import pytest
 from davai_s_nami_bot import events, notion_api, posting, telegram
 from davai_s_nami_bot.notion_api import notion_client
 
-
-test_table1 = notion_client.get_collection_view(os.environ.get("NOTION_TEST_TABLE1_URL"))
-test_table2 = notion_client.get_collection_view(os.environ.get("NOTION_TEST_TABLE2_URL"))
-test_table3 = notion_client.get_collection_view(os.environ.get("NOTION_TEST_TABLE3_URL"))
+test_table1 = notion_client.get_collection_view(
+    os.environ.get("NOTION_TEST_TABLE1_URL")
+)
+test_table2 = notion_client.get_collection_view(
+    os.environ.get("NOTION_TEST_TABLE2_URL")
+)
+test_table3 = notion_client.get_collection_view(
+    os.environ.get("NOTION_TEST_TABLE3_URL")
+)
 
 
 def move_rows(from_table, to_table):
