@@ -1,4 +1,5 @@
 import os
+import warnings
 
 REQUIRED_CONSTANT_NAMES = [
     "TIMEPAD_TOKEN",
@@ -18,26 +19,37 @@ REQUIRED_CONSTANT_NAMES = [
 ]
 
 
-def read_constants_from_file():
-    if not os.path.exists("prod_constants"):
-        raise ValueError("File 'prod_constants' not found!")
-
-    missing_constants = set(REQUIRED_CONSTANT_NAMES)
-
-    with open("prod_constants") as file:
-        for line in file:
-            tag, value = line.split()
-
-            if tag not in REQUIRED_CONSTANT_NAMES:
-                raise ValueError(f"Unexpected constant: {tag}")
-
-            os.environ[tag] = value
-
-            missing_constants -= {tag}
-
-    if missing_constants:
-        raise ValueError(
-            "Some constants in 'prod_constants' are missing: {}".format(
-                ", ".join(missing_constants)
-            )
+def read_constants():
+    if os.path.exists("prod_constants"):
+        warnings.warn(
+            message=(
+                "Reading constants from file 'prod_constants' will be removed "
+                "in future versions."
+            ),
+            category=DeprecationWarning,
         )
+
+        missing_constants = set(REQUIRED_CONSTANT_NAMES)
+
+        with open("prod_constants") as file:
+            for line in file:
+                tag, value = line.split()
+
+                if tag not in REQUIRED_CONSTANT_NAMES:
+                    raise ValueError(f"Unexpected constant: {tag}")
+
+                os.environ[tag] = value
+
+                missing_constants -= {tag}
+
+        if missing_constants:
+            raise ValueError(
+                "Some constants in 'prod_constants' are missing: {}".format(
+                    ", ".join(missing_constants)
+                )
+            )
+
+    else:
+        for key in REQUIRED_CONSTANT_NAMES:
+            if key not in os.environ:
+                raise ValueError(f"Constant {key} not found in environ.")
