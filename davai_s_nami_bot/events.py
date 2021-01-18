@@ -2,10 +2,9 @@ import time
 from collections import Counter
 from datetime import date, timedelta
 
-from escraper.parsers import Timepad, Radario, ALL_EVENT_TAGS
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
 
 from .notion_api import connection_wrapper
-
 
 BAD_KEYWORDS = (
     "вебинар",
@@ -27,13 +26,13 @@ APPROVED_ORGANIZATIONS = [
 ]
 
 BORING_ORGANIZATIONS = [
-    "185394", #Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
-    "106118", #АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
-    "212547", #Иерусалимская Сказка
-    "146675", #Корни и Крылья https://korni-i-krylya.timepad.ru
-    "252995", #Музей Христианской Культуры
-    "63354", #Семейный досуговый клуб ШтангенЦиркулб
-    "181043", #Фонд
+    "185394",  # Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
+    "106118",  # АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
+    "212547",  # Иерусалимская Сказка
+    "146675",  # Корни и Крылья https://korni-i-krylya.timepad.ru
+    "252995",  # Музей Христианской Культуры
+    "63354",  # Семейный досуговый клуб ШтангенЦиркулб
+    "181043",  # Фонд
 ]
 
 CATEGORY_IDS_EXCLUDE = [
@@ -63,8 +62,7 @@ TIMEPAD_OTHERS_PARAMS = dict(
     cities="Санкт-Петербург",
     moderation_statuses="featured, shown",
     organization_ids_exclude=(
-        ", ".join(APPROVED_ORGANIZATIONS)
-        + ", " + ", ".join(BORING_ORGANIZATIONS)
+        ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
     ),
     price_max=500,
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
@@ -89,7 +87,9 @@ def not_approved_organization_filter(events):
             event is None
             or "финанс" in event.title.lower()
             or not event.is_registration_open
-            or (event.date_to is not None and event.date_to - event.date_from > two_days)
+            or (
+                event.date_to is not None and event.date_to - event.date_from > two_days
+            )
             or event.poster_imag is None
         ):
             continue
@@ -120,32 +120,39 @@ def _get_events(parser, *args, **kwargs):
     return parser.get_events(*args, **kwargs)
 
 
-def from_approved_organizations(days, log, **kwargs):
+def from_approved_organizations(days):
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
+    Currently, only from Timepad.
     """
+    return timepad_approved_organizations(days)
+
+
+def timepad_approved_organizations(days):
     return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
-        log,
         events_filter=approved_organization_filter,
-        **kwargs,
     )
 
 
-def from_not_approved_organizations(days, log):
-    timepad_events = get_timepad_events(
+def from_not_approved_organizations(days):
+    return timepad_others_organizations(days) + radario_others_organizations(days)
+
+
+def timepad_others_organizations(days):
+    return get_timepad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
-        log=log,
         events_filter=not_approved_organization_filter,
     )
-    radario_events = get_radario_events(days, log=log)
-
-    return timepad_events + radario_events
 
 
-def get_timepad_events(days, request_params, log, events_filter=None, with_online=True):
+def radario_others_organizations(days):
+    return get_radario_events(days)
+
+
+def get_timepad_events(days, request_params, events_filter=None, with_online=True):
     """
     Getting events.
     """
@@ -177,7 +184,6 @@ def get_timepad_events(days, request_params, log, events_filter=None, with_onlin
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
-            log=log,
         )
         new_count = len(new)
 
@@ -192,7 +198,7 @@ def get_timepad_events(days, request_params, log, events_filter=None, with_onlin
     return unique(new_events)  # checking for unique -- just in case
 
 
-def get_radario_events(days, events_filter=None, log=None):
+def get_radario_events(days, events_filter=None):
     category = [
         "concert",
         "theatre",
@@ -211,11 +217,7 @@ def get_radario_events(days, events_filter=None, log=None):
         "category": category,
     }
 
-    new_events = _get_events(
-        radario_parser,
-        request_params=request_params,
-        log=log,
-    )
+    new_events = _get_events(radario_parser, request_params=request_params)
 
     if events_filter:
         new_events = events_filter(new_events)

@@ -1,4 +1,1 @@
-from .database import (
-    add,
-    remove,
-)
+from .database import add, remove

@@ -4,7 +4,6 @@ from collections import namedtuple
 import psycopg2
 from psycopg2 import sql
 
-
 __all__ = (
     "add",
     "remove",
@@ -18,8 +17,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 TABLE_NAME = "dev_events"
 
 is_table_exists = (
-    "SELECT table_name FROM information_schema.tables "
-    "WHERE table_name = %s"
+    "SELECT table_name FROM information_schema.tables WHERE table_name = %s"
 )
 if DATABASE_URL is None:
     raise ValueError("Postgresql DATABASE_URL do not found")
@@ -81,17 +79,12 @@ def _get(script):
 
 
 def add(event, post_id):
-    script = (
-        sql.SQL(
-            "INSERT INTO {table} ({fields}) values "
-            "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
-        )
-        .format(
-            table=sql.Identifier(TABLE_NAME),
-            fields=sql.SQL(", ").join([
-                sql.Identifier(tag) for tag in TAGS
-            ])
-        )
+    script = sql.SQL(
+        "INSERT INTO {table} ({fields}) values "
+        "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
+    ).format(
+        table=sql.Identifier(TABLE_NAME),
+        fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in TAGS]),
     )
 
     data = [
@@ -100,7 +93,7 @@ def add(event, post_id):
         post_id,
         None if event.From_date is None else event.From_date.start,
         None if event.To_date is None else event.To_date.start,
-        None if event.Price is None else event.Price
+        None if event.Price is None else event.Price,
     ]
 
     _insert(script, data)
