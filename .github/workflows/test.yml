@@ -41,7 +41,7 @@ jobs:
         NOTION_EVERYDAY_TIMES_URL: ${{ secrets.NOTION_EVERYDAY_TIMES_URL }}
         NOTION_TEST_TABLE1_URL: ${{ secrets.NOTION_TEST_TABLE1_URL }}
         NOTION_TEST_TABLE2_URL: ${{ secrets.NOTION_TEST_TABLE2_URL }}
-        NOTION_TEST_TABLE3_UR: ${{ secrets.NOTION_TEST_TABLE3_UR }}
+        NOTION_TEST_TABLE3_URL: ${{ secrets.NOTION_TEST_TABLE3_URL }}
         CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         DEV_CHANNEL_ID: ${{ secrets.DEV_CHANNEL_ID }}
       run: |
