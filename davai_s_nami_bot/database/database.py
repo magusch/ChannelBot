@@ -1,12 +1,10 @@
 import os
 
+import pandas as pd
 import psycopg2
 from psycopg2 import sql
 
-__all__ = (
-    "add",
-    "remove",
-)
+__all__ = ("add", "get_all", "remove", "remove_by_event_id")
 
 TAGS = ["id", "title", "post_id", "date_from", "date_to", "price"]
 DB_FOLDER = os.path.dirname(__file__)
@@ -77,6 +75,20 @@ def _get(script):
     return values
 
 
+def _get_dataframe(script):
+    db_connection = get_db_connection()
+
+    return pd.read_sql_query(script, con=db_connection)
+
+
+def get_all():
+    script = sql.SQL("SELECT * FROM {table_name}").format(
+        table_name=sql.Identifier(TABLE_NAME)
+    )
+
+    return _get_dataframe(script)
+
+
 def add(event, post_id):
     script = sql.SQL(
         "INSERT INTO {table} ({fields}) values "
@@ -104,3 +116,19 @@ def remove(date):
     ).format(table=sql.Identifier(TABLE_NAME))
 
     _insert(script, (date,))
+
+
+def remove_by_event_id(event_id):
+    script = sql.SQL("DELETE FROM {table} WHERE id = %s").format(
+        table=sql.Identifier(TABLE_NAME),
+    )
+
+    _insert(script, (event_id,))
+
+
+def remove_by_title(title):
+    script = sql.SQL("DELETE FROM {table} WHERE title = %s").format(
+        table=TABLE_NAME,
+    )
+
+    _insert(script, (title,))
