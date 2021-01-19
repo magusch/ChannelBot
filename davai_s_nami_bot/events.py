@@ -1,5 +1,4 @@
 import time
-from collections import Counter
 from datetime import date, timedelta
 
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad

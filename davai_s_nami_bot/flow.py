@@ -53,7 +53,7 @@ class Flow:
                         "with final state: Success"
                     )
 
-                except Exception as e:
+                except Exception as e:  # noqa: F841
                     self.log.error(
                         f"Task {task.__class__.__name__} has failed. " "Error msg:\n",
                         exc_info=True,

@@ -1,10 +1,9 @@
-import os
 from abc import abstractmethod
 from datetime import timedelta
 
-from . import database, events, notion_api, posting, telegram
+from . import database, events, notion_api, telegram
 from .exceptions import PostingDatetimeError
-from .logger import LOG_FILE, get_logger
+from .logger import get_logger
 
 
 class Task:

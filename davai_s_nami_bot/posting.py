@@ -79,13 +79,13 @@ def create(event):
     post : str
     """
 
-    post = event.Post.replace("__", "*").replace("] (", "](").replace("_", "\_")
+    post = event.Post.replace("__", "*").replace("] (", "](").replace("_", r"\_")
 
     return event.Image, post
 
 
 def parse_title(event):
-    title = event.title.replace("`", "\`").replace("_", "\_").replace("*", "\*")
+    title = event.title.replace("`", r"\`").replace("_", r"\_").replace("*", r"\*")
 
     return title
 
@@ -106,7 +106,10 @@ def parse_post(event):
     title = f"**{title_date}** {title}\n\n"
 
     post_text = (
-        event.post_text.strip().replace("`", "\`").replace("_", "\_").replace("*", "\*")
+        event.post_text.strip()
+        .replace("`", r"\`")
+        .replace("_", r"\_")
+        .replace("*", r"\*")
     )
 
     footer = (

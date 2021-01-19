@@ -9,4 +9,4 @@ msk_today = get_msk_today(replace_seconds=True)
 
 update_table_views()
 for task in [CheckEventStatus, UpdateEvents]:
-    task(log).run(msk_today)
+    task().run(msk_today)
