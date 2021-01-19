@@ -7,7 +7,7 @@ vk_token = os.environ.get("VK_TOKEN")
 group_id = os.environ.get("VK_GROUP_ID")
 album_id = os.environ.get("VK_ALBUM_ID")
 user_id = os.environ.get("VK_USER_ID")
-get_end_dict = {'access_token':vk_token, 'expires_in': 86400, 'user_id': user_id, 'v':5.103}
+get_end_dict = {'access_token': vk_token, 'expires_in': 86400, 'user_id': user_id, 'v': 5.103}
 telegram_url = 'https://t.me/DavaiSNami/'
 
 def vk_post(msg, attachments):
@@ -35,7 +35,7 @@ def posting_in_vk(event, tm_post_id=None):
     post, url = create_vk_post(event.Post)
 
     if url=='':
-        if event.url!=None:
+        if event.URL!=None:
             url = event.URL
         elif tm_post_id!=None:
             url = telegram_url + str(tm_post_id)
@@ -43,11 +43,11 @@ def posting_in_vk(event, tm_post_id=None):
     if event.Image is None:
         attachments = ''
     else:
-        upload_photo = VKUpload
+        upload_photo = VKUpload()
         with Image.open(BytesIO(requests.get(event.Image).content)) as img:
             photo_name = 'img.jpg'
             img.save(photo_name, "jpeg")
-            attachments = upload_photo.upload_and_save_photo(photo_name)
+            attachments = upload_photo.upload_and_save_photo(filename=photo_name)
 
     attachments = attachments + url
 
