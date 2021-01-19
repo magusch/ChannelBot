@@ -5,6 +5,7 @@ from . import database, events, notion_api, telegram
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
+from . import vk
 
 class Task:
     def __init__(self):
@@ -146,6 +147,7 @@ class IsEmptyCheck(Task):
 
 class PostingEvent(Task):
     def run(self, msk_today) -> None:
+
         self.log.info("Check posting status")
 
         event = notion_api.next_event_to_channel()
@@ -156,6 +158,7 @@ class PostingEvent(Task):
 
         self.log.info("Generating post.")
         telegram.send_post(event)
+
 
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)

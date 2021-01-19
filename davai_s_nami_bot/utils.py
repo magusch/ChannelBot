@@ -16,6 +16,10 @@ REQUIRED_CONSTANT_NAMES = [
     "NOTION_TEST_TABLE3_URL",
     "CHANNEL_ID",
     "DEV_CHANNEL_ID",
+    "VK_TOKEN",
+    "VK_USER_ID",
+    "VK_GROUP_ID",
+    "VK_ALBUM_ID"
 ]
 
 
