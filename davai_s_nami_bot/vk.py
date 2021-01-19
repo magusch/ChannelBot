@@ -1,11 +1,14 @@
 import os, requests, re
 
+from io import BytesIO
+from PIL import Image
+
 vk_token = os.environ.get("VK_TOKEN")
 group_id = os.environ.get("VK_GROUP_ID")
 album_id = os.environ.get("VK_ALBUM_ID")
 user_id = os.environ.get("VK_USER_ID")
 get_end_dict = {'access_token':vk_token, 'expires_in': 86400, 'user_id': user_id, 'v':5.103}
-
+telegram_url = 'https://t.me/DavaiSNami/'
 
 def vk_post(msg, attachments):
     site = f'https://api.vk.com/method/wall.post'
@@ -18,14 +21,37 @@ def vk_post(msg, attachments):
     return req.json()
 
 
-def make_vk_post(post):
-    post = post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','')
-    url_list = re.findall(r'(\((?:\[??[^\[]*?\)))', post[post.rfind('(http')])
+def create_vk_post(post):
+    post = post.Post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','')
+    url_list = re.findall(r'(\((?:\[??[^\[]*?\)))', post[post.rfind('(http'):])
     if len(url_list) > 0:
         url = url_list[0][1:-1]
     else:
         url = ''
     return post, url
+
+
+def posting_in_vk(event, tm_post_id=None):
+    post, url = create_vk_post(event.Post)
+
+    if url=='':
+        if event.url!=None:
+            url = event.URL
+        elif tm_post_id!=None:
+            url = telegram_url + str(tm_post_id)
+
+    if event.Image is None:
+        attachments = ''
+    else:
+        upload_photo = VKUpload
+        with Image.open(BytesIO(requests.get(event.Image).content)) as img:
+            photo_name = 'img.jpg'
+            img.save(photo_name, "jpeg")
+            attachments = upload_photo.upload_and_save_photo(photo_name)
+
+    attachments = attachments + url
+
+    vk_post(post, attachments)
 
 
 class VKUpload:
@@ -45,7 +71,7 @@ class VKUpload:
             raise ValueError(f"Wrong answer: {req}")
 
     def upload_and_save_photo(self, filename):
-        file = open('image/' + filename, 'rb')
+        file = open(filename, 'rb')
         response = self.vk_upload_image(file)
         attachments = self.vk_safe_upload_photo(response)
         return attachments
