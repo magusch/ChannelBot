@@ -44,5 +44,9 @@ jobs:
         NOTION_TEST_TABLE3_URL: ${{ secrets.NOTION_TEST_TABLE3_URL }}
         CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         DEV_CHANNEL_ID: ${{ secrets.DEV_CHANNEL_ID }}
+        VK_TOKEN: ${{ secrets.VK_TOKEN }}
+        VK_ALBUM_ID: ${{ secrets.VK_ALBUM_ID }}
+        VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+        VK_USER_ID: ${{ secrets.VK_USER_ID }}
       run: |
         pytest -v
