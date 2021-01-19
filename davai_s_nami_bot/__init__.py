@@ -1,7 +1,6 @@
-from .utils import read_constants_from_file
+# flake8: noqa: F401
+from .utils import read_constants
 
+read_constants()
 
-read_constants_from_file()
-
-
-from . import flow, tasks, telegram, logger
+from . import flow, logger, tasks, telegram

@@ -1,12 +1,12 @@
 import logging
-from datetime import datetime
+from functools import lru_cache
 
 from .datetime_utils import STRFTIME
-
 
 LOG_FILE = "bot_logs.txt"
 
 
+@lru_cache()
 def get_logger():
     fmt_str = "[%(asctime)s] %(levelname)s - %(name)s | %(message)s"
     formatter = logging.Formatter(fmt=fmt_str, datefmt=STRFTIME)
@@ -23,10 +23,3 @@ def get_logger():
     logger.parent.handlers[0].setFormatter(formatter)
 
     return logger
-
-
-def send_logs(bot, chat_id):
-    with open(LOG_FILE, "r+b") as logs:
-        bot.send_document(chat_id, logs)
-        logs.truncate(0)
-        logs.write(b"")

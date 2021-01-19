@@ -1,8 +1,4 @@
-import pytz
-from datetime import datetime
-
 import pendulum
-
 
 STRFTIME = "%Y-%m-%dT%H:%M:%S"
 

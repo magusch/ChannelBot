@@ -1,38 +1,18 @@
-import os
-import logging
 from collections import namedtuple
 from datetime import datetime, timedelta
 
 import pytest
 
-from davai_s_nami_bot import notion_api, datetime_utils
-from davai_s_nami_bot.tasks import Task, CheckEventStatus
-
+from davai_s_nami_bot import notion_api
+from davai_s_nami_bot.tasks import CheckEventStatus
 
 MSK_TODAY = datetime(year=1900, month=1, day=1, hour=00, minute=00)
 HOUR_1 = timedelta(hours=1)
 
 
 @pytest.fixture
-def mock_os_environ(monkeypatch):
-    def mock_os_environ_get(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(os.environ, "get", mock_os_environ_get)
-
-
-def test_base_task(mock_os_environ):
-    with pytest.raises(ValueError):
-        t = Task(log=logging.getLogger())
-
-
-@pytest.fixture
 def check_event_status():
-    return CheckEventStatus(log=logging.getLogger())
-
-
-def ids_for_check_event_status(args):
-    return f"{args}"
+    return CheckEventStatus()
 
 
 @pytest.mark.parametrize(
@@ -44,9 +24,11 @@ def ids_for_check_event_status(args):
         (MSK_TODAY, "Ready to post", MSK_TODAY + HOUR_1),
         (MSK_TODAY, "Ready to post", None),
     ],
-    ids=ids_for_check_event_status,
+    ids=lambda args: f"{args}",
 )
-def test_check_event_status(monkeypatch, check_event_status, msk_today, status, posting_datetime):
+def test_check_event_status(
+    monkeypatch, check_event_status, msk_today, status, posting_datetime
+):
     class NotionRow:
         def __init__(self, status, posting_datetime=None):
             self.status = status
@@ -54,7 +36,9 @@ def test_check_event_status(monkeypatch, check_event_status, msk_today, status, 
             if posting_datetime is None:
                 self.posting_datetime = posting_datetime
             else:
-                self.posting_datetime = namedtuple("test", ["start"])(start=posting_datetime)
+                self.posting_datetime = namedtuple("test", ["start"])(
+                    start=posting_datetime
+                )
 
             self.Title = "test-title"
             self.Event_id = "test-id"
