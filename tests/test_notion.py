@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from davai_s_nami_bot import events, notion_api, telegram
+from davai_s_nami_bot import database, events, notion_api, telegram
 from davai_s_nami_bot.notion_api import notion_client
 
 test_table1 = notion_client.get_collection_view(
@@ -75,7 +75,10 @@ def test_post_event_from_dev_table3():
     for row in test_table3.collection.get_rows():
         event = notion_api.notion_row_to_event(row)
 
-        telegram.send_post(event)
+        telegram.send_post(event)  # add record to database
+
+        # remove posted event from database
+        database.remove_by_event_id(event.Event_id)
 
 
 def test_move_from_dev_table2_to_dev_table3():
