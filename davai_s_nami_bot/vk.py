@@ -22,7 +22,7 @@ def vk_post(msg, attachments):
 
 
 def create_vk_post(post):
-    post = post.Post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','')
+    post = post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','')
     url_list = re.findall(r'(\((?:\[??[^\[]*?\)))', post[post.rfind('(http'):])
     if len(url_list) > 0:
         url = url_list[0][1:-1]
