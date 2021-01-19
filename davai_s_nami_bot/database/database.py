@@ -1,5 +1,4 @@
 import os
-from collections import namedtuple
 
 import psycopg2
 from psycopg2 import sql

@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from davai_s_nami_bot import events, notion_api, posting, telegram
+from davai_s_nami_bot import events, notion_api, telegram
 from davai_s_nami_bot.notion_api import notion_client
 
 test_table1 = notion_client.get_collection_view(

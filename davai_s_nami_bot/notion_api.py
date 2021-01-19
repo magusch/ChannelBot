@@ -1,17 +1,12 @@
 import os
-import time
-import warnings
 from collections import namedtuple
 from datetime import date, datetime, timedelta
 from functools import partial
 from typing import List
 
-import pytz
-import requests
 from notion.client import NotionClient
 
 from . import posting
-from .datetime_utils import get_msk_today
 from .logger import get_logger
 
 TAGS_TO_NOTION = {

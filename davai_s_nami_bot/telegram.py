@@ -45,7 +45,7 @@ def send_message(text, channel):
 
 
 def send_post(event):
-    photo_url, post = posting.create(event)
+    photo_url, text = posting.create(event)
 
     if photo_url is None:
         message = send_message(text, channel="prod")
@@ -79,7 +79,7 @@ def send_post(event):
                 message = bot.send_photo(
                     chat_id=TO_CHANNEL["prod"],
                     photo=photo,
-                    caption=post,
+                    caption=text,
                 )
 
             os.remove(photo_name + ".jpg")

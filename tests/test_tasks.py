@@ -1,11 +1,10 @@
-import os
 from collections import namedtuple
 from datetime import datetime, timedelta
 
 import pytest
 
-from davai_s_nami_bot import datetime_utils, notion_api
-from davai_s_nami_bot.tasks import CheckEventStatus, Task
+from davai_s_nami_bot import notion_api
+from davai_s_nami_bot.tasks import CheckEventStatus
 
 MSK_TODAY = datetime(year=1900, month=1, day=1, hour=00, minute=00)
 HOUR_1 = timedelta(hours=1)
