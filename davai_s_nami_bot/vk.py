@@ -22,8 +22,8 @@ def vk_post(msg, attachments):
 
 
 def create_vk_post(post):
-    post = post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','')
-    url_list = re.findall(r'(\((?:\[??[^\[]*?\)))', post[post.rfind('(http'):])
+    post = post.replace('Где:', '🏙 Где:').replace('Когда:', '⏰ Когда:').replace('Вход:', '💸 Вход:').replace('Билеты:', '💸 Билеты:').replace('[','').replace(']','').replace('_','').replace('*','')
+    url_list = re.findall(r'(\((?:\[??[^\[]*?\)))', post[post.rfind('(http'):]) #TODO: rebuild this stupid
     if len(url_list) > 0:
         url = url_list[0][1:-1]
     else:
@@ -34,11 +34,10 @@ def create_vk_post(post):
 def posting_in_vk(event, tm_post_id=None):
     post, url = create_vk_post(event.Post)
 
-    if url=='':
-        if event.URL!=None:
-            url = event.URL
-        elif tm_post_id!=None:
-            url = telegram_url + str(tm_post_id)
+    if event.URL!=None:
+        url = event.URL
+    elif tm_post_id!=None:
+        url = telegram_url + str(tm_post_id)
 
     if event.Image is None:
         attachments = ''
