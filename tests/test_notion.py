@@ -75,9 +75,8 @@ def test_post_event_from_dev_table3():
     for row in test_table3.collection.get_rows():
         event = notion_api.notion_row_to_event(row)
 
-        telegram.send_post(event)  # add record to database
-        vk.posting_in_vk(event)
-        # remove posted event from database
+        telegram.send_post(event)
+
         database.remove_by_event_id(event.Event_id)
 
 
