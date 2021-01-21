@@ -111,9 +111,9 @@ def add(event, post_id):
 
 
 def remove(date):
-    script = sql.SQL(
-        "DELETE FROM {table} WHERE date_to < cast(%s as TIMESTAMP)"
-    ).format(table=sql.Identifier(TABLE_NAME))
+    script = sql.SQL("DELETE FROM {table} WHERE date_to < cast(%s as TIMESTAMP)").format(
+        table=sql.Identifier(TABLE_NAME)
+    )
 
     _insert(script, (date,))
 

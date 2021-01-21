@@ -1,11 +1,10 @@
 from abc import abstractmethod
 from datetime import timedelta
 
-from . import database, events, notion_api, telegram, vk
+from . import database, events, notion_api, telegram
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
-from . import vk
 
 class Task:
     def __init__(self):
