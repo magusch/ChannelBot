@@ -4,6 +4,7 @@ Test all interactions with notion from each parser events.
 import os
 from datetime import datetime
 
+import psycopg2
 import pytest
 
 from davai_s_nami_bot import database, events, notion_api, telegram
@@ -70,9 +71,13 @@ def test_post_event_from_dev_table3():
     for row in test_table3.collection.get_rows():
         event = notion_api.notion_row_to_event(row)
 
-        telegram.send_post(event)
+        if even.Event_id in database.get_all()["id"]:
+            with pytest.raises(psycopg2.errors.UniqueViolation):
+                telegram.send_post(event)
 
-        database.remove_by_event_id(event.Event_id)
+        else:
+            telegram.send_post(event)
+            database.remove_by_event_id(event.Event_id)
 
 
 def test_move_from_dev_table2_to_dev_table3():
