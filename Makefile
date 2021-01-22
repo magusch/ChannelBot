@@ -3,9 +3,9 @@ install:
 	pip install pytest autoflake black isort -e .
 
 lint_inplace:
-	isort --project davai_s_nami_bot --diff .
+	isort --project davai_s_nami_bot .
 	black --line-length=89 .
-	autoflake --recursive --remove-all-unused-imports --ignore-init-module-imports .
+	autoflake --in-place --recursive --remove-all-unused-imports --ignore-init-module-imports .
 
 lint_check:
 	isort --check --project davai_s_nami_bot --diff .
