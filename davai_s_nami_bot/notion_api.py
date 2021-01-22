@@ -321,9 +321,7 @@ def next_posting_time(reference):
 
             posting_time = notion_date.start
 
-            if not isinstance(posting_time, datetime) and isinstance(
-                posting_time, date
-            ):
+            if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
                 notion_log.warn(
                     f"For event {row.get_property('Title')!r} "
                     "posting datetime without hour and minute. "
