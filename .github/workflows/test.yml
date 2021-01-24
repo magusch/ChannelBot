@@ -47,4 +47,8 @@ jobs:
         make test
     - name: Deploy
       run: |
-        make deploy
+        pkill -9 python
+        VK_ALBUM_ID=$VK_DEV_ALBUM_ID
+        VK_GROUP_ID=$VK_DEV_GROUP_ID
+        CHANNEL_ID=$DEV_CHANNEL_ID
+        python run.py &

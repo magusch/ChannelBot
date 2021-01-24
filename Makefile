@@ -14,16 +14,3 @@ lint_check:
 
 test:
 	pytest --verbose
-
-stop:
-	pkill -9 python
-
-run:
-	python run.py &
-
-deploy:
-	VK_ALBUM_ID=$VK_DEV_ALBUM_ID
-	VK_GROUP_ID=$VK_DEV_GROUP_ID
-	CHANNEL_ID=$DEV_CHANNEL_ID
-	make stop
-	make run
