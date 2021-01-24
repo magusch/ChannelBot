@@ -7,6 +7,7 @@ from datetime import datetime
 import psycopg2
 import pytest
 
+import davai_s_nami_bot
 from davai_s_nami_bot import database, events, notion_api, telegram
 from davai_s_nami_bot.notion_api import notion_client
 
@@ -62,7 +63,15 @@ def test_move_from_dev_table1_to_dev_table3():
     move_rows(test_table1, test_table3)
 
 
-def test_post_event_from_dev_table3():
+@pytest.fixture
+def environ_test_id(monkeypatch):
+    test_id = davai_s_nami_bot.telegram.TO_CHANNEL.copy()
+    test_id["prod"] = test_id["dev"]
+
+    monkeypatch.setattr(davai_s_nami_bot.telegram, "TO_CHANNEL", test_id)
+
+
+def test_post_event_from_dev_table3(environ_test_id):
     """
     Required events in dev table 3 (from test
     'test_move_from_dev_table_2_to_dev_table_3' or
@@ -71,7 +80,7 @@ def test_post_event_from_dev_table3():
     for row in test_table3.collection.get_rows():
         event = notion_api.notion_row_to_event(row)
 
-        if event.Event_id in database.get_all()["id"]:
+        if event.Event_id in database.get_all()["id"].values:
             with pytest.raises(psycopg2.errors.UniqueViolation):
                 telegram.send_post(event)
 

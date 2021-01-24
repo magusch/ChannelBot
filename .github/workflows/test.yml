@@ -7,10 +7,8 @@ on:
     branches: [ master ]
 
 jobs:
-  build:
-
+  testing:
     runs-on: self-hosted
-
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python 3.7
@@ -29,19 +27,30 @@ jobs:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         NOTION_TOKEN_V2: ${{ secrets.NOTION_TOKEN_V2 }}
-        NOTION_TABLE1_URL: ${{ secrets.NOTION_TABLE1_URL }}
-        NOTION_TABLE2_URL: ${{ secrets.NOTION_TABLE2_URL }}
-        NOTION_TABLE3_URL: ${{ secrets.NOTION_TABLE3_URL }}
+        NOTION_TABLE1_URL: ${{ secrets.NOTION_TEST_TABLE1_URL }} # should be ${{ secrets.NOTION_TABLE1_URL }}
+        NOTION_TABLE2_URL: ${{ secrets.NOTION_TEST_TABLE2_URL }} # should be ${{ secrets.NOTION_TABLE2_URL }}
+        NOTION_TABLE3_URL: ${{ secrets.NOTION_TEST_TABLE3_URL }} # should be ${{ secrets.NOTION_TABLE3_URL }}
         NOTION_POSTING_TIMES_URL: ${{ secrets.NOTION_POSTING_TIMES_URL }}
         NOTION_EVERYDAY_TIMES_URL: ${{ secrets.NOTION_EVERYDAY_TIMES_URL }}
         NOTION_TEST_TABLE1_URL: ${{ secrets.NOTION_TEST_TABLE1_URL }}
         NOTION_TEST_TABLE2_URL: ${{ secrets.NOTION_TEST_TABLE2_URL }}
         NOTION_TEST_TABLE3_URL: ${{ secrets.NOTION_TEST_TABLE3_URL }}
-        CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-        DEV_CHANNEL_ID: ${{ secrets.DEV_CHANNEL_ID }}
+        CHANNEL_ID: "60071821" # should be ${{ secrets.CHANNEL_ID }}
+        DEV_CHANNEL_ID: "60071821" # should be ${{ secrets.DEV_CHANNEL_ID }}
         VK_TOKEN: ${{ secrets.VK_TOKEN }}
-        VK_ALBUM_ID: ${{ secrets.VK_ALBUM_ID }}
-        VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+        VK_ALBUM_ID: ${{ secrets.VK_DEV_ALBUM_ID }} # should be ${{ secrets.VK_ALBUM_ID }}
+        VK_DEV_ALBUM_ID: ${{ secrets.VK_DEV_ALBUM_ID }}
+        VK_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }} # should be ${{ secrets.VK_GROUP_ID }}
+        VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
       run: |
         make test
+
+  deploy:
+    needs: testing
+    if: github.ref == 'refs/heads/master'
+    runs-on: self-hosted
+    steps:
+    - name: Deploy
+      run: |
+        make deploy

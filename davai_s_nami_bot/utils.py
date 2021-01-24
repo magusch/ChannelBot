@@ -19,7 +19,9 @@ REQUIRED_CONSTANT_NAMES = [
     "VK_TOKEN",
     "VK_USER_ID",
     "VK_GROUP_ID",
+    "VK_DEV_GROUP_ID",
     "VK_ALBUM_ID",
+    "VK_DEV_ALBUM_ID",
 ]
 
 

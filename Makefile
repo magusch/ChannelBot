@@ -13,4 +13,8 @@ lint_check:
 	autoflake --check --recursive --remove-all-unused-imports --ignore-init-module-imports .
 
 test:
+	python dump_secrets.py
 	pytest --verbose
+
+deploy:
+	systemctl restart channelbot.service
