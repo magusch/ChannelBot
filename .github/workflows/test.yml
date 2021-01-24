@@ -45,3 +45,6 @@ jobs:
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
       run: |
         make test
+    - name: Deploy
+      run: |
+        make deploy
