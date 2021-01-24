@@ -81,7 +81,14 @@ def create(event):
 
     post = event.Post.replace("__", "*").replace("] (", "](").replace("_", r"\_")
 
-    return event.Image, post
+    # simetimes event.Image has invalid value [["a"]]
+    if event.Image is None or isinstance(event.Image, list):
+        image = None
+
+    else:
+        image = event.Image
+
+    return image, post
 
 
 def parse_title(event):
