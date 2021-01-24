@@ -80,7 +80,7 @@ def test_post_event_from_dev_table3(environ_test_id):
     for row in test_table3.collection.get_rows():
         event = notion_api.notion_row_to_event(row)
 
-        if event.Event_id in database.get_all()["id"]:
+        if event.Event_id in database.get_all()["id"].values:
             with pytest.raises(psycopg2.errors.UniqueViolation):
                 telegram.send_post(event)
 
