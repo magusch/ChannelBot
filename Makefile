@@ -17,5 +17,4 @@ test:
 	pytest --verbose
 
 deploy:
-	# systemctl restart channelbot.service
-	echo "Deploy application"
+	systemctl restart channelbot.service
