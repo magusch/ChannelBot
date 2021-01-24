@@ -45,6 +45,7 @@ jobs:
         make test
 
   deploy:
+    needs: testing
     if: github.ref == 'refs/heads/master'
     runs-on: self-hosted
     steps:
