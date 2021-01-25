@@ -195,7 +195,11 @@ def move_row(row, to_table, with_remove=True):
         new_row = add_row(to_table, update_views=False)
 
     for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
-        set_property(new_row, tag, row.get_property(tag))
+        # TODO: raised ValueError if property is None
+        try:
+            set_property(new_row, tag, row.get_property(tag))
+        except:
+            pass
 
     if with_remove:
         remove_row(row)

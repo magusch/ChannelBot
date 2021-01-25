@@ -9,11 +9,11 @@
 **1. Не пушить напрямую в `master` ветку**  
 Избегать выполнения подобной команды
 ```
->>> git push origin master
+$ git push origin master
 ```
 или тем более force-push
 ```
->>> git push -f origin master
+$ git push -f origin master
 ```
 
 **2. Работать в отдельных ветках**  

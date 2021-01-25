@@ -102,9 +102,9 @@ def add(event, post_id):
         event.Event_id,
         event.Title,
         post_id,
-        None if event.From_date is None else event.From_date.start,
-        None if event.To_date is None else event.To_date.start,
-        None if event.Price is None else event.Price,
+        getattr(event.From_date, "start", None),
+        getattr(event.To_date, "start", None),
+        event.Price,
     ]
 
     _insert(script, data)
