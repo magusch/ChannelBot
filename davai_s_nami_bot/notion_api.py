@@ -58,11 +58,7 @@ def add_events(events, explored_date, table=None):
     table = table or table1
 
     for event in events:
-
-        if table is table3:
-            row = table.collection.add_row(update_views=True)
-        else:
-            row = table.collection.add_row(update_views=False)
+        row = add_row(table)
 
         for tag, parse_func in TAGS_TO_NOTION.items():
             set_property(
@@ -181,8 +177,14 @@ def remove_row(row):
 
 
 @connection_wrapper
-def add_row(table, update_views=False):
-    return table.collection.add_row(update_views=update_views)
+def add_row(table, update_views=None):
+    if update_views is not None:
+        return table.collection.add_row(update_views=update_views)
+
+    if table is table3:
+        return table.collection.add_row(update_views=True)
+
+    return table.collection.add_row(update_views=False)
 
 
 def move_row(row, to_table, with_remove=True):
