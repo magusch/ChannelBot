@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from datetime import timedelta
 
-from . import database, events, notion_api, telegram
+from . import database, events, notion_api, telegram, vk
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
@@ -157,6 +157,7 @@ class PostingEvent(Task):
 
         self.log.info("Generating post.")
         telegram.send_post(event)
+        vk.posting_in_vk(event)
 
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)
