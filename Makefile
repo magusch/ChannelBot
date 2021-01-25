@@ -17,4 +17,5 @@ test:
 	pytest --verbose
 
 deploy:
+	chmod +x build.sh
 	systemctl restart channelbot.service
