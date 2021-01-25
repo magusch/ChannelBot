@@ -1,3 +1,5 @@
+#!/bin/bash
+
 pyenv deactivate
 pyenv local 3.7.9
 pyenv virtualenv-delete --force channelbot-prod
