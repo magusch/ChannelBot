@@ -159,11 +159,6 @@ class PostingEvent(Task):
         telegram.send_post(event)
         vk.posting_in_vk(event)
 
-        # XXX: TEST WORKING, REMOVE THIS IN PRODUCTION VERSION
-        self.log.info("Remove from database")
-        database.remove_by_event_id(event.Event_id)
-        # XXX
-
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)
         return posting_time is not None and msk_today == posting_time
