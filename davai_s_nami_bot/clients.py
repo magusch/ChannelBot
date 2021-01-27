@@ -153,11 +153,13 @@ class VK(BaseClient):
 
 
 def _requests_get(url, params, return_key="response"):
-    return _check_response(requests.get(url=url, params=params))
+    return _check_response(requests.get(url=url, params=params), return_key=return_key)
 
 
 def _requests_post(url, data=None, json=None, files=None, return_key="response"):
-    return _check_response(requests.post(url=url, data=data, json=json, files=files))
+    return _check_response(
+        requests.post(url=url, data=data, json=json, files=files), return_key=return_key
+    )
 
 
 def _check_response(response, return_key):
