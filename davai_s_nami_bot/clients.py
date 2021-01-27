@@ -1,5 +1,4 @@
 import os
-import json
 from abc import ABC, abstractmethod
 from functools import lru_cache
 
@@ -54,6 +53,7 @@ class Telegram(BaseClient):
 
 class VKRequests(BaseClient):
     """VK-client by send requests to vk-api"""
+
     api_base_url = "https://api.vk.com/"
     api_urls = dict(
         wall_post=api_base_url + "method/wall.post",
@@ -76,65 +76,62 @@ class VKRequests(BaseClient):
             message=text,
         )
 
-        response = requests.post(
-            self.api_urls["wall_post"],
-            data={
-                **self._access_params,
-                **content,
-            }
+        return _requests_post(
+            url=self.api_urls["wall_post"],
+            data={**self._access_params, **content},
+            return_key=None,
         )
-        # TODO check response to valid code
-        return response.json()
 
     def send_image(self, id, text, image_path, *, album_id):
         with open(image_path, "rb") as image_obj:
             attachments = self._upload_image_to_album(id, album_id, image_obj)
 
-        response = requests.post(
+        return _requests_post(
             url=self.api_urls["wall_post"],
-            data=dict(
+            data={
                 **self._access_params,
-                owner_id=f"-{id}",
-                from_group=1,
-                message=text,
-                attachments=attachments,
-            )
+                "owner_id": f"-{id}",
+                "from_group": 1,
+                "message": text,
+                "attachments": attachments,
+            },
+            return_key=None,
         )
-
-        return response.json()
 
     def _upload_image_to_album(self, group_id, album_id, image_obj):
         upload_url = self._get_upload_url(group_id, album_id)
-        response = requests.post(upload_url, files={"file": image_obj})
 
-        return self._get_photo_attachments_str(response.json())
+        upload_images = _requests_post(
+            url=upload_url,
+            files={"file": image_obj},
+            return_key=None,
+        )
+
+        return self._get_photo_attachments_str(upload_images)
 
     @lru_cache()
     def _get_upload_url(self, group_id, album_id):
-        response = requests.post(
+        return _requests_post(
             url=self.api_urls["upload_photo"],
             data=dict(
                 group_id=group_id,
                 album_id=album_id,
                 **self._access_params,
-            )
-        )
-        return response.json()["response"]["upload_url"]
+            ),
+        )["upload_url"]
 
     def _get_photo_attachments_str(self, params):
         params["album_id"] = params.pop("aid")
         params["group_id"] = params.pop("gid")
 
-        response = requests.get(
+        upload_photos = _requests_get(
             url=self.api_urls["save_photo"],
             params={**params, **self._access_params},
-        ).json()
+        )
 
         attachments = list()
-        for photo in response["response"]:
-            attachments.append(
-                f"""photo{photo["owner_id"]}_{photo["id"]}"""
-            )
+        for photo in upload_photos:
+            attachments.append(f"""photo{photo["owner_id"]}_{photo["id"]}""")
 
         return ",".join(attachments)
 
@@ -147,8 +144,38 @@ class VK(BaseClient):
     [vkbottle](https://github.com/timoniq/vkbottle)
     or others
     """
+
     def send_text(self, id, text):
         pass
 
     def send_image(self, id, text, image_path):
         pass
+
+
+def _requests_get(url, params, return_key="response"):
+    return _check_response(requests.get(url=url, params=params))
+
+
+def _requests_post(url, data=None, json=None, files=None, return_key="response"):
+    return _check_response(requests.post(url=url, data=data, json=json, files=files))
+
+
+def _check_response(response, return_key):
+    err_msg = ""
+
+    if response.ok:
+        data = response.json()
+    else:
+        raise requests.exceptions.RequestException(
+            f"Response status code is {response.status_code}"
+        )
+
+    if return_key is None:
+        return data
+
+    elif return_key in data:
+        return data[return_key]
+
+    raise requests.exceptions.RequestException(
+        f"Key {return_key!r} not found in response:\n" f"{response.text}"
+    )
