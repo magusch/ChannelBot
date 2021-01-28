@@ -92,6 +92,20 @@ class Telegram(BaseClient):
         return message
 
 
+class LogClient(Telegram):
+    def send_log_file(self, path):
+        self.send_file(
+            file_path=path,
+            **self.constants["dev"],
+        )
+
+    def send_text(self, text):
+        self.send_text(
+            text=text,
+            **self.constants["dev"],
+        )
+
+
 class VKRequests(BaseClient):
     """VK-client by send requests to vk-api"""
 
