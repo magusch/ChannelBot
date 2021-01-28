@@ -1,6 +1,6 @@
 import time
 
-from . import logger, notion_api, telegram
+from . import logger, notion_api
 from .datetime_utils import STRFTIME, get_msk_today
 
 
@@ -15,7 +15,7 @@ class Flow:
             msk_today = get_msk_today(replace_seconds=True)
 
             self._run(msk_today=msk_today)
-            telegram.send_logs()
+            self.log.send_log_file()
 
             # refresh today time
             next_time = notion_api.next_task_time(
@@ -28,7 +28,7 @@ class Flow:
                 time=next_time.strftime(STRFTIME),
                 delta=period_to_next_time.as_interval(),
             )
-            telegram.send_message(msg, channel="dev")
+            self.log.info_dev_channel(msg)
 
             naptime = max(period_to_next_time.total_seconds(), 0)
 

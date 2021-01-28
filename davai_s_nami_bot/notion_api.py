@@ -1,25 +1,13 @@
 import os
-from collections import namedtuple
 from datetime import date, datetime, timedelta
-from functools import partial
+from functools import lru_cache, partial
 from typing import List
 
 from notion.client import NotionClient
 
-from . import posting
-from .logger import get_logger
+from .events import Event
+from .logger import catch_exceptions, get_logger
 
-TAGS_TO_NOTION = {
-    "Title": posting.parse_title,
-    "Post": posting.parse_post,
-    "URL": posting.parse_url,
-    "From_date": posting.parse_from_date,
-    "To_date": posting.parse_to_date,
-    "Image": posting.parse_image,
-    "Event_id": posting.parse_id,
-    "Price": posting.parse_price,
-}
-MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
 notion_client = NotionClient(token_v2=os.environ.get("NOTION_TOKEN_V2"))
@@ -36,35 +24,17 @@ everyday_times = notion_client.get_collection_view(
 notion_log = get_logger().getChild("NotionAPI")
 
 
-def connection_wrapper(func):
-    log = get_logger().getChild("Connection")
-
-    def wrapper(*args, **kwargs):
-        attempts_count = 0
-        while True:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                if attempts_count == MAX_NUMBER_CONNECTION_ATTEMPTS:
-                    raise e
-
-                log.warning("Retry (raised exception)" + "\n", exc_info=True)
-                attempts_count += 1
-
-    return wrapper
-
-
 def add_events(events, explored_date, table=None):
     table = table or table1
 
     for event in events:
         row = add_row(table)
 
-        for tag, parse_func in TAGS_TO_NOTION.items():
+        for property_name, value in event._asdict().items():
             set_property(
                 row=row,
-                property_name=tag,
-                value=parse_func(event),
+                property_name=property_name,
+                value=value,
             )
 
         # event not contain "Explored date" and "Status" fields
@@ -166,17 +136,17 @@ def move_approved():
             move_row(row, table3)
 
 
-@connection_wrapper
+@catch_exceptions()
 def set_property(row, property_name, value):
     row.set_property(property_name, value)
 
 
-@connection_wrapper
+@catch_exceptions()
 def remove_row(row):
     row.remove()
 
 
-@connection_wrapper
+@catch_exceptions()
 def add_row(table, update_views=None):
     if update_views is not None:
         return table.collection.add_row(update_views=update_views)
@@ -185,6 +155,14 @@ def add_row(table, update_views=None):
         return table.collection.add_row(update_views=True)
 
     return table.collection.add_row(update_views=False)
+
+
+@lru_cache()
+def get_schema_properties(notion_block, property_name):
+    return [
+        property[property_name]
+        for property in notion_block.collection.get_schema_properties()
+    ]
 
 
 def move_row(row, to_table, with_remove=True):
@@ -196,7 +174,9 @@ def move_row(row, to_table, with_remove=True):
     else:
         new_row = add_row(to_table, update_views=False)
 
-    for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
+    table_tags = get_schema_properties(row, property_name="name")
+
+    for tag in table_tags:
         # TODO: raised ValueError if property is None
         try:
             set_property(new_row, tag, row.get_property(tag))
@@ -205,12 +185,6 @@ def move_row(row, to_table, with_remove=True):
 
     if with_remove:
         remove_row(row)
-
-
-def notion_row_to_event(row):
-    return namedtuple("event", list(TAGS_TO_NOTION.keys()))(
-        **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
-    )
 
 
 def next_event_to_channel():
@@ -223,7 +197,7 @@ def next_event_to_channel():
     for row in rows:
         if row.status != "Posted":
             if row.status == "Ready to post":
-                event = notion_row_to_event(row)
+                event = Event.from_notion_row(row)
                 set_property(row, "status", "Posted")
 
             elif row.status == "Ready to skiped posting time":
@@ -245,7 +219,7 @@ def get_new_events(events):
 
     new_events = list()
     for event in events:
-        if event.id not in existing_ids:
+        if event.event_id not in existing_ids:
             new_events.append(event)
 
     return new_events
@@ -271,7 +245,6 @@ def events_count():
 
 def update_table_views():
     # 💫 some magic 💫
-    # WARNING: if running background, need `> /dev/null`
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)

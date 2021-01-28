@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from datetime import timedelta
 
-from . import database, events, notion_api, telegram, vk
+from . import clients, database, events, notion_api, utils
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
@@ -141,23 +141,24 @@ class IsEmptyCheck(Task):
             text = "Warning: not found events for posting."
 
         if text:
-            telegram.send_message(text, channel="dev")
+            self.log.info_dev_channel(text)
 
 
 class PostingEvent(Task):
-    def run(self, msk_today) -> None:
+    def __init__(self):
+        self._clients = clients.Clients()
 
+    def run(self, msk_today) -> None:
         self.log.info("Check posting status")
 
         event = notion_api.next_event_to_channel()
 
-        if event is None:
-            self.log.info("Skipping posting time")
-            return
+        if event is not None:
+            image_path = utils.prepare_image(event.Image)
+            self._clients.send_post(event=event, image_path=image_path)
 
-        self.log.info("Generating post.")
-        telegram.send_post(event)
-        vk.posting_in_vk(event)
+        else:
+            self.log.info("Skipping posting time")
 
     def is_need_running(self, msk_today) -> bool:
         posting_time = notion_api.next_posting_time(msk_today)
