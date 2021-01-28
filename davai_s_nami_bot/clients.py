@@ -5,27 +5,68 @@ from functools import lru_cache
 import requests
 from telebot import TeleBot
 
+from . import database
+from .connections import _requests_get, _requests_post
+
+
+def format_text(event, style="markdown"):
+    if style == "markdown":
+        return event.post.replace("__", "*").replace("] (", "](").replace("_", r"\_")
+
+    return event.post
+
 
 class BaseClient(ABC):
+    constants: dict()
+    name: ""
+    formatter_style = ""
+
+    def send_post(self, event, image_path, environ="prod"):
+        text = format_text(event, style=self.formatter_style)
+
+        if image_path is None:
+            return self.send_text(
+                text=text,
+                **self.constants.get(environ, {}),
+            )
+
+        return self.send_image(
+            text=text,
+            image_path=image_path,
+            **self.constants.get(environ, {}),
+        )
+
     @abstractmethod
-    def send_text(self, id, text):
+    def send_text(self, *args, **kwargs):
         """
-        Text message to id
+        Text message
         """
 
     @abstractmethod
-    def send_image(self, id, text, image_path, **kwargs):
+    def send_image(self, *args, **kwargs):
         """
-        Image with text to id
+        Image with text
         """
 
 
 class Telegram(BaseClient):
+    constants = dict(
+        prod={"id": os.environ.get("CHANNEL_ID")},
+        dev={"id": os.environ.get("DEV_CHANNEL_ID")},
+    )
+    name = "Telegram channel"
+    formatter_style = "Markdown"
+
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="Markdown",
         )
+
+    def send_post(self, event, image_path, environ="prod"):
+        message = super().send_post(event, image_path, environ=environ)
+
+        database.add(event, message.message_id)
 
     def send_text(self, id, text):
         return self._client.send_message(
@@ -60,6 +101,18 @@ class VKRequests(BaseClient):
         upload_photo=api_base_url + "method/photos.getUploadServer",
         save_photo=api_base_url + "method/photos.save",
     )
+    constants = dict(
+        prod={
+            "id": os.environ.get("VK_GROUP_ID"),
+            "album_id": os.environ.get("VK_ALBUM_ID"),
+        },
+        dev={
+            "id": os.environ.get("VK_DEV_GROUP_ID"),
+            "album_id": os.environ.get("VK_DEV_ALBUM_ID"),
+        },
+    )
+    name = "VK group"
+    formatter_style = ""  # TODO
 
     def __init__(self):
         self._access_params = dict(
@@ -69,7 +122,7 @@ class VKRequests(BaseClient):
             v=5.103,
         )
 
-    def send_text(self, id, text):
+    def send_text(self, id, text, **kwargs):
         content = dict(
             owner_id=id,
             from_group=1,
@@ -82,7 +135,7 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-    def send_image(self, id, text, image_path, *, album_id):
+    def send_image(self, id, album_id, text, image_path):
         with open(image_path, "rb") as image_obj:
             attachments = self._upload_image_to_album(id, album_id, image_obj)
 
@@ -136,7 +189,7 @@ class VKRequests(BaseClient):
         return ",".join(attachments)
 
 
-class VK(BaseClient):
+class VK:
     """
     TODO: create VK-client by open-source packages, like
     [vk_api](https://github.com/python273/vk_api) or
@@ -145,11 +198,23 @@ class VK(BaseClient):
     or others
     """
 
+    name = ""
+    constants = dict(prod={}, dev={})
+
     def send_text(self, id, text):
         pass
 
-    def send_image(self, id, text, image_path):
+    def send_image(self, id, album_id, text, image_path):
         pass
+
+
+class Clients:
+    def __init__(self):
+        self._clients = [cls() for cls in BaseClient.__subclasses__()]
+
+    def send_post(self, *args, **kwargs):
+        for client in self._clients:
+            client.send_post(*args, **kwargs)
 
 
 def _requests_get(url, params, return_key="response"):
