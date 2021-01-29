@@ -1,19 +1,48 @@
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from typing import Dict, NamedTuple, Union
 
 import requests
 from telebot import TeleBot
 
 from . import database
-from .connections import _requests_get, _requests_post
 
 
-def format_text(event, style="markdown"):
+def format_text(text: str, style: str = "markdown"):
+    """
+    Форматирование текста с разметкой из таблицы notion.
+
+    Разметка из таблицы notion:
+        __text__ - bold
+        [text] (link) - link
+        _text_ - italic
+    """
+
     if style == "markdown":
-        return event.post.replace("__", "*").replace("] (", "](").replace("_", r"\_")
+        formatted = text.replace("__", "*").replace("] (", "](").replace("_", r"\_")
 
-    return event.post
+    elif style == "vk":
+        formatted = (
+            text.replace("Где:", "🏙 Где:")
+            .replace("Когда:", "⏰ Когда:")
+            .replace("Вход:", "💸 Вход:")
+            .replace("Билеты:", "💸 Билеты:")
+            .replace("[", "")
+            .replace("]", "")
+            .replace("_", "")
+            .replace("*", "")
+        )
+
+    else:  # remove notion formating
+        formatted = (
+            text.replace("__", "")
+            .replace("] (", " (")
+            .replace(" [", " ")
+            .replace("_", "")
+        )
+
+    return formatted
 
 
 class BaseClient(ABC):
@@ -21,8 +50,8 @@ class BaseClient(ABC):
     name: ""
     formatter_style = ""
 
-    def send_post(self, event, image_path, environ="prod"):
-        text = format_text(event, style=self.formatter_style)
+    def send_post(self, event: NamedTuple, image_path: str, environ: str = "prod"):
+        text = format_text(event.post, style=self.formatter_style)
 
         if image_path is None:
             return self.send_text(
@@ -54,8 +83,8 @@ class Telegram(BaseClient):
         prod={"id": os.environ.get("CHANNEL_ID")},
         dev={"id": os.environ.get("DEV_CHANNEL_ID")},
     )
-    name = "Telegram channel"
-    formatter_style = "Markdown"
+    name = "telegram_channel"
+    formatter_style = "markdown"
 
     def __init__(self):
         self._client = TeleBot(
@@ -63,19 +92,19 @@ class Telegram(BaseClient):
             parse_mode="Markdown",
         )
 
-    def send_post(self, event, image_path, environ="prod"):
+    def send_post(self, event: NamedTuple, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
 
         database.add(event, message.message_id)
 
-    def send_text(self, id, text):
+    def send_text(self, text: str, *, id: Union[int, str]):
         return self._client.send_message(
             chat_id=id,
             text=text,
             disable_web_page_preview=True,
         )
 
-    def send_image(self, id, text, image_path):
+    def send_image(self, text: str, image_path: str, *, id: Union[int, str]):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
                 chat_id=id,
@@ -85,25 +114,11 @@ class Telegram(BaseClient):
 
         return message
 
-    def send_file(self, id, file_path, mode="r"):
+    def send_file(self, id: Union[int, str], file_path: str, mode: str = "r"):
         with open(file_path, mode) as file_obj:
             message = self._client.send_document(id, file_obj)
 
         return message
-
-
-class LogClient(Telegram):
-    def send_log_file(self, path):
-        self.send_file(
-            file_path=path,
-            **self.constants["dev"],
-        )
-
-    def send_text(self, text):
-        self.send_text(
-            text=text,
-            **self.constants["dev"],
-        )
 
 
 class VKRequests(BaseClient):
@@ -125,8 +140,8 @@ class VKRequests(BaseClient):
             "album_id": os.environ.get("VK_DEV_ALBUM_ID"),
         },
     )
-    name = "VK group"
-    formatter_style = ""  # TODO
+    name = "vk_group"
+    formatter_style = "vk"
 
     def __init__(self):
         self._access_params = dict(
@@ -136,7 +151,7 @@ class VKRequests(BaseClient):
             v=5.103,
         )
 
-    def send_text(self, id, text, **kwargs):
+    def send_text(self, text: str, *, id: Union[int, str], **kwargs):
         content = dict(
             owner_id=id,
             from_group=1,
@@ -149,7 +164,14 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-    def send_image(self, id, album_id, text, image_path):
+    def send_image(
+        self,
+        text: str,
+        image_path: str,
+        *,
+        id: Union[int, str],
+        album_id: Union[int, str],
+    ):
         with open(image_path, "rb") as image_obj:
             attachments = self._upload_image_to_album(id, album_id, image_obj)
 
@@ -165,7 +187,9 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-    def _upload_image_to_album(self, group_id, album_id, image_obj):
+    def _upload_image_to_album(
+        self, group_id: Union[int, str], album_id: Union[int, str], image_obj: obj
+    ):
         upload_url = self._get_upload_url(group_id, album_id)
 
         upload_images = _requests_post(
@@ -177,7 +201,7 @@ class VKRequests(BaseClient):
         return self._get_photo_attachments_str(upload_images)
 
     @lru_cache()
-    def _get_upload_url(self, group_id, album_id):
+    def _get_upload_url(self, group_id: Union[int, str], album_id: Union[int, str]):
         return _requests_post(
             url=self.api_urls["upload_photo"],
             data=dict(
@@ -187,7 +211,7 @@ class VKRequests(BaseClient):
             ),
         )["upload_url"]
 
-    def _get_photo_attachments_str(self, params):
+    def _get_photo_attachments_str(self, params: Dict[str, str]):
         params["album_id"] = params.pop("aid")
         params["group_id"] = params.pop("gid")
 
@@ -215,11 +239,19 @@ class VK:
     name = ""
     constants = dict(prod={}, dev={})
 
-    def send_text(self, id, text):
+    def send_text(self, *args, **kwargs):
         pass
 
-    def send_image(self, id, album_id, text, image_path):
+    def send_image(self, *args, **kwargs):
         pass
+
+
+class DevClient(Telegram):
+    def send_text(self, text: str):
+        super().send_text(text, **super().constants["dev"])
+
+    def send_file(self, path: str, mode: str = "r"):
+        super().send_file(file_path=path, mode=mode, **super().constants["dev"])
 
 
 class Clients:
@@ -231,17 +263,23 @@ class Clients:
             client.send_post(*args, **kwargs)
 
 
-def _requests_get(url, params, return_key="response"):
+def _requests_get(url, params: Dict[str, Any], return_key: str = "response"):
     return _check_response(requests.get(url=url, params=params), return_key=return_key)
 
 
-def _requests_post(url, data=None, json=None, files=None, return_key="response"):
+def _requests_post(
+    url,
+    data: Dict[str, Any] = None,
+    json: Dict[str, Any] = None,
+    files: Dict[str, obj] = None,
+    return_key: str = "response",
+):
     return _check_response(
         requests.post(url=url, data=data, json=json, files=files), return_key=return_key
     )
 
 
-def _check_response(response, return_key):
+def _check_response(response: requests.Response, return_key: str):
     err_msg = ""
 
     if response.ok:
