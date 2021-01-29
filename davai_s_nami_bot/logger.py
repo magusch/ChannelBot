@@ -1,35 +1,21 @@
 import logging
 import math
-from functools import lru_cache
 
-from .clients import LogClient
 from .datetime_utils import STRFTIME
 
-
-class ChannelBotLogger(logging.Logger):
-    LOG_FILE = "bot_logs.txt"  # TODO
-    _client = LogClient()
-
-    def send_log_file(self):
-        self._client.send_log_file(self.LOG_FILE)
-
-    def info_dev_channel(self, text):
-        self._client.send_text(text)
+LOG_FILE = "bot_logs.txt"
 
 
-@lru_cache()
-def get_logger():
-    logging.setLoggerClass(ChannelBotLogger)
-
+def get_logger(name):
     fmt_str = "[%(asctime)s] %(levelname)s - %(name)s | %(message)s"
     formatter = logging.Formatter(fmt=fmt_str, datefmt=STRFTIME)
 
     logging.basicConfig(level=logging.INFO, format=fmt_str)
 
-    file_handler = logging.FileHandler(ChannelBotLogger.LOG_FILE)
+    file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setFormatter(formatter)
 
-    logger = logging.getLogger("DavaiSNami")
+    logger = logging.getLogger(name)
     logger.addHandler(file_handler)
 
     # change default root stream handler formater
@@ -38,7 +24,7 @@ def get_logger():
     return logger
 
 
-log = get_logger().getChild("Exceptions")
+log = get_logger("Exceptions")
 
 
 def catch_exceptions(wrapped_func=None, max_attempts=5):
