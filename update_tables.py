@@ -1,5 +1,5 @@
 """
-Updating notion tables manually.
+Updating notion tab`l`es manually.
 """
 from davai_s_nami_bot.datetime_utils import get_msk_today
 from davai_s_nami_bot.notion_api import update_table_views
