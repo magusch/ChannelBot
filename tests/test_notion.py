@@ -74,7 +74,6 @@ def environ_test_id(monkeypatch):
     monkeypatch.setattr(davai_s_nami_bot.clients.VKRequests, "constants", vk_constants)
 
 
-@pytest.mark.these_test
 def test_post_event_from_dev_table3(environ_test_id):
     """
     Required events in dev table 3 (from test
