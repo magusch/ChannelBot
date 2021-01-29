@@ -6,6 +6,7 @@ import PIL
 import requests
 from PIL import Image
 
+CONSTANTS_FILE_NAME = "prod_constants"
 WEEKNAMES = {
     0: "Пн",
     1: "Вт",
@@ -55,7 +56,7 @@ REQUIRED_CONSTANT_NAMES = [
 
 
 def read_constants():
-    if os.path.exists("prod_constants"):
+    if os.path.exists(CONSTANTS_FILE_NAME):
         warnings.warn(
             message=(
                 "Reading constants from file 'prod_constants' will be removed "
@@ -66,7 +67,7 @@ def read_constants():
 
         missing_constants = set(REQUIRED_CONSTANT_NAMES)
 
-        with open("prod_constants") as file:
+        with open(CONSTANTS_FILE_NAME) as file:
             for line in file:
                 tag, value = line.split()
 
