@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import Dict, NamedTuple, Union
+from typing import Dict, NamedTuple, Union, Any
 
 import requests
 from telebot import TeleBot
@@ -124,7 +124,7 @@ class Telegram(BaseClient):
 class VKRequests(BaseClient):
     """VK-client by send requests to vk-api"""
 
-    api_base_url = "https://api.vk.com/"
+    api_base_url: str = "https://api.vk.com/"
     api_urls = dict(
         wall_post=api_base_url + "method/wall.post",
         upload_photo=api_base_url + "method/photos.getUploadServer",
@@ -188,7 +188,7 @@ class VKRequests(BaseClient):
         )
 
     def _upload_image_to_album(
-        self, group_id: Union[int, str], album_id: Union[int, str], image_obj: obj
+        self, group_id: Union[int, str], album_id: Union[int, str], image_obj: Any
     ):
         upload_url = self._get_upload_url(group_id, album_id)
 
@@ -247,6 +247,10 @@ class VK:
 
 
 class DevClient(Telegram):
+    """
+    Клиент для отправки сообщений в dev канал.
+    """
+
     def send_text(self, text: str):
         super().send_text(text, **super().constants["dev"])
 
@@ -271,7 +275,7 @@ def _requests_post(
     url,
     data: Dict[str, Any] = None,
     json: Dict[str, Any] = None,
-    files: Dict[str, obj] = None,
+    files: Dict[str, Any] = None,
     return_key: str = "response",
 ):
     return _check_response(

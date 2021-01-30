@@ -1,12 +1,13 @@
 import logging
 import math
+from typing import Callable
 
 from .datetime_utils import STRFTIME
 
 LOG_FILE = "bot_logs.txt"
 
 
-def get_logger(name):
+def get_logger(name: str):
     fmt_str = "[%(asctime)s] %(levelname)s - %(name)s | %(message)s"
     formatter = logging.Formatter(fmt=fmt_str, datefmt=STRFTIME)
 
@@ -27,7 +28,7 @@ def get_logger(name):
 log = get_logger("Exceptions")
 
 
-def catch_exceptions(wrapped_func=None, max_attempts=5):
+def catch_exceptions(wrapped_func: Callable=None, max_attempts: int=5):
     """
     Usage:
     ------

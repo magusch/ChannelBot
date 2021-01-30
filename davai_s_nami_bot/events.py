@@ -1,11 +1,13 @@
 import re
 import time
 from collections import namedtuple
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from typing import Callable, List, NamedTuple, Any, Dict
 
+import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
 
-from . import utils
+from . import notion_api, utils
 from .logger import catch_exceptions
 
 BAD_KEYWORDS = (
@@ -79,11 +81,11 @@ radario_parser = Radario()
 
 
 ## ESCRAPER EVENTS PARSERS
-def _title(event):
+def _title(event: NamedTuple):
     return event.title.replace("`", r"\`").replace("_", r"\_").replace("*", r"\*")
 
 
-def _post(event):
+def _post(event: NamedTuple):
     title = _title(event)
 
     title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
@@ -115,15 +117,15 @@ def _post(event):
     return title + post_text + footer
 
 
-def weekday_name(dt):
+def weekday_name(dt: datetime):
     return utils.WEEKNAMES[dt.weekday()]
 
 
-def month_name(dt):
+def month_name(dt: datetime):
     return utils.MONTHNAMES[dt.month]
 
 
-def date_to_post(date_from, date_to):
+def date_to_post(date_from: datetime, date_to: datetime):
     s_weekday = weekday_name(date_from)
     s_day = date_from.day
     s_month = month_name(date_from)
@@ -151,22 +153,22 @@ def date_to_post(date_from, date_to):
     return start_format + end_format
 
 
-def _url(event):
+def _url(event: NamedTuple):
     return event.url
 
 
-def _from_date(event):
+def _from_date(event: NamedTuple):
     return event.date_from
 
 
-def _to_date(event):
+def _to_date(event: NamedTuple):
     if event.date_to is None:
         return event.date_from + timedelta(hours=2)
 
     return event.date_to
 
 
-def _image(event):
+def _image(event: NamedTuple):
     if event.poster_imag:
         if event.id.startswith("TIMEPAD"):
             return "https://" + event.poster_imag
@@ -174,11 +176,11 @@ def _image(event):
     return event.poster_imag
 
 
-def _event_id(event):
+def _event_id(event: NamedTuple):
     return event.id
 
 
-def _price(event):
+def _price(event: NamedTuple):
     return event.price
 
 
@@ -202,7 +204,7 @@ class Event:
         return namedtuple("event", cls._tags)(**kwargs)
 
     @classmethod
-    def from_escraper(cls, event):
+    def from_escraper(cls, event: NamedTuple):
         return cls(
             **{
                 tag: parse_func(event)
@@ -211,11 +213,11 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(cls, notion_row):
+    def from_notion_row(cls, notion_row: notion_api.CollectionRowBlock):
         return cls(**{tag: notion_row.get_property(tag) for tag in cls._tags})
 
 
-def not_approved_organization_filter(events):
+def not_approved_organization_filter(events: List[NamedTuple]):
     """
     Remove events:
     - with bad-keywords
@@ -238,7 +240,7 @@ def not_approved_organization_filter(events):
     return good_events
 
 
-def approved_organization_filter(events):
+def approved_organization_filter(events: List[NamedTuple]):
     """
     Remove events:
     - with closed registration
@@ -248,11 +250,13 @@ def approved_organization_filter(events):
 
 
 @catch_exceptions()
-def _get_events(parser, *args, **kwargs):
+def _get_events(
+    parser: escraper.parsers.base.BaseParser, *args, **kwargs
+) -> List[Event]:
     return [Event.from_escraper(event) for event in parser.get_events(*args, **kwargs)]
 
 
-def from_approved_organizations(days):
+def from_approved_organizations(days: int) -> List[Event]:
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
     Currently, only from Timepad.
@@ -260,7 +264,7 @@ def from_approved_organizations(days):
     return timepad_approved_organizations(days)
 
 
-def timepad_approved_organizations(days):
+def timepad_approved_organizations(days: int) -> List[Event]:
     return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
@@ -268,11 +272,11 @@ def timepad_approved_organizations(days):
     )
 
 
-def from_not_approved_organizations(days):
+def from_not_approved_organizations(days: int) -> List[Event]:
     return timepad_others_organizations(days) + radario_others_organizations(days)
 
 
-def timepad_others_organizations(days):
+def timepad_others_organizations(days: int) -> List[Event]:
     return get_timepad_events(
         days,
         TIMEPAD_OTHERS_PARAMS.copy(),
@@ -280,11 +284,16 @@ def timepad_others_organizations(days):
     )
 
 
-def radario_others_organizations(days):
+def radario_others_organizations(days: int) -> List[Event]:
     return get_radario_events(days)
 
 
-def get_timepad_events(days, request_params, events_filter=None, with_online=True):
+def get_timepad_events(
+    days: int,
+    request_params: Dict[str, Any],
+    events_filter: Callable[[List[NamedTuple]], List[NamedTuple]] = None,
+    with_online: bool = True,
+) -> List[Event]:
     """
     Getting events.
     """
@@ -330,7 +339,9 @@ def get_timepad_events(days, request_params, events_filter=None, with_online=Tru
     return unique(new_events)  # checking for unique -- just in case
 
 
-def get_radario_events(days, events_filter=None):
+def get_radario_events(
+    days: int, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
     category = [
         "concert",
         "theatre",
@@ -357,5 +368,5 @@ def get_radario_events(days, events_filter=None):
     return unique(new_events)
 
 
-def unique(events):
+def unique(events: List[Event]) -> List[Event]:
     return list(set(events))
