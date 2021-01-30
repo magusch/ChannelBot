@@ -232,7 +232,6 @@ def not_approved_organization_filter(events: List[events.Event]):
         if (
             event is None
             or "финанс" in event.title.lower()
-            # or not event.is_registration_open  # TODO
             or (event.to_date is not None and event.to_date - event.from_date > two_days)
             or event.image is None
         ):
@@ -243,20 +242,13 @@ def not_approved_organization_filter(events: List[events.Event]):
     return good_events
 
 
-def approved_organization_filter(events: List[Event]):
-    """
-    Remove events:
-    - with closed registration
-    """
-    # TODO
-    return events
-
-
 @catch_exceptions()
 def _get_events(
     parser: escraper.parsers.base.BaseParser, *args, **kwargs
 ) -> List[Event]:
-    return [Event.from_escraper(event) for event in parser.get_events(*args, **kwargs)]
+    events = parser.get_events(*args, **kwargs)
+
+    return [Event.from_escraper(event) for event in events if event.is_registration_open]
 
 
 def from_approved_organizations(days: int) -> List[Event]:
@@ -271,7 +263,6 @@ def timepad_approved_organizations(days: int) -> List[Event]:
     return get_timepad_events(
         days,
         TIMEPAD_APPROVED_PARAMS.copy(),
-        events_filter=approved_organization_filter,
     )
 
 
