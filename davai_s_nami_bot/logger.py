@@ -28,7 +28,7 @@ def get_logger(name: str):
 log = get_logger("Exceptions")
 
 
-def catch_exceptions(wrapped_func: Callable=None, max_attempts: int=5):
+def catch_exceptions(wrapped_func: Callable = None, max_attempts: int = 5):
     """
     Usage:
     ------

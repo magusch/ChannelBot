@@ -2,7 +2,7 @@ import re
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
-from typing import Callable, List, NamedTuple, Any, Dict
+from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad

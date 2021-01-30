@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import Dict, NamedTuple, Union, Any
+from typing import Any, Dict, NamedTuple, Union
 
 import requests
 from telebot import TeleBot
