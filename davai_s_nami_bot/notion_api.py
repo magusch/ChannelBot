@@ -1,7 +1,7 @@
 import os
 from datetime import date, datetime, timedelta
 from functools import lru_cache, partial
-from typing import Any, List, NamedTuple
+from typing import Any, List
 
 from notion.block.collection.basic import CollectionRowBlock
 from notion.block.collection.view import TableView
@@ -27,7 +27,7 @@ log = get_logger(__file__)
 
 
 def add_events(
-    events: List[NamedTuple], explored_date: datetime, table: TableView = None
+    events: List[Event], explored_date: datetime, table: TableView = None
 ) -> None:
     table = table or table1
 

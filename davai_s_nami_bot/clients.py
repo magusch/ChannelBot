@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import Any, Dict, NamedTuple, Union
+from typing import Any, Dict, Union
 
 import requests
 from telebot import TeleBot
@@ -50,7 +50,7 @@ class BaseClient(ABC):
     name: ""
     formatter_style = ""
 
-    def send_post(self, event: NamedTuple, image_path: str, environ: str = "prod"):
+    def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         text = format_text(event.post, style=self.formatter_style)
 
         if image_path is None:
@@ -92,7 +92,7 @@ class Telegram(BaseClient):
             parse_mode="Markdown",
         )
 
-    def send_post(self, event: NamedTuple, image_path: str, environ: str = "prod"):
+    def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
 
         database.add(event, message.message_id)
@@ -114,7 +114,9 @@ class Telegram(BaseClient):
 
         return message
 
-    def send_file(self, destination_id: Union[int, str], file_path: str, mode: str = "r"):
+    def send_file(
+        self, destination_id: Union[int, str], file_path: str, mode: str = "r"
+    ):
         with open(file_path, mode) as file_obj:
             message = self._client.send_document(destination_id, file_obj)
 
@@ -173,7 +175,9 @@ class VKRequests(BaseClient):
         album_id: Union[int, str],
     ):
         with open(image_path, "rb") as image_obj:
-            attachments = self._upload_image_to_album(destination_id, album_id, image_obj)
+            attachments = self._upload_image_to_album(
+                destination_id, album_id, image_obj
+            )
 
         return _requests_post(
             url=self.api_urls["wall_post"],
@@ -296,7 +300,7 @@ def _check_response(response: requests.Response, return_key: str):
     if return_key is None:
         return data
 
-    elif return_key in data:
+    if return_key in data:
         return data[return_key]
 
     raise requests.exceptions.RequestException(

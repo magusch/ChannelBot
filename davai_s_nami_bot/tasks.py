@@ -1,7 +1,7 @@
 import datetime
 from abc import abstractmethod
 from datetime import timedelta
-from typing import Generator, List, NamedTuple
+from typing import Generator, List
 
 from . import clients, database, events, notion_api, utils
 from .exceptions import PostingDatetimeError
@@ -179,7 +179,7 @@ class UpdateEvents(Task):
 
     def _update_events(
         self,
-        events: List[NamedTuple],
+        events: List[events.Event],
         msk_today: datetime.datetime,
         table: notion_api.TableView = None,
     ) -> None:
