@@ -1,63 +1,64 @@
+import datetime
 import time
+from typing import List
 
-from . import logger, notion_api, telegram
+from . import clients, logger, notion_api, tasks
 from .datetime_utils import STRFTIME, get_msk_today
+
+log = logger.get_logger(__file__)
+dev_channel = clients.DevClient()
 
 
 class Flow:
-    def __init__(self, name, edges):
-        self._name = name
+    def __init__(self, edges: List[tasks.Task]):
         self._edges = edges
-        self.log = logger.get_logger().getChild("FlowRunner")
 
-    def run(self):
+    def run(self) -> None:
         while True:
             msk_today = get_msk_today(replace_seconds=True)
 
             self._run(msk_today=msk_today)
-            telegram.send_logs()
+            dev_channel.send_file(logger.LOG_FILE, mode="r+b")
 
-            # refresh today time
             next_time = notion_api.next_task_time(
                 msk_today=get_msk_today(replace_seconds=True)
             )
 
             period_to_next_time = next_time - get_msk_today()
 
-            msg = "Waiting next scheduled time in {time},\n{delta} left".format(
+            msg = "Next scheduled time in {time}".format(
                 time=next_time.strftime(STRFTIME),
-                delta=period_to_next_time.as_interval(),
             )
-            telegram.send_message(msg, channel="dev")
+            dev_channel.send_text(msg)
 
             naptime = max(period_to_next_time.total_seconds(), 0)
 
             time.sleep(naptime)
 
-            self.log.info("Starting flow run.")
+            log.info("Starting flow run.")
 
-    def _run(self, msk_today):
+    def _run(self, msk_today: datetime.datetime) -> None:
         for task in self._edges:
             task_name = task.__class__.__name__
 
-            self.log.info(f"Task {task_name}: Starting task")
+            log.info(f"Task {task_name}: Starting task")
 
             if task.is_need_running(msk_today):
-                self.log.info("Need running")
+                log.info("Need running")
 
                 try:
                     task.run(msk_today)
 
-                    self.log.info(
+                    log.info(
                         f"Task {task_name!r}: finished task run for task "
                         "with final state: Success"
                     )
 
                 except Exception as e:  # noqa: F841
-                    self.log.error(
+                    log.error(
                         f"Task {task.__class__.__name__} has failed. " "Error msg:\n",
                         exc_info=True,
                     )
 
             else:
-                self.log.info("No need running, skip")
+                log.info("No need running, skip")

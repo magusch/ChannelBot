@@ -1,25 +1,15 @@
 import os
-from collections import namedtuple
 from datetime import date, datetime, timedelta
-from functools import partial
-from typing import List
+from functools import lru_cache, partial
+from typing import Any, List
 
+from notion.block.collection.basic import CollectionRowBlock
+from notion.block.collection.view import TableView
 from notion.client import NotionClient
 
-from . import posting
-from .logger import get_logger
+from .events import Event
+from .logger import catch_exceptions, get_logger
 
-TAGS_TO_NOTION = {
-    "Title": posting.parse_title,
-    "Post": posting.parse_post,
-    "URL": posting.parse_url,
-    "From_date": posting.parse_from_date,
-    "To_date": posting.parse_to_date,
-    "Image": posting.parse_image,
-    "Event_id": posting.parse_id,
-    "Price": posting.parse_price,
-}
-MAX_NUMBER_CONNECTION_ATTEMPTS = 10
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
 notion_client = NotionClient(token_v2=os.environ.get("NOTION_TOKEN_V2"))
@@ -33,38 +23,22 @@ everyday_times = notion_client.get_collection_view(
     os.environ.get("NOTION_EVERYDAY_TIMES_URL")
 )
 
-notion_log = get_logger().getChild("NotionAPI")
+log = get_logger(__file__)
 
 
-def connection_wrapper(func):
-    log = get_logger().getChild("Connection")
-
-    def wrapper(*args, **kwargs):
-        attempts_count = 0
-        while True:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                if attempts_count == MAX_NUMBER_CONNECTION_ATTEMPTS:
-                    raise e
-
-                log.warning("Retry (raised exception)" + "\n", exc_info=True)
-                attempts_count += 1
-
-    return wrapper
-
-
-def add_events(events, explored_date, table=None):
+def add_events(
+    events: List[Event], explored_date: datetime, table: TableView = None
+) -> None:
     table = table or table1
 
     for event in events:
         row = add_row(table)
 
-        for tag, parse_func in TAGS_TO_NOTION.items():
+        for property_name, value in event._asdict().items():
             set_property(
                 row=row,
-                property_name=tag,
-                value=parse_func(event),
+                property_name=property_name,
+                value=value,
             )
 
         # event not contain "Explored date" and "Status" fields
@@ -83,7 +57,7 @@ def add_events(events, explored_date, table=None):
             )
 
 
-def remove_blank_rows():
+def remove_blank_rows() -> None:
     rows = (
         list(table1.collection.get_rows())
         + list(table2.collection.get_rows())
@@ -102,7 +76,7 @@ def remove_blank_rows():
                 raise e
 
 
-def remove_old_events(msk_date):
+def remove_old_events(msk_date: datetime) -> None:
     """
     Removing events:
         - from table 1, where explored date > 2 days ago
@@ -137,16 +111,16 @@ def remove_old_events(msk_date):
                 check_func(row)
 
 
-def in_past(record, target):
-    return record.Date_from.start < target
-
-
-def check_for_move_to_table2(record, date, days=None):
+def check_for_move_to_table2(
+    record: CollectionRowBlock, date: datetime, days: int = None
+) -> None:
     if record.explored_date.start + timedelta(days=days) < date:
         move_row(record, table2)
 
 
-def check_explored_date(record, date, days=None):
+def check_explored_date(
+    record: CollectionRowBlock, date: datetime, days: int = None
+) -> None:
     if record.explored_date:
         if record.explored_date.start + timedelta(days=days) < date:
             remove_row(record)
@@ -154,7 +128,7 @@ def check_explored_date(record, date, days=None):
         remove_row(record)
 
 
-def move_approved():
+def move_approved() -> None:
     """
     Moving all approved events (with selected checkbox Approved)
     from table1 and table2 to table3.
@@ -166,18 +140,19 @@ def move_approved():
             move_row(row, table3)
 
 
-@connection_wrapper
-def set_property(row, property_name, value):
+@catch_exceptions()
+def set_property(row: CollectionRowBlock, property_name: str, value: Any) -> None:
     row.set_property(property_name, value)
 
 
-@connection_wrapper
-def remove_row(row):
+@catch_exceptions()
+def remove_row(row: CollectionRowBlock) -> None:
     row.remove()
 
 
-@connection_wrapper
-def add_row(table, update_views=None):
+@catch_exceptions()
+def add_row(table: TableView, update_views: bool = None):
+    # FIXME there is somethig wrong
     if update_views is not None:
         return table.collection.add_row(update_views=update_views)
 
@@ -185,6 +160,14 @@ def add_row(table, update_views=None):
         return table.collection.add_row(update_views=True)
 
     return table.collection.add_row(update_views=False)
+
+
+@lru_cache()
+def get_schema_properties(notion_block, property_name):
+    return [
+        property[property_name]
+        for property in notion_block.collection.get_schema_properties()
+    ]
 
 
 def move_row(row, to_table, with_remove=True):
@@ -196,7 +179,9 @@ def move_row(row, to_table, with_remove=True):
     else:
         new_row = add_row(to_table, update_views=False)
 
-    for tag in list(TAGS_TO_NOTION.keys()) + ["Explored date"]:
+    table_tags = get_schema_properties(row, property_name="name")
+
+    for tag in table_tags:
         # TODO: raised ValueError if property is None
         try:
             set_property(new_row, tag, row.get_property(tag))
@@ -205,12 +190,6 @@ def move_row(row, to_table, with_remove=True):
 
     if with_remove:
         remove_row(row)
-
-
-def notion_row_to_event(row):
-    return namedtuple("event", list(TAGS_TO_NOTION.keys()))(
-        **{tag: row.get_property(tag) for tag in TAGS_TO_NOTION.keys()},
-    )
 
 
 def next_event_to_channel():
@@ -223,7 +202,7 @@ def next_event_to_channel():
     for row in rows:
         if row.status != "Posted":
             if row.status == "Ready to post":
-                event = notion_row_to_event(row)
+                event = Event.from_notion_row(row)
                 set_property(row, "status", "Posted")
 
             elif row.status == "Ready to skiped posting time":
@@ -245,7 +224,7 @@ def get_new_events(events):
 
     new_events = list()
     for event in events:
-        if event.id not in existing_ids:
+        if event.event_id not in existing_ids:
             new_events.append(event)
 
     return new_events
@@ -271,7 +250,6 @@ def events_count():
 
 def update_table_views():
     # 💫 some magic 💫
-    # WARNING: if running background, need `> /dev/null`
     # (see issue https://github.com/jamalex/notion-py/issues/92)
     for t in [table1, table2, table3]:
         print(t.collection.parent.views)
@@ -308,7 +286,7 @@ def next_posting_time(reference):
     for row in table3.collection.get_rows():
         if row.get_property("Status") == "Ready to post":
             if row.get_property("posting_datetime") is None:
-                notion_log.warn(
+                log.warn(
                     "Unexcepteble warning: event in table 3 have not "
                     "posting datetime. Event title: {}.".format(row.Title)
                 )
@@ -318,7 +296,7 @@ def next_posting_time(reference):
             notion_date = row.get_property("posting_datetime")
 
             if not hasattr(notion_date, "start"):
-                notion_log.warn(
+                log.warn(
                     f"For event {row.get_property('Title')!r} "
                     "posting datetime has incorrect type. "
                     "Required 'NotionDate', received {notion_date.__class__.__name__!r}"
@@ -328,7 +306,7 @@ def next_posting_time(reference):
             posting_time = notion_date.start
 
             if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
-                notion_log.warn(
+                log.warn(
                     f"For event {row.get_property('Title')!r} "
                     "posting datetime without hour and minute. "
                     "Please check event in table 3 (add hours and minutes)."
@@ -336,7 +314,7 @@ def next_posting_time(reference):
                 continue
 
             if posting_time < reference:
-                notion_log.warn(
+                log.warn(
                     "Warning: event in table 3 have posting datetime in the past.\n"
                     f"Event title: {row.Title},\nevent id: {row.Event_id}"
                 )
@@ -359,7 +337,7 @@ def next_updating_time(reference):
         if parameter_name is not None and parameter_name == "update_events":
             everyday_str = row.get_property("everyday")
             if not isinstance(everyday_str, str):
-                notion_log.warn(
+                log.warn(
                     "Incorrect type updating time in notion wiki. "
                     f"Required 'string', received {everyday_str.__class__.__name__!r}.\n"
                 )
@@ -368,7 +346,7 @@ def next_updating_time(reference):
 
             everyday_list = everyday_str.split(":")
             if len(everyday_list) != 2:
-                notion_log.warn(
+                log.warn(
                     "Failed to parse everyday updating time. "
                     "Required time format is string like: HH:MM, "
                     f"received: {everyday_str!r}\n"
@@ -379,7 +357,7 @@ def next_updating_time(reference):
             hour, minute = everyday_list
 
             if not hour.isdigit() or not minute.isdigit():
-                notion_log.warn(
+                log.warn(
                     "Failed type casting for everyday updating time."
                     "Required type for hour and minute is 'int', "
                     f"received: {everyday_str!r}\n"
@@ -390,7 +368,7 @@ def next_updating_time(reference):
             hour, minute = int(hour), int(minute)
 
             if not (0 <= hour <= 24) or not (0 <= minute <= 59):
-                notion_log.warn(
+                log.warn(
                     "Incorrect hour or minute value!\nHour must be from 0 to 23, "
                     "minute must be from 0 to 59."
                 )
@@ -398,9 +376,7 @@ def next_updating_time(reference):
                 hour, minute = map(int, DEFAULT_UPDATING_STRFTIME.split(":"))
 
             if with_warn:
-                notion_log.warn(
-                    "Set update time as default: {DEFAULT_UPDATING_STRFTIME!r}"
-                )
+                log.warn("Set update time as default: {DEFAULT_UPDATING_STRFTIME!r}")
 
             update_time = reference.replace(hour=hour, minute=minute)
 
@@ -428,11 +404,11 @@ def next_task_time(msk_today):
         raise ValueError("Don't found event for posting and updating time!")
 
     if posting_time is None:
-        notion_log.warning("Don't event for posting! Continue with updating time.")
+        log.warning("Don't event for posting! Continue with updating time.")
         task_time = update_time
 
     elif update_time is None:
-        notion_log.warning("Don't found updating time! Continue with posting time.")
+        log.warning("Don't found updating time! Continue with posting time.")
         task_time = posting_time
 
     elif update_time - msk_today < posting_time - msk_today:

@@ -99,12 +99,12 @@ def add(event, post_id):
     )
 
     data = [
-        event.Event_id,
-        event.Title,
+        event.event_id,
+        event.title,
         post_id,
-        getattr(event.From_date, "start", None),
-        getattr(event.To_date, "start", None),
-        event.Price,
+        getattr(event.from_date, "start", None),
+        getattr(event.to_date, "start", None),
+        event.price,
     ]
 
     _insert(script, data)

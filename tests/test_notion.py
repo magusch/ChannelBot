@@ -8,7 +8,7 @@ import psycopg2
 import pytest
 
 import davai_s_nami_bot
-from davai_s_nami_bot import database, events, notion_api, telegram
+from davai_s_nami_bot import clients, database, events, notion_api, utils
 from davai_s_nami_bot.notion_api import notion_client
 
 test_table1 = notion_client.get_collection_view(os.environ.get("NOTION_TEST_TABLE1_URL"))
@@ -65,10 +65,13 @@ def test_move_from_dev_table1_to_dev_table3():
 
 @pytest.fixture
 def environ_test_id(monkeypatch):
-    test_id = davai_s_nami_bot.telegram.TO_CHANNEL.copy()
-    test_id["prod"] = test_id["dev"]
+    telegram_constants = clients.Telegram.constants.copy()
+    telegram_constants["prod"] = telegram_constants["dev"]
+    monkeypatch.setattr(clients.Telegram, "constants", telegram_constants)
 
-    monkeypatch.setattr(davai_s_nami_bot.telegram, "TO_CHANNEL", test_id)
+    vk_constants = davai_s_nami_bot.clients.VKRequests.constants.copy()
+    vk_constants["prod"] = vk_constants["dev"]
+    monkeypatch.setattr(davai_s_nami_bot.clients.VKRequests, "constants", vk_constants)
 
 
 def test_post_event_from_dev_table3(environ_test_id):
@@ -77,16 +80,19 @@ def test_post_event_from_dev_table3(environ_test_id):
     'test_move_from_dev_table_2_to_dev_table_3' or
     'test_move_from_dev_table_1_to_dev_table_3').
     """
-    for row in test_table3.collection.get_rows():
-        event = notion_api.notion_row_to_event(row)
+    test_clients = clients.Clients()
 
-        if event.Event_id in database.get_all()["id"].values:
+    for row in test_table3.collection.get_rows():
+        event = events.Event.from_notion_row(row)
+        image_path = utils.prepare_image(event.image)
+
+        if event.event_id in database.get_all()["id"].values:
             with pytest.raises(psycopg2.errors.UniqueViolation):
-                telegram.send_post(event)
+                test_clients.send_post(event, image_path)
 
         else:
-            telegram.send_post(event)
-            database.remove_by_event_id(event.Event_id)
+            test_clients.send_post(event, image_path)
+            database.remove_by_event_id(event.event_id)
 
 
 def test_move_from_dev_table2_to_dev_table3():
