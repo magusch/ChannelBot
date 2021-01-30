@@ -5,8 +5,8 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-import notion
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
+from notion.block.collection.basic import CollectionRowBlock
 
 from . import utils
 from .logger import catch_exceptions
@@ -214,13 +214,11 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(
-        cls, notion_row: notion.block.collection.basic.CollectionRowBlock
-    ):
+    def from_notion_row(cls, notion_row: CollectionRowBlock):
         return cls(**{tag: notion_row.get_property(tag) for tag in cls._tags})
 
 
-def not_approved_organization_filter(events: List[events.Event]):
+def not_approved_organization_filter(events: List[Event]):
     """
     Remove events:
     - with bad-keywords
@@ -285,7 +283,7 @@ def radario_others_organizations(days: int) -> List[Event]:
 def get_timepad_events(
     days: int,
     request_params: Dict[str, Any],
-    events_filter: Callable[[List[events.Event]], List[events.Event]] = None,
+    events_filter: Callable[[List[Event]], List[Event]] = None,
     with_online: bool = True,
 ) -> List[Event]:
     """

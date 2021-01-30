@@ -6,7 +6,7 @@ from typing import Any, Dict, Union
 import requests
 from telebot import TeleBot
 
-from . import database
+from . import database, events
 
 
 def format_text(text: str, style: str = "markdown"):
