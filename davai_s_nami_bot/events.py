@@ -6,8 +6,9 @@ from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
+import notion
 
-from . import notion_api, utils
+from . import utils
 from .logger import catch_exceptions
 
 BAD_KEYWORDS = (
@@ -213,7 +214,7 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(cls, notion_row: notion_api.CollectionRowBlock):
+    def from_notion_row(cls, notion_row: notion.block.collection.basic.CollectionRowBlock):
         return cls(**{tag: notion_row.get_property(tag) for tag in cls._tags})
 
 
