@@ -80,8 +80,8 @@ class BaseClient(ABC):
 
 class Telegram(BaseClient):
     constants = dict(
-        prod={"id": os.environ.get("CHANNEL_ID")},
-        dev={"id": os.environ.get("DEV_CHANNEL_ID")},
+        prod={"destination_id": os.environ.get("CHANNEL_ID")},
+        dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
     )
     name = "telegram_channel"
     formatter_style = "markdown"
@@ -97,26 +97,26 @@ class Telegram(BaseClient):
 
         database.add(event, message.message_id)
 
-    def send_text(self, text: str, *, id: Union[int, str]):
+    def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(
-            chat_id=id,
+            chat_id=destination_id,
             text=text,
             disable_web_page_preview=True,
         )
 
-    def send_image(self, text: str, image_path: str, *, id: Union[int, str]):
+    def send_image(self, text: str, image_path: str, *, destination_id: Union[int, str]):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
-                chat_id=id,
+                chat_id=destination_id,
                 photo=image_obj,
                 caption=text,
             )
 
         return message
 
-    def send_file(self, id: Union[int, str], file_path: str, mode: str = "r"):
+    def send_file(self, destination_id: Union[int, str], file_path: str, mode: str = "r"):
         with open(file_path, mode) as file_obj:
-            message = self._client.send_document(id, file_obj)
+            message = self._client.send_document(destination_id, file_obj)
 
         return message
 
@@ -132,11 +132,11 @@ class VKRequests(BaseClient):
     )
     constants = dict(
         prod={
-            "id": os.environ.get("VK_GROUP_ID"),
+            "destination_id": os.environ.get("VK_GROUP_ID"),
             "album_id": os.environ.get("VK_ALBUM_ID"),
         },
         dev={
-            "id": os.environ.get("VK_DEV_GROUP_ID"),
+            "destination_id": os.environ.get("VK_DEV_GROUP_ID"),
             "album_id": os.environ.get("VK_DEV_ALBUM_ID"),
         },
     )
@@ -151,9 +151,9 @@ class VKRequests(BaseClient):
             v=5.103,
         )
 
-    def send_text(self, text: str, *, id: Union[int, str], **kwargs):
+    def send_text(self, text: str, *, destination_id: Union[int, str], **kwargs):
         content = dict(
-            owner_id=id,
+            owner_id=destination_id,
             from_group=1,
             message=text,
         )
@@ -169,17 +169,17 @@ class VKRequests(BaseClient):
         text: str,
         image_path: str,
         *,
-        id: Union[int, str],
+        destination_id: Union[int, str],
         album_id: Union[int, str],
     ):
         with open(image_path, "rb") as image_obj:
-            attachments = self._upload_image_to_album(id, album_id, image_obj)
+            attachments = self._upload_image_to_album(destination_id, album_id, image_obj)
 
         return _requests_post(
             url=self.api_urls["wall_post"],
             data={
                 **self._access_params,
-                "owner_id": f"-{id}",
+                "owner_id": f"-{destination_id}",
                 "from_group": 1,
                 "message": text,
                 "attachments": attachments,
