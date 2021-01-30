@@ -179,9 +179,10 @@ def move_row(row, to_table, with_remove=True):
     else:
         new_row = add_row(to_table, update_views=False)
 
-    table_tags = get_schema_properties(row, property_name="name")
+    from_table = get_schema_properties(row, property_name="name")
+    to_table = get_schema_properties(to_table, property_name="name")
 
-    for tag in table_tags:
+    for tag in set(from_table) & set(to_table):
         # TODO: raised ValueError if property is None
         try:
             set_property(new_row, tag, row.get_property(tag))
