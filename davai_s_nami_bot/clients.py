@@ -46,7 +46,7 @@ def format_text(text: str, style: str = "markdown"):
 
 
 class BaseClient(ABC):
-    constants: dict()
+    constants: Dict[str, Dict[str, Union[str, int]]]
     name: ""
     formatter_style = ""
 
