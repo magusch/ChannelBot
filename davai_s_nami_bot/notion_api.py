@@ -183,11 +183,7 @@ def move_row(row, to_table, with_remove=True):
     to_table = get_schema_properties(to_table, property_name="name")
 
     for tag in set(from_table) & set(to_table):
-        # TODO: raised ValueError if property is None
-        try:
-            set_property(new_row, tag, row.get_property(tag))
-        except:
-            pass
+        set_property(new_row, tag, row.get_property(tag))
 
     if with_remove:
         remove_row(row)
