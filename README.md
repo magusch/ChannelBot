@@ -3,10 +3,18 @@
 ![Test & deploy](https://github.com/magusch/ChannelBot/workflows/Test%20&%20deploy/badge.svg)
 [![CodeFactor](https://www.codefactor.io/repository/github/magusch/channelbot/badge?s=2dddd084faca7dfc56c595e695a9ecf05d98207c)](https://www.codefactor.io/repository/github/magusch/channelbot)
 
+- [Update tables](#update-tables)
 - [Database module](#database)
 - [Contributing to `channelbot`](#contributing-to-channelbot)
 
+## Update tables
+Для обновления таблиц с мероприятиями, можно запустить скрипт
+```bash
+python update_tables.py
+```
+
 ## Database
+
 ```python
 >>> from davai_s_nami_bot import database
 ```
