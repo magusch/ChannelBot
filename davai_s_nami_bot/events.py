@@ -1,8 +1,8 @@
 import re
 import time
 from collections import namedtuple
-from functools import partial
 from datetime import date, datetime, timedelta
+from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
@@ -215,7 +215,9 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(cls, notion_row: CollectionRowBlock, get_property_func: Callable = None):
+    def from_notion_row(
+        cls, notion_row: CollectionRowBlock, get_property_func: Callable = None
+    ):
         if get_property_func is None:
             get_property_func = notion_row.get_property
 
