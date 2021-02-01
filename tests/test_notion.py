@@ -2,8 +2,10 @@
 Test all interactions with notion from each parser events.
 """
 import os
-from datetime import datetime
+from collections import namedtuple
+from datetime import datetime, timedelta
 
+import escraper
 import psycopg2
 import pytest
 
@@ -114,3 +116,48 @@ def test_remove_events_from_all_dev_tables():
     )
     for row in all_rows:
         notion_api.remove_row(row)
+
+
+def test_post_with_notion_markup():
+    """
+    Обработка форматирования поста в ячейке notion:
+    """
+    escraper_event = namedtuple("event", escraper.parsers.ALL_EVENT_TAGS)(
+        adress="",
+        category="",
+        date_from=datetime.now(),
+        date_to=datetime.now() + timedelta(days=1),
+        date_from_to="",
+        id="1",
+        place_name="",
+        post_text=(
+            "Post text with specific_underscore "
+            "and _italic words_ and *bold text* "
+            "\nwith new line symbol"
+        ),
+        poster_imag=None,
+        price="Some price",
+        title="Title with one specific_underscore name",
+        url="https://test_url_with_underscore.ru",
+        is_registration_open=True,
+    )
+    notion_api.add_events(
+        events=[events.Event.from_escraper(escraper_event)],
+        explored_date=datetime.now(),
+        table=test_table3,
+    )
+
+    rows = test_table3.collection.get_rows()
+    assert len(rows) == 1
+
+    notion_row_event = events.Event.from_notion_row(
+        rows[0], get_property_func=notion_api.get_property
+    )
+
+    post = clients.format_text(notion_row_event.post, style="html")
+
+    assert "<i>italic words</i>" in post
+    assert " specific_underscore " in post
+    assert "<strong>bold text</strong>" in post
+    assert "<br>with new line symbol" in post
+    assert f"""<a href="{escraper_event.url}">{escraper_event.price}</a>""" in post
