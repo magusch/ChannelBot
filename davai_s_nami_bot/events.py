@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
-from notion.block.collection.basic import CollectionRowBlock
+from notion.collection import CollectionRowBlock
 
 from . import utils
 from .logger import catch_exceptions

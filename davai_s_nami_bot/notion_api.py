@@ -3,9 +3,8 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache, partial
 from typing import Any, List
 
-from notion.block.collection.basic import CollectionRowBlock
-from notion.block.collection.view import TableView
 from notion.client import NotionClient
+from notion.collection import CollectionRowBlock, TableView
 
 from .events import Event
 from .logger import catch_exceptions, get_logger
@@ -13,15 +12,11 @@ from .logger import catch_exceptions, get_logger
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
 notion_client = NotionClient(token_v2=os.environ.get("NOTION_TOKEN_V2"))
-table1 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE1_URL"))
-table2 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE2_URL"))
-table3 = notion_client.get_collection_view(os.environ.get("NOTION_TABLE3_URL"))
-posting_times_table = notion_client.get_collection_view(
-    os.environ.get("NOTION_POSTING_TIMES_URL")
-)
-everyday_times = notion_client.get_collection_view(
-    os.environ.get("NOTION_EVERYDAY_TIMES_URL")
-)
+table1 = notion_client.get_block(os.environ.get("NOTION_TABLE1_URL"))
+table2 = notion_client.get_block(os.environ.get("NOTION_TABLE2_URL"))
+table3 = notion_client.get_block(os.environ.get("NOTION_TABLE3_URL"))
+posting_times_table = notion_client.get_block(os.environ.get("NOTION_POSTING_TIMES_URL"))
+everyday_times = notion_client.get_block(os.environ.get("NOTION_EVERYDAY_TIMES_URL"))
 
 log = get_logger(__file__)
 
