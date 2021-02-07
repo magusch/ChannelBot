@@ -161,3 +161,5 @@ def test_post_with_notion_markup():
     assert "<strong>bold text</strong>" in post
     assert "\nwith new line symbol" in post
     assert f"""<a href="{escraper_event.url}">{escraper_event.price}</a>""" in post
+
+    notion_api.remove_row(notion_row_event)

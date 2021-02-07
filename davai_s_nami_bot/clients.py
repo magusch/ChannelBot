@@ -24,8 +24,8 @@ def format_text(text: str, style: str = "markdown"):
         formatted = text.replace("__", "*").replace("] (", "](").replace("_", r"\_")
 
     elif style == "html":
-        formatted = markdown(
-            text.replace("] (", "](")  # enable link
+        formatted = (
+            markdown(text.replace("] (", "]("))
             .replace("<p>", "")  # remove paragraph tags (telegram doesn't accept this)
             .replace("</p>", "")
         )
