@@ -132,7 +132,7 @@ def test_post_with_notion_markup():
         place_name="",
         post_text=(
             "Post text with specific_underscore "
-            "and _italic words_ and *bold text* "
+            "and _italic words_ and __bold text__ "
             "\nwith new line symbol"
         ),
         poster_imag=None,
