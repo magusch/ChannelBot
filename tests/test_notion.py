@@ -156,7 +156,7 @@ def test_post_with_notion_markup():
 
     post = clients.format_text(notion_row_event.post, style="html")
 
-    assert "<i>italic words</i>" in post
+    assert "<em>italic words</em>" in post
     assert " specific_underscore " in post
     assert "<strong>bold text</strong>" in post
     assert "\nwith new line symbol" in post
