@@ -25,9 +25,14 @@ def format_text(text: str, style: str = "markdown"):
 
     elif style == "html":
         formatted = (
-            markdown(text.replace("] (", "]("))
+            markdown(
+                text.replace("] (", "](").replace(  # enable link
+                    "\n", "<br>"
+                )  # \n not convert to <br> in package markdown =(
+            )
             .replace("<p>", "")  # remove paragraph tags (telegram doesn't accept this)
             .replace("</p>", "")
+            .replace("<br>", "\n")
         )
 
     elif style == "vk":
