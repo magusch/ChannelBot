@@ -2,6 +2,7 @@ import re
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
+from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
@@ -214,8 +215,16 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(cls, notion_row: CollectionRowBlock):
-        return cls(**{tag: notion_row.get_property(tag) for tag in cls._tags})
+    def from_notion_row(
+        cls, notion_row: CollectionRowBlock, get_property_func: Callable = None
+    ):
+        if get_property_func is None:
+            get_property_func = notion_row.get_property
+
+        else:
+            get_property_func = partial(get_property_func, notion_row)
+
+        return cls(**{tag: get_property_func(tag) for tag in cls._tags})
 
 
 def not_approved_organization_filter(events: List[Event]):

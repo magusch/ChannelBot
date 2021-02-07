@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Any, Dict, Union
 
 import requests
+from markdown import markdown
 from telebot import TeleBot
 
 from . import database, events
@@ -19,8 +20,15 @@ def format_text(text: str, style: str = "markdown"):
         _text_ - italic
     """
 
-    if style == "markdown":
+    if style == "markdown":  # TODO remove
         formatted = text.replace("__", "*").replace("] (", "](").replace("_", r"\_")
+
+    elif style == "html":
+        formatted = (
+            markdown(text.replace("] (", "]("))
+            .replace("<p>", "")  # remove paragraph tags (telegram doesn't accept this)
+            .replace("</p>", "")
+        )
 
     elif style == "vk":
         formatted = (
@@ -46,7 +54,7 @@ def format_text(text: str, style: str = "markdown"):
 
 
 class BaseClient(ABC):
-    constants: dict()
+    constants: Dict[str, Dict[str, Union[str, int]]]
     name: ""
     formatter_style = ""
 
@@ -84,12 +92,12 @@ class Telegram(BaseClient):
         dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
     )
     name = "telegram_channel"
-    formatter_style = "markdown"
+    formatter_style = "html"
 
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
-            parse_mode="Markdown",
+            parse_mode="html",
         )
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):

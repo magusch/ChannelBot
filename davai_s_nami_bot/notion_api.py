@@ -140,6 +140,17 @@ def set_property(row: CollectionRowBlock, property_name: str, value: Any) -> Non
     row.set_property(property_name, value)
 
 
+def get_property(row: CollectionRowBlock, property_name: str) -> Any:
+    try:
+        return row.get_property(property_name)
+    except TypeError as e:
+        # It's notion-py package bug
+        if e.args[0] == "'NoneType' object is not iterable":
+            return None
+
+        raise e
+
+
 @catch_exceptions()
 def remove_row(row: CollectionRowBlock) -> None:
     row.remove()
@@ -178,11 +189,7 @@ def move_row(row, to_table, with_remove=True):
     to_table = get_schema_properties(to_table, property_name="name")
 
     for tag in set(from_table) & set(to_table):
-        # TODO: raised ValueError if property is None
-        try:
-            set_property(new_row, tag, row.get_property(tag))
-        except:
-            pass
+        set_property(new_row, tag, row.get_property(tag))
 
     if with_remove:
         remove_row(row)
@@ -198,7 +205,7 @@ def next_event_to_channel():
     for row in rows:
         if row.status != "Posted":
             if row.status == "Ready to post":
-                event = Event.from_notion_row(row)
+                event = Event.from_notion_row(row, get_property_func=get_property)
                 set_property(row, "status", "Posted")
 
             elif row.status == "Ready to skiped posting time":
