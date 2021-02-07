@@ -159,5 +159,5 @@ def test_post_with_notion_markup():
     assert "<i>italic words</i>" in post
     assert " specific_underscore " in post
     assert "<strong>bold text</strong>" in post
-    assert "<br>with new line symbol" in post
+    assert "\nwith new line symbol" in post
     assert f"""<a href="{escraper_event.url}">{escraper_event.price}</a>""" in post
