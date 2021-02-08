@@ -23,7 +23,9 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Lint
-      run: make lint_check
+      run: |
+        pyenv activate channelbot-prod
+        make lint_check
 
   test:
     needs: lint
@@ -51,7 +53,9 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: make test
+      run: |
+        pyenv activate channelbot-prod
+        make test
 
   deploy:
     needs: test
@@ -59,4 +63,6 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Deploy
-      run: make deploy
+      run: |
+        pyenv activate channelbot-prod
+        make deploy
