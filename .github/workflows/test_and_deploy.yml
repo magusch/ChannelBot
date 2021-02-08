@@ -7,6 +7,12 @@ on:
     branches: [ master ]
 
 jobs:
+  setup:
+    runs-on: self-hosted
+    steps:
+    - name: Setup test environ
+      run: pip install tox
+
   testing:
     runs-on: self-hosted
     steps:
@@ -15,13 +21,9 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: 3.7
-    - name: Install dependencies
-      run: |
-        make install
     - name: Code style
-      run: |
-        make lint_check
-    - name: Test with pytest
+      run: tox -e lint
+    - name: Test
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -43,8 +45,7 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: |
-        make test
+      run: tox -e test
 
   deploy:
     needs: testing

@@ -1,6 +1,9 @@
 install:
 	pip install --upgrade pip
-	pip install pytest autoflake black isort -e .
+	pip install -e .
+
+install_dev_tools:
+	pip install -r requirements-dev.txt
 
 lint_inplace:
 	isort --project davai_s_nami_bot .
