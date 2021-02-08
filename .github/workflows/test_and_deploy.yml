@@ -11,24 +11,17 @@ jobs:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.7
+
+    - name: Lint
       run: |
         make setup_python
         make install_dev_tools
-
-    - name: Lint
-      run: make lint_check
+        make lint_check
 
   test:
     needs: lint
     runs-on: self-hosted
     steps:
-    - name: Setup python
-      run: |
-        make setup_python
-        make install
-        make install_dev_tools
-
     - name: Test with pytest
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
@@ -51,17 +44,19 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: make test
+      run: |
+        make setup_python
+        make install
+        make install_dev_tools
+        make test
 
   deploy:
     needs: test
     if: github.ref == 'refs/heads/master'
     runs-on: self-hosted
     steps:
-    - name: Prepare prod environ
+    - name: Deploy
       run: |
         make setup_python
         make install
-
-    - name: Deploy
-      run: make deploy
+        make deploy
