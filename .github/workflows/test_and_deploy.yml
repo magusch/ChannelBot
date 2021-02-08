@@ -9,6 +9,7 @@ on:
 jobs:
   setup:
     runs-on: self-hosted
+    uses: actions/checkout@v2
     steps:
     - name: Setup test environ
       run: pip install tox
