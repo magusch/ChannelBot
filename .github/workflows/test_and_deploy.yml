@@ -18,12 +18,14 @@ jobs:
         make install_dev_tools
 
   lint:
+    needs: setup
     runs-on: self-hosted
     steps:
     - name: Lint
       run: make lint_check
 
   test:
+    needs: lint
     runs-on: self-hosted
     steps:
     - name: Test with pytest
