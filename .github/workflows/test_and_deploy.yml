@@ -19,13 +19,6 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Lint
-      run: tox -e lint
-
-  test:
-    needs: lint
-    runs-on: self-hosted
-    steps:
-    - name: Test
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -47,6 +40,13 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
+      run: tox -e lint
+
+  test:
+    needs: lint
+    runs-on: self-hosted
+    steps:
+    - name: Test
       run: tox -e test
 
   deploy:
