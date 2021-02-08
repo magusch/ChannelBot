@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python 3.7
-      uses: gabrielfalcao/pyenv-action@v5
+      uses: gabrielfalcao/pyenv-action@v7
       with:
         default: 3.7.9
         command: |
@@ -34,7 +34,7 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Setup python
-      uses: gabrielfalcao/pyenv-action@v5
+      uses: gabrielfalcao/pyenv-action@v7
       with:
         default: 3.7.9
         command: |
