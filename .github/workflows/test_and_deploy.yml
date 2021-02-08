@@ -7,30 +7,48 @@ on:
     branches: [ master ]
 
 jobs:
-  setup:
+  lint:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v2
+    - uses: gabrielfalcao/pyenv-action@v5
+
     - name: Set up Python 3.7
-      run: make setup_python
-    - name: Install package
+      with:
+        default: 3.7.9
+        command: |
+          pip install --upgrade pip
+    - name: Create virtualenv
       run: |
-        make install
+        pyenv deactivate
+        pyenv virtualenv-delete channelbot-lint
+        pyenv virtualenv channelbot-lint
+        pyenv activate channelbot-lint
         make install_dev_tools
 
-  lint:
-    needs: setup
-    runs-on: self-hosted
-    steps:
     - name: Lint
-      run: |
-        pyenv activate channelbot-prod
-        make lint_check
+      run: make lint_check
 
   test:
     needs: lint
     runs-on: self-hosted
     steps:
+    - uses: gabrielfalcao/pyenv-action@v5
+
+    - name: Set up Python 3.7
+      with:
+        default: 3.7.9
+        command: |
+          pip install --upgrade pip
+    - name: Create virtualenv
+      run: |
+        pyenv deactivate
+        pyenv virtualenv-delete channelbot-test
+        pyenv virtualenv channelbot-test
+        pyenv activate channelbot-test
+        make install
+        make install_dev_tools
+
     - name: Test with pytest
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
@@ -53,9 +71,7 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: |
-        pyenv activate channelbot-prod
-        make test
+      run: make test
 
   deploy:
     needs: test
@@ -64,5 +80,5 @@ jobs:
     steps:
     - name: Deploy
       run: |
-        pyenv activate channelbot-prod
+        make setup_pyhton
         make deploy
