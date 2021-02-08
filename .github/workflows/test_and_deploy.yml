@@ -7,20 +7,25 @@ on:
     branches: [ master ]
 
 jobs:
-  testing:
+  setup:
     runs-on: self-hosted
     steps:
-    - uses: actions/checkout@v2
     - name: Set up Python 3.7
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.7
-    - name: Install dependencies
+      run: make setup_python
+    - name: Install package
       run: |
         make install
-    - name: Code style
-      run: |
-        make lint_check
+        make install_dev_tools
+
+  lint:
+    runs-on: self-hosted
+    steps:
+    - name: Lint
+      run: make lint_check
+
+  test:
+    runs-on: self-hosted
+    steps:
     - name: Test with pytest
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
@@ -43,8 +48,7 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: |
-        make test
+      run: make test
 
   deploy:
     needs: testing
@@ -52,5 +56,4 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Deploy
-      run: |
-        make deploy
+      run: make deploy
