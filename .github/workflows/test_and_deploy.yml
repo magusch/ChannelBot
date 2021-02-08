@@ -40,7 +40,9 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: tox -e lint
+      run: |
+        python dump_secrets.py
+        tox -e lint
 
   test:
     needs: lint
