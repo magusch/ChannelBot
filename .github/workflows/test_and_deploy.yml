@@ -12,18 +12,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python 3.7
-      uses: gabrielfalcao/pyenv-action@v7
-      with:
-        default: 3.7.9
-        command: |
-          pip install --upgrade pip
-
-    - name: Create virtualenv
       run: |
-        pyenv deactivate
-        pyenv virtualenv-delete channelbot-lint
-        pyenv virtualenv channelbot-lint
-        pyenv activate channelbot-lint
+        chmod +x update_environment.sh
+        ./update_environment lint
         make install_dev_tools
 
     - name: Lint
@@ -34,20 +25,11 @@ jobs:
     runs-on: self-hosted
     steps:
     - name: Setup python
-      uses: gabrielfalcao/pyenv-action@v7
-      with:
-        default: 3.7.9
-        command: |
-          pip install --upgrade pip
-
-    - name: Create virtualenv
       run: |
-        pyenv deactivate
-        pyenv virtualenv-delete channelbot-test
-        pyenv virtualenv channelbot-test
-        pyenv activate channelbot-test
-        make install
+        chmod +x update_environment.sh
+        ./update_environment test
         make install_dev_tools
+        make install
 
     - name: Test with pytest
       env:
@@ -78,7 +60,11 @@ jobs:
     if: github.ref == 'refs/heads/master'
     runs-on: self-hosted
     steps:
-    - name: Deploy
+    - name: Prepare prod environ
       run: |
-        make setup_pyhton
-        make deploy
+        chmod +x update_environment.sh
+        ./update_environment.sh prod
+        make install
+
+    - name: Deploy
+      run: make deploy

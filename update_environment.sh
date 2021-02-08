@@ -1,4 +1,5 @@
 #!/bin/bash
+env_name=$1
 delimiter='**********'
 
 function print {
@@ -21,9 +22,9 @@ pyenv local 3.7.9
 print "Current python version is $(python --version)"
 
 print 'Delete old virtualenv'
-pyenv virtualenv-delete --force channelbot-prod
+pyenv virtualenv-delete --force channelbot-$env_name
 
 print 'Create and activate new virtualenv'
-pyenv virtualenv channelbot-prod
-pyenv activate channelbot-prod
+pyenv virtualenv channelbot-$env_name
+pyenv activate channelbot-$env_name
 print "Current virtualenv is $(pyenv version)"
