@@ -2,8 +2,8 @@ FROM ubuntu:20.04
 MAINTAINER Your Name "artem.ermulin@ya.ru"
 
 RUN apt update
-RUN apt install wget
-RUN apt install make
+RUN apt install wget -y
+RUN apt install make -y
 RUN apt install build-essential -y
 RUN apt install libssl-dev -y
 RUN apt install gcc -y
