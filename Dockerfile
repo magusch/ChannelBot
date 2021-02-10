@@ -29,6 +29,7 @@ RUN echo $'export PATH="$PYENV_ROOT/bin:$PATH"\n' >> ~/.bashrc
 RUN echo $'if command -v pyenv 1>/dev/null 2>&1; then' >> ~/.bashrc
 RUN echo $'  eval "$(pyenv init -)"' >> ~/.bashrc
 RUN echo $'fi' >> ~/.bashrc
+RUN . ~/.bashrc
 RUN pyenv install 3.7.7
 RUN pyenv global 3.7.7
 RUN pip install --upgrade pip
