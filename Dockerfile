@@ -21,7 +21,6 @@ RUN apt install llvm -y
 RUN apt install libncurses5-dev -y
 RUN apt install libncursesw5-dev -y
 RUN apt install xz-utils -y
-RUN apt install tk-dev -y
 RUN apt install python-openssl -y
 RUN git clone https://github.com/pyenv/pyenv.git $HOME/.pyenv
 RUN git clone https://github.com/yyuu/pyenv-virtualenv.git   $HOME/.pyenv/plugins/pyenv-virtualenv
