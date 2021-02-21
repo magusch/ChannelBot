@@ -271,8 +271,11 @@ class DevClient(Telegram):
     def send_text(self, text: str):
         super().send_text(text, **super().constants["dev"])
 
-    def send_file(self, path: str, mode: str = "r"):
+    def send_file(self, path: str, mode: str = "r", with_remove: bool = False):
         super().send_file(file_path=path, mode=mode, **super().constants["dev"])
+
+        if with_remove:
+            os.remove(path)
 
 
 class Clients:

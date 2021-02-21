@@ -18,7 +18,7 @@ class Flow:
             msk_today = get_msk_today(replace_seconds=True)
 
             self._run(msk_today=msk_today)
-            dev_channel.send_file(logger.LOG_FILE, mode="r+b")
+            dev_channel.send_file(logger.LOG_FILE, mode="r+b", with_remove=True)
 
             next_time = notion_api.next_task_time(
                 msk_today=get_msk_today(replace_seconds=True)
