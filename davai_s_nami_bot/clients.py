@@ -276,8 +276,8 @@ class DevClient(Telegram):
 
         if with_remove:
             with open(path, "r+b") as file:
-                logs.truncate(0)
-                logs.write(b"")
+                file.truncate(0)
+                file.write(b"")
 
 
 class Clients:
