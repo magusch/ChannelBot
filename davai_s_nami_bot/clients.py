@@ -275,7 +275,9 @@ class DevClient(Telegram):
         super().send_file(file_path=path, mode=mode, **super().constants["dev"])
 
         if with_remove:
-            os.remove(path)
+            with open(path, "r+b") as file:
+                logs.truncate(0)
+                logs.write(b"")
 
 
 class Clients:
