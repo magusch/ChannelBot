@@ -3,8 +3,34 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache, partial
 from typing import Any, List
 
+import notion
 from notion.client import NotionClient
 from notion.collection import CollectionRowBlock, TableView
+
+
+# MONKEYPATCH (NOTION.SO API CHANGE)
+def call_load_page_chunk(self, page_id):
+
+    if self._client.in_transaction():
+        self._pages_to_refresh.append(page_id)
+        return
+
+    data = {
+        "pageId": page_id,
+        "limit": 100,  # <-- here (before there was `100000`)
+        "cursor": {"stack": []},
+        "chunkNumber": 0,
+        "verticalColumns": False,
+    }
+
+    recordmap = self._client.post("loadPageChunk", data).json()["recordMap"]
+
+    self.store_recordmap(recordmap)
+
+
+notion.store.RecordStore.call_load_page_chunk = call_load_page_chunk
+####################################
+
 
 from .events import Event
 from .logger import catch_exceptions, get_logger
