@@ -144,6 +144,8 @@ class VKRequests(BaseClient):
         wall_post=api_base_url + "method/wall.post",
         upload_photo=api_base_url + "method/photos.getUploadServer",
         save_photo=api_base_url + "method/photos.save",
+        upload_photo_wall=api_base_url + "method/photos.getWallUploadServer",
+        save_photo_wall=api_base_url + "method/photos.saveWallPhoto",
     )
     constants = dict(
         prod={
@@ -204,6 +206,30 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
+    def send_image_on_wall(
+        self,
+        text: str,
+        image_path: str,
+        *,
+        destination_id: Union[int, str],
+    ):
+        with open(image_path, "rb") as image_obj:
+            attachments = self._upload_image_to_wall(
+                destination_id, image_obj
+            )
+
+        return _requests_post(
+            url=self.api_urls["wall_post"],
+            data={
+                **self._access_params,
+                "owner_id": f"-{destination_id}",
+                "from_group": 1,
+                "message": text,
+                "attachments": attachments,
+            },
+            return_key=None,
+        )
+
     def _upload_image_to_album(
         self, group_id: Union[int, str], album_id: Union[int, str], image_obj: Any
     ):
@@ -228,12 +254,49 @@ class VKRequests(BaseClient):
             ),
         )["upload_url"]
 
+    def _upload_image_to_wall(
+        self, group_id: Union[int, str], image_obj: Any
+    ):
+        upload_url = self._get_wall_upload_url(group_id)
+
+        upload_images = _requests_post(
+            url=upload_url,
+            files={"file": image_obj},
+            return_key=None,
+        )
+
+        return self._get_photo_attachments_str_wall(upload_images)
+
+    @lru_cache()
+    def _get_wall_upload_url(self, group_id: Union[int, str]):
+        return _requests_post(
+            url=self.api_urls["upload_photo_wall"],
+            data=dict(
+                group_id=group_id,
+                **self._access_params,
+            ),
+        )["upload_url"]
+
     def _get_photo_attachments_str(self, params: Dict[str, str]):
         params["album_id"] = params.pop("aid")
         params["group_id"] = params.pop("gid")
 
         upload_photos = _requests_get(
             url=self.api_urls["save_photo"],
+            params={**params, **self._access_params},
+        )
+
+        attachments = list()
+        for photo in upload_photos:
+            attachments.append(f"""photo{photo["owner_id"]}_{photo["id"]}""")
+
+        return ",".join(attachments)
+
+    def _get_photo_attachments_str_wall(self, params: Dict[str, str]):
+        params["group_id"] = params.pop("gid")
+
+        upload_photos = _requests_get(
+            url=self.api_urls["save_photo_wall"],
             params={**params, **self._access_params},
         )
 
