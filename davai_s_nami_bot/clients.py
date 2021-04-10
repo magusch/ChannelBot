@@ -210,7 +210,7 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-        return self._get_photo_attachments_str_wall(upload_images)
+        return self._get_photo_attachments_str_wall(upload_images, group_id)
 
     @lru_cache()
     def _get_wall_upload_url(self, group_id: Union[int, str]):
@@ -222,8 +222,8 @@ class VKRequests(BaseClient):
             ),
         )["upload_url"]
 
-    def _get_photo_attachments_str_wall(self, params: Dict[str, str]):
-        params["group_id"] = params.pop("gid")
+    def _get_photo_attachments_str_wall(self, params: Dict[str, str], group_id):
+        params["group_id"] = group_id
 
         upload_photos = _requests_get(
             url=self.api_urls["save_photo_wall"],
