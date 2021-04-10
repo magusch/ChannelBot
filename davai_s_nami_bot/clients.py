@@ -144,15 +144,15 @@ class VKRequests(BaseClient):
         wall_post=api_base_url + "method/wall.post",
         upload_photo=api_base_url + "method/photos.getUploadServer",
         save_photo=api_base_url + "method/photos.save",
+        upload_photo_wall=api_base_url + "method/photos.getWallUploadServer",
+        save_photo_wall=api_base_url + "method/photos.saveWallPhoto",
     )
     constants = dict(
         prod={
             "destination_id": os.environ.get("VK_GROUP_ID"),
-            "album_id": os.environ.get("VK_ALBUM_ID"),
         },
         dev={
             "destination_id": os.environ.get("VK_DEV_GROUP_ID"),
-            "album_id": os.environ.get("VK_DEV_ALBUM_ID"),
         },
     )
     name = "vk_group"
@@ -185,12 +185,9 @@ class VKRequests(BaseClient):
         image_path: str,
         *,
         destination_id: Union[int, str],
-        album_id: Union[int, str],
     ):
         with open(image_path, "rb") as image_obj:
-            attachments = self._upload_image_to_album(
-                destination_id, album_id, image_obj
-            )
+            attachments = self._upload_image_to_wall(destination_id, image_obj)
 
         return _requests_post(
             url=self.api_urls["wall_post"],
@@ -204,10 +201,8 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-    def _upload_image_to_album(
-        self, group_id: Union[int, str], album_id: Union[int, str], image_obj: Any
-    ):
-        upload_url = self._get_upload_url(group_id, album_id)
+    def _upload_image_to_wall(self, group_id: Union[int, str], image_obj: Any):
+        upload_url = self._get_wall_upload_url(group_id)
 
         upload_images = _requests_post(
             url=upload_url,
@@ -215,25 +210,23 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-        return self._get_photo_attachments_str(upload_images)
+        return self._get_photo_attachments_str_wall(upload_images, group_id)
 
     @lru_cache()
-    def _get_upload_url(self, group_id: Union[int, str], album_id: Union[int, str]):
+    def _get_wall_upload_url(self, group_id: Union[int, str]):
         return _requests_post(
-            url=self.api_urls["upload_photo"],
+            url=self.api_urls["upload_photo_wall"],
             data=dict(
                 group_id=group_id,
-                album_id=album_id,
                 **self._access_params,
             ),
         )["upload_url"]
 
-    def _get_photo_attachments_str(self, params: Dict[str, str]):
-        params["album_id"] = params.pop("aid")
-        params["group_id"] = params.pop("gid")
+    def _get_photo_attachments_str_wall(self, params: Dict[str, str], group_id):
+        params["group_id"] = group_id
 
         upload_photos = _requests_get(
-            url=self.api_urls["save_photo"],
+            url=self.api_urls["save_photo_wall"],
             params={**params, **self._access_params},
         )
 

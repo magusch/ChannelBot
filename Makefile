@@ -9,7 +9,7 @@ lint_inplace:
 
 lint_check:
 	isort --check --project davai_s_nami_bot --diff .
-	black --check --line-length=89 .
+	black --check --diff --line-length=89 .
 	autoflake --check --recursive --remove-all-unused-imports --ignore-init-module-imports .
 
 test:
