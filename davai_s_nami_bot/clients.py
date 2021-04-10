@@ -189,9 +189,7 @@ class VKRequests(BaseClient):
         destination_id: Union[int, str],
     ):
         with open(image_path, "rb") as image_obj:
-            attachments = self._upload_image_to_wall(
-                destination_id, image_obj
-            )
+            attachments = self._upload_image_to_wall(destination_id, image_obj)
 
         return _requests_post(
             url=self.api_urls["wall_post"],
@@ -205,9 +203,7 @@ class VKRequests(BaseClient):
             return_key=None,
         )
 
-    def _upload_image_to_wall(
-        self, group_id: Union[int, str], image_obj: Any
-    ):
+    def _upload_image_to_wall(self, group_id: Union[int, str], image_obj: Any):
         upload_url = self._get_wall_upload_url(group_id)
 
         upload_images = _requests_post(
