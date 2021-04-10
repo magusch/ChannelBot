@@ -150,11 +150,9 @@ class VKRequests(BaseClient):
     constants = dict(
         prod={
             "destination_id": os.environ.get("VK_GROUP_ID"),
-            "album_id": os.environ.get("VK_ALBUM_ID"),
         },
         dev={
             "destination_id": os.environ.get("VK_DEV_GROUP_ID"),
-            "album_id": os.environ.get("VK_DEV_ALBUM_ID"),
         },
     )
     name = "vk_group"
