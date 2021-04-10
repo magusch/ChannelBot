@@ -62,7 +62,6 @@ def add_events(
                 value=value,
             )
 
-        # event not contain "Explored date" and "Status" fields
         set_property(
             row=row,
             property_name="Explored date",
