@@ -214,6 +214,15 @@ class Event:
             }
         )
 
+    # @classmethod
+    # def from_django(cls, event):
+    #     return cls(
+    #         **{
+    #             tag: (event)
+    #             for tag, parse_func in cls._escraper_event_parsers.items()
+    #         }
+    #     )
+
     @classmethod
     def from_notion_row(
         cls, notion_row: CollectionRowBlock, get_property_func: Callable = None

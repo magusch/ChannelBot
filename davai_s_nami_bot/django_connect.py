@@ -72,3 +72,43 @@ def remove_old_events(table =1, today=datetime.datetime.today()):
 
     cursor.execute(script)
     conn.close()
+
+
+def next_event_to_channel():
+    """
+    Getting next event_post (str) from table 3 (from up to down).
+    """
+    tablename = tables[3]
+
+    conn, cursor = get_db_connection()
+
+    script = f"SELECT id, post FROM {tablename} WHERE status='ReadyToPost' ORDER BY queue LIMIT 1"
+
+    cursor.execute(script)
+
+    try:
+        id, post = cursor.fetchone()
+        script_update = f"UPDATE {tablename} SET status='Posted' WHERE id={id}"
+        cursor.execute(script_update)
+    except:
+        post=None
+
+    conn.close()
+    return post
+
+
+def get_new_events(events):
+    existing_ids = list()
+    conn, cursor = get_db_connection()
+    for table in (1,2,3):
+        script = f"SELECT event_id FROM {tables[table]}"
+        cursor.execute(script)
+
+        existing_ids += [event_id[0] for event_id in cursor.fetchall()]
+
+    new_events = list()
+    for event in events:
+        if event.event_id not in existing_ids:
+            new_events.append(event)
+
+    return new_events
