@@ -53,10 +53,10 @@ def add_event(event, explored_date, table=1):
     if table == 1:
         values += ' False, '
     elif table == 3:
-        queue = 100 #todo select
-        post_date = ''
+        queue = get_queue(cursor)
+        post_date = get_post_date(cursor)
         status = 'ReadyToPost'
-        values += f" {queue}, {post_date}, '{status}',"
+        values += f" {queue}, '{post_date}'::timestamp, '{status}',"
 
     values = values[:-1]
 
@@ -65,7 +65,69 @@ def add_event(event, explored_date, table=1):
     cursor.execute(script)
     conn.close()
 
-def remove_old_events(table =1, today=datetime.datetime.today()):
+
+def get_queue(cursor):
+    script = f"SELECT queue FROM {tables[1]} ORDER BY queue DESC LIMIT 1"
+    cursor.execute(script)
+    return cursor.fetchone()[0]+2
+
+
+def get_post_date(cursor):
+    script = f"SELECT post_date FROM {tables[1]} ORDER BY post_date DESC LIMIT 1"
+    cursor.execute(script)
+    last_post_date = cursor.fetchone()[0]
+
+    return last_post_date + datetime.timedelta(hours=2) #TODO: BAD!!!!
+
+
+def move_approved() -> None:
+    """
+    Moving all approved events (with selected checkbox Approved)
+    from table1 and table2 to table3.
+    """
+
+    conn, cursor = get_db_connection()
+
+    script = f"SELECT {','.join(column_table_general)}, explored_date FROM {tables[1]} WHERE approved = True"
+    cursor.execute(script)
+    events = cursor.fetchall()
+
+    script = f"SELECT {','.join(column_table_general)}, explored_date FROM {tables[2]} WHERE approved = True"
+    cursor.execute(script)
+    events += cursor.fetchall()
+
+    event_to_delete = []
+    script_insert = f"INSERT INTO {tables[3]} ({','.join(column_table_general)}, {','.join(column_table_add)}) VALUES "
+    for event in events:
+        script_insert +='('
+        for column in column_table_general:
+            if column=='event_id':
+                event_to_delete.append(event[column])
+
+            if type(event[column]) == int:
+                script_insert += f" {str(event[column])},"
+            elif type(event[column]) == str:
+                script_insert += f" '{event[column]}',"
+            elif type(event[column]) == datetime.datetime:
+                script_insert += f" '{event[column]}'::timestamp"
+            else:
+                script_insert += f" {str(event[column])},"
+        queue = get_queue(cursor)
+        post_date = get_post_date(cursor)
+        status = 'ReadyToPost'
+        script_insert += f" {queue}, '{post_date}'::timestamp, '{status}',"
+
+        script_insert = script_insert[:-1] + '),'
+
+    script_insert=script_insert[:-1]
+    cursor.execute(script_insert)
+
+    delete_events = "','".join(event_to_delete)
+    script_delete = f"DELETE FROM {tables[1]} WHERE event_id in '{delete_events}'"
+    cursor.execute(script_delete)
+
+
+def remove_old_events(table = 1, today=datetime.datetime.today()):
     conn, cursor = get_db_connection()
 
     script = f"DELETE FROM {tables[table]} WHERE date_to<'{today}'::timestamp"
