@@ -62,7 +62,6 @@ def add_event(event, explored_date, table=1):
     values = values[:-1]
 
     script = f"INSERT INTO {tables[table]} ({','.join(column_table_general)}, {', '.join(column_table_add[table])} ) VALUES ({values})"
-    print(script)
     cursor.execute(script)
     conn.commit()
     conn.close()
@@ -105,7 +104,6 @@ def move_approved() -> None:
             for i, column in enumerate(column_table_general):
                 if column=='event_id':
                     event_to_delete.append(event[i])
-                    print(event[i])
                 if type(event[i]) == int:
                     script_insert += f" {str(event[i])},"
                 elif type(event[i]) == str:
@@ -122,12 +120,9 @@ def move_approved() -> None:
             script_insert = script_insert[:-1] + '),'
 
         script_insert = script_insert[:-1]
-        print(script_insert)
         cursor.execute(script_insert)
 
         delete_events = "','".join(event_to_delete)
-        print(event_to_delete)
-        print(delete_events)
         script_delete = f"DELETE FROM {tables[1]} WHERE event_id in ('{delete_events}')"
         cursor.execute(script_delete)
         script_delete = f"DELETE FROM {tables[2]} WHERE event_id in ('{delete_events}')"

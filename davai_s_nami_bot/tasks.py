@@ -188,8 +188,8 @@ class UpdateEvents(Task):
 
         new_events = notion_api.get_new_events(events)
         new_events_django = django.get_new_events(events)
-        log.info(f"New evenst count = {len(new_events)}")
-        log.info(f"New evenst count in django = {len(new_events_django)}")
+        log.info(f"New events count = {len(new_events)}")
+        log.info(f"New events count in django = {len(new_events_django)}")
 
         log.info("Updating notion table")
         notion_api.add_events(new_events, msk_today, table=table)
