@@ -14,7 +14,7 @@ tables = {
 }
 
 
-column_table_general = ('event_id', 'title', 'post', 'image', 'url', 'price', 'address', 'date_from', 'date_to')
+column_table_general = ('event_id', 'title', 'post', 'image', 'url', 'price', 'from_date', 'to_date', 'address')
 column_table_add = {
         1: ('explored_date', 'approved'),
         3: ('explored_date', 'queue', 'post_date', 'status',),
@@ -41,17 +41,18 @@ def add_events(
 
 def add_event(event, explored_date, table=1):
     conn, cursor = get_db_connection()
-
+    event = event._asdict()
     values = ""
     for column in column_table_general:
         if type(event[column])==int:
             values += f" {str(event[column])},"
         elif type(event[column])==str:
             values += f" '{event[column]}',"
-
-    values += f" '{explored_date}'::timestamp"
+        elif type(event[column]) == datetime.datetime:
+            values += f" '{event[column]}'::timestamp, "
+    values += f" '{explored_date}'::timestamp,"
     if table == 1:
-        values += ' False, '
+        values += ' False,'
     elif table == 3:
         queue = get_queue(cursor)
         post_date = get_post_date(cursor)
@@ -61,19 +62,20 @@ def add_event(event, explored_date, table=1):
     values = values[:-1]
 
     script = f"INSERT INTO {tables[table]} ({','.join(column_table_general)}, {', '.join(column_table_add[table])} ) VALUES ({values})"
-
+    print(script)
     cursor.execute(script)
+    conn.commit()
     conn.close()
 
 
 def get_queue(cursor):
-    script = f"SELECT queue FROM {tables[1]} ORDER BY queue DESC LIMIT 1"
+    script = f"SELECT queue FROM {tables[3]} ORDER BY queue DESC LIMIT 1"
     cursor.execute(script)
     return cursor.fetchone()[0]+2
 
 
 def get_post_date(cursor):
-    script = f"SELECT post_date FROM {tables[1]} ORDER BY post_date DESC LIMIT 1"
+    script = f"SELECT post_date FROM {tables[3]} ORDER BY post_date DESC LIMIT 1"
     cursor.execute(script)
     last_post_date = cursor.fetchone()[0]
 
@@ -95,48 +97,56 @@ def move_approved() -> None:
     script = f"SELECT {','.join(column_table_general)}, explored_date FROM {tables[2]} WHERE approved = True"
     cursor.execute(script)
     events += cursor.fetchall()
+    if events:
+        event_to_delete = []
+        script_insert = f"INSERT INTO {tables[3]} ({','.join(column_table_general)}, {','.join(column_table_add[3])}) VALUES "
+        for event in events:
+            script_insert +='('
+            for i, column in enumerate(column_table_general):
+                if column=='event_id':
+                    event_to_delete.append(event[i])
+                    print(event[i])
+                if type(event[i]) == int:
+                    script_insert += f" {str(event[i])},"
+                elif type(event[i]) == str:
+                    script_insert += f" '{event[i]}',"
+                elif type(event[i]) == datetime.datetime:
+                    script_insert += f" '{event[i]}'::timestamp, "
+                else:
+                    script_insert += f" {str(event[i])},"
+            queue = get_queue(cursor)
+            post_date = get_post_date(cursor)
+            status = 'ReadyToPost'
+            script_insert += f"'{event[-1]}'::timestamp, {queue}, '{post_date}'::timestamp, '{status}',"
 
-    event_to_delete = []
-    script_insert = f"INSERT INTO {tables[3]} ({','.join(column_table_general)}, {','.join(column_table_add)}) VALUES "
-    for event in events:
-        script_insert +='('
-        for column in column_table_general:
-            if column=='event_id':
-                event_to_delete.append(event[column])
+            script_insert = script_insert[:-1] + '),'
 
-            if type(event[column]) == int:
-                script_insert += f" {str(event[column])},"
-            elif type(event[column]) == str:
-                script_insert += f" '{event[column]}',"
-            elif type(event[column]) == datetime.datetime:
-                script_insert += f" '{event[column]}'::timestamp"
-            else:
-                script_insert += f" {str(event[column])},"
-        queue = get_queue(cursor)
-        post_date = get_post_date(cursor)
-        status = 'ReadyToPost'
-        script_insert += f" {queue}, '{post_date}'::timestamp, '{status}',"
+        script_insert = script_insert[:-1]
+        print(script_insert)
+        cursor.execute(script_insert)
 
-        script_insert = script_insert[:-1] + '),'
-
-    script_insert=script_insert[:-1]
-    cursor.execute(script_insert)
-
-    delete_events = "','".join(event_to_delete)
-    script_delete = f"DELETE FROM {tables[1]} WHERE event_id in '{delete_events}'"
-    cursor.execute(script_delete)
+        delete_events = "','".join(event_to_delete)
+        print(event_to_delete)
+        print(delete_events)
+        script_delete = f"DELETE FROM {tables[1]} WHERE event_id in ('{delete_events}')"
+        cursor.execute(script_delete)
+        script_delete = f"DELETE FROM {tables[2]} WHERE event_id in ('{delete_events}')"
+        cursor.execute(script_delete)
+        conn.commit()
+    conn.close()
 
 
 def remove_old_events(table = 1, today=datetime.datetime.today()):
     conn, cursor = get_db_connection()
 
-    script = f"DELETE FROM {tables[table]} WHERE date_to<'{today}'::timestamp"
+    script = f"DELETE FROM {tables[table]} WHERE to_date<'{today}'::timestamp"
 
     cursor.execute(script)
+    conn.commit()
     conn.close()
 
 
-def next_event_to_channel():
+def next_event_to_channel(columns = column_table_general, counts='1'):
     """
     Getting next event_post (str) from table 3 (from up to down).
     """
@@ -144,19 +154,22 @@ def next_event_to_channel():
 
     conn, cursor = get_db_connection()
 
-    script = f"SELECT id, post FROM {tablename} WHERE status='ReadyToPost' ORDER BY queue LIMIT 1"
+    script = f"SELECT {', '.join(columns)} FROM {tablename} WHERE status='ReadyToPost' ORDER BY queue LIMIT {counts}"
 
     cursor.execute(script)
+    events = list()
 
-    try:
-        id, post = cursor.fetchone()
-        script_update = f"UPDATE {tablename} SET status='Posted' WHERE id={id}"
-        cursor.execute(script_update)
-    except:
-        post=None
+    db_answer = cursor.fetchall()
+    if db_answer:
+        for ans in db_answer:
+                event = Event.from_django(ans, columns)
+                events.append(event)
+                script_update = f"UPDATE {tablename} SET status='Posted' WHERE event_id='{event.event_id}'"
+                cursor.execute(script_update)
+        conn.commit()
 
     conn.close()
-    return post
+    return events
 
 
 def get_new_events(events):

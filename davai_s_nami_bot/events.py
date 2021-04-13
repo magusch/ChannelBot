@@ -185,7 +185,8 @@ def _event_id(event: NamedTuple):
 def _price(event: NamedTuple):
     return event.price
 
-
+def _address(event: NamedTuple):
+    return f"{event.place_name}, {event.adress}"
 ##
 
 
@@ -199,6 +200,7 @@ class Event:
         image=_image,
         event_id=_event_id,
         price=_price,
+        address=_address,
     )
     _tags = list(_escraper_event_parsers)
 
@@ -214,14 +216,12 @@ class Event:
             }
         )
 
-    # @classmethod
-    # def from_django(cls, event):
-    #     return cls(
-    #         **{
-    #             tag: (event)
-    #             for tag, parse_func in cls._escraper_event_parsers.items()
-    #         }
-    #     )
+    @classmethod
+    def from_django(cls, event, columns=_tags):
+        event_dict = {}
+        for i, tag in enumerate(columns):
+            event_dict[columns[i]]=event[i]
+        return cls(**event_dict)
 
     @classmethod
     def from_notion_row(
