@@ -3,7 +3,7 @@ from abc import abstractmethod
 from datetime import timedelta
 from typing import Generator, List
 
-from . import clients, database, events, notion_api, utils
+from . import clients, database, events, notion_api, utils, django
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
@@ -131,6 +131,7 @@ class MoveApproved(Task):
 
         log.info("Move approved events from table1 and table2 to table3")
         notion_api.move_approved()
+        django.move_approved()
 
 
 class IsEmptyCheck(Task):
@@ -186,10 +187,13 @@ class UpdateEvents(Task):
         log.info("Checking for existing events")
 
         new_events = notion_api.get_new_events(events)
+        new_events_django = django.get_new_events(events)
         log.info(f"New evenst count = {len(new_events)}")
+        log.info(f"New evenst count in django = {len(new_events_django)}")
 
         log.info("Updating notion table")
         notion_api.add_events(new_events, msk_today, table=table)
+        django.add_events(new_events_django, msk_today, table=1)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")

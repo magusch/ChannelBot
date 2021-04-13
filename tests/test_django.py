@@ -35,7 +35,6 @@ def test_add_to_django_dev_table_1(events):
         return
 
     event = events[0]
-    print(event)
     django.add_events(
         events=[event],
         explored_date=datetime.now(),
