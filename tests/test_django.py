@@ -17,12 +17,12 @@ from davai_s_nami_bot import clients, database, events, utils, django
     [
         events.timepad_approved_organizations(days=1),
         events.timepad_others_organizations(days=1),
-        #events.radario_others_organizations(days=1),
+        events.radario_others_organizations(days=1),
     ],
     ids=[
         "timepad_approved_organizations",
         "timepad_others_organizations",
-        #"radario_others_organizations",
+        "radario_others_organizations",
     ],
 )
 
@@ -38,7 +38,7 @@ def test_add_to_django_dev_table_1(events):
     django.add_events(
         events=[event],
         explored_date=datetime.now(),
-        table=1,
+        table=3,
     )
 
 
@@ -56,7 +56,7 @@ def test_post_event_from_dev_table3(environ_test_id):
     test_clients = clients.Clients()
 
 
-    for event_django in django.next_event_to_channel():
+    for event_django in django.next_event_to_channel(counts='3'):
         event = events.Event.from_django(event_django)
 
         if event.image:
@@ -75,6 +75,9 @@ def test_post_event_from_dev_table3(environ_test_id):
             database.remove_by_event_id(event.event_id)
 
 
+def test_delete_old_events():
+    msk_date = datetime.now()
+    django.remove_old_events(msk_date)
 
 @pytest.fixture
 def environ_test_id(monkeypatch):

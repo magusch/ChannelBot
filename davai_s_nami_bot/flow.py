@@ -2,7 +2,7 @@ import datetime
 import time
 from typing import List
 
-from . import clients, logger, notion_api, tasks
+from . import clients, logger, notion_api, tasks, django
 from .datetime_utils import STRFTIME, get_msk_today
 
 log = logger.get_logger(__file__)
@@ -20,7 +20,7 @@ class Flow:
             self._run(msk_today=msk_today)
             dev_channel.send_file(logger.LOG_FILE, mode="r+b", with_remove=True)
 
-            next_time = notion_api.next_task_time(
+            next_time = django.next_task_time(
                 msk_today=get_msk_today(replace_seconds=True)
             )
 

@@ -58,7 +58,7 @@ def test_check_event_status(
     def check_posting_datetime():
         return
 
-    monkeypatch.setattr(notion_api.table3.collection, "get_rows", get_rows)
-    monkeypatch.setattr(notion_api, "check_posting_datetime", check_posting_datetime)
+    #monkeypatch.setattr(notion_api.table3.collection, "get_rows", get_rows)
+    #monkeypatch.setattr(notion_api, "check_posting_datetime", check_posting_datetime)
 
     check_event_status.run(msk_today)
