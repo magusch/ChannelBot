@@ -1,10 +1,13 @@
 import os, datetime
+import pytz
 import psycopg2
 
 from typing import Any, List
 from .events import Event
 
 from .logger import catch_exceptions, get_logger
+
+utc_3 = pytz.timezone('Europe/Moscow')
 
 django_database_url = os.environ.get("DJANGO_DATABASE_URL")
 tables = {
@@ -23,6 +26,8 @@ column_table_add = {
     }
 
 log = get_logger(__file__)
+
+
 
 def get_db_connection():
     """
@@ -242,8 +247,8 @@ columns_for_posting_time = ['post_date', 'title', 'event_id']
 def next_posting_time(reference):
     columns = columns_for_posting_time
     posting_time = None
+    reference = reference.replace(tzinfo=utc_3)
     conn, cursor = get_db_connection()
-
     script = f"SELECT {', '.join(columns)} FROM {tables[3]} WHERE status!='Posted' ORDER BY post_date"
 
     cursor.execute(script)
@@ -260,15 +265,14 @@ def next_posting_time(reference):
             )
             # to next valid event
             continue
-
         if posting_time < reference:
             log.warn(
                 "Warning: event in table 3 have posting datetime in the past.\n"
                 f"Event title: {title}."
             )
             # skip for events that posting time in past
-            if reference.hour+3 in range(10,20):
-                posting_time = reference + datetime.timedelta(hour=1)
+            if reference.hour in range(7,18):
+                posting_time = reference + datetime.timedelta(hours=1)
         break
 
     return posting_time
@@ -276,7 +280,7 @@ def next_posting_time(reference):
 
 
 def next_updating_time(reference):
-
+    reference = reference.replace(tzinfo=utc_3)
     everyday_str = DEFAULT_UPDATING_STRFTIME
     everyday_list = everyday_str.split(":")
     hour, minute = everyday_list
@@ -287,7 +291,7 @@ def next_updating_time(reference):
 
 def next_task_time(msk_today):
     task_time = None
-
+    msk_today = msk_today.replace(tzinfo=utc_3)
     posting_time = next_posting_time(reference=msk_today)
     update_time = next_updating_time(reference=msk_today)
 
