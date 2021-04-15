@@ -284,7 +284,7 @@ def next_updating_time(reference):
     everyday_str = DEFAULT_UPDATING_STRFTIME
     everyday_list = everyday_str.split(":")
     hour, minute = everyday_list
-    update_time = reference.replace(hour=int(hour), minute=int(minute))
+    update_time = reference.replace(hour=int(hour), minute=int(minute)) + datetime.timedelta(days=1)
 
     return update_time
 
