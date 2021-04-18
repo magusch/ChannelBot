@@ -12,7 +12,7 @@ from . import database
 from . import clients
 
 
-BASE_URL = "http://127.0.0.1:8000/"
+BASE_URL = "http://dsn.4geek.ru/"
 MOVE_APPROVED_URL = BASE_URL + "events/move_approved_events/"
 REMOVE_OLD_URL = BASE_URL + "events/remove_old_events/"
 UPDATE_ALL_URL = BASE_URL + "events/update_all/"
