@@ -11,32 +11,11 @@ from . import database
 from . import events
 
 
-def format_text(text: str, style: str = "markdown"):
+def format_text(text: str, style: str = None):
     """
-    Форматирование текста с разметкой из таблицы notion.
-
-    Разметка из таблицы notion:
-        __text__ - bold
-        [text] (link) - link
-        _text_ - italic
+    Редактирование форматирования (только для ВКонтакте)
     """
-
-    if style == "markdown":  # TODO remove
-        formatted = text.replace("__", "*").replace("] (", "](").replace("_", r"\_")
-
-    elif style == "html":
-        formatted = (
-            markdown(
-                text.replace("] (", "](").replace(  # enable link
-                    "\n", "<br>"
-                )  # \n not convert to <br> in package markdown =(
-            )
-            .replace("<p>", "")  # remove paragraph tags (telegram doesn't accept this)
-            .replace("</p>", "")
-            .replace("<br>", "\n")
-        )
-
-    elif style == "vk":
+    if style == "vk":
         formatted = (
             text.replace("Где:", "🏙 Где:")
             .replace("Когда:", "⏰ Когда:")
@@ -48,13 +27,8 @@ def format_text(text: str, style: str = "markdown"):
             .replace("*", "")
         )
 
-    else:  # remove notion formating
-        formatted = (
-            text.replace("__", "")
-            .replace("] (", " (")
-            .replace(" [", " ")
-            .replace("_", "")
-        )
+    else:
+        formatted = text
 
     return formatted
 
@@ -98,12 +72,12 @@ class Telegram(BaseClient):
         dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
     )
     name = "telegram_channel"
-    formatter_style = "html"
+    formatter_style = None
 
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
-            parse_mode="html",
+            parse_mode="markdown",
         )
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
