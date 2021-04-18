@@ -7,41 +7,53 @@ from .events import Event
 
 from .logger import catch_exceptions, get_logger
 
-utc_3 = pytz.timezone('Europe/Moscow')
 
-django_database_url = os.environ.get("DJANGO_DATABASE_URL")
+utc_3 = pytz.timezone("Europe/Moscow")
+
+dsn_site_database_url = os.environ.get("DSN_SITE_DATABASE_URL")
 tables = {
-    1: 'events_eventsnotapprovednew',
-    2: 'events_eventsnotapprovedold',
-    3: 'events_events2post',
-
-    'posting_time': 'events_postingtime',
+    1: "events_eventsnotapprovednew",
+    2: "events_eventsnotapprovedold",
+    3: "events_events2post",
+    "posting_time": "events_postingtime",
 }
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
-column_table_general = ('event_id', 'title', 'post', 'image', 'url', 'price', 'from_date', 'to_date', 'address')
+column_table_general = (
+    "event_id",
+    "title",
+    "post",
+    "image",
+    "url",
+    "price",
+    "from_date",
+    "to_date",
+    "address",
+)
 column_table_add = {
-        1: ('explored_date', 'approved'),
-        3: ('explored_date', 'queue', 'post_date', 'status',),
-    }
+    1: ("explored_date", "approved"),
+    3: (
+        "explored_date",
+        "queue",
+        "post_date",
+        "status",
+    ),
+}
 
 log = get_logger(__file__)
-
 
 
 def get_db_connection():
     """
     Get database pointer.
     """
-    db_conn = psycopg2.connect(django_database_url)
+    db_conn = psycopg2.connect(dsn_sitedatabase_url)
     db_cur = db_conn.cursor()
 
     return db_conn, db_cur
 
 
-def add_events(
-    events: List[Event], explored_date: datetime, table: int = 1
-) -> None:
+def add_events(events: List[Event], explored_date: datetime, table: int = 1) -> None:
 
     for event in events:
         add_event(event, explored_date, table)
@@ -52,20 +64,20 @@ def add_event(event, explored_date, table=1):
     event = event._asdict()
     values = ""
     for column in column_table_general:
-        if type(event[column])==int:
+        if type(event[column]) == int:
             values += f" {str(event[column])},"
-        elif type(event[column])==str:
-            value = event[column].replace("'","''")
+        elif type(event[column]) == str:
+            value = event[column].replace("'", "''")
             values += f" '{value}',"
         elif type(event[column]) == datetime.datetime:
             values += f" '{event[column]}'::timestamp, "
     values += f" '{explored_date}'::timestamp,"
     if table == 1:
-        values += ' False,'
+        values += " False,"
     elif table == 3:
         queue = get_queue(cursor)
         post_date = get_post_date(cursor)
-        status = 'ReadyToPost'
+        status = "ReadyToPost"
         values += f" {queue}, '{post_date}'::timestamp, '{status}',"
 
     values = values[:-1]
@@ -79,7 +91,7 @@ def add_event(event, explored_date, table=1):
 def get_queue(cursor):
     script = f"SELECT queue FROM {tables[3]} ORDER BY queue DESC LIMIT 1"
     cursor.execute(script)
-    return cursor.fetchone()[0]+2
+    return cursor.fetchone()[0] + 2
 
 
 def get_post_date(cursor):
@@ -87,7 +99,7 @@ def get_post_date(cursor):
     cursor.execute(script)
     last_post_date = cursor.fetchone()[0]
 
-    return last_post_date + datetime.timedelta(hours=2) #TODO: BAD!!!!
+    return last_post_date + datetime.timedelta(hours=2)  # TODO: BAD!!!!
 
 
 def move_approved() -> None:
@@ -109,9 +121,9 @@ def move_approved() -> None:
         event_to_delete = []
         script_insert = f"INSERT INTO {tables[3]} ({','.join(column_table_general)}, {','.join(column_table_add[3])}) VALUES "
         for event in events:
-            script_insert +='('
+            script_insert += "("
             for i, column in enumerate(column_table_general):
-                if column=='event_id':
+                if column == "event_id":
                     event_to_delete.append(event[i])
                 if type(event[i]) == int:
                     script_insert += f" {str(event[i])},"
@@ -123,10 +135,10 @@ def move_approved() -> None:
                     script_insert += f" {str(event[i])},"
             queue = get_queue(cursor)
             post_date = get_post_date(cursor)
-            status = 'ReadyToPost'
+            status = "ReadyToPost"
             script_insert += f"'{event[-1]}'::timestamp, {queue}, '{post_date}'::timestamp, '{status}',"
 
-            script_insert = script_insert[:-1] + '),'
+            script_insert = script_insert[:-1] + "),"
 
         script_insert = script_insert[:-1]
         cursor.execute(script_insert)
@@ -140,7 +152,7 @@ def move_approved() -> None:
     conn.close()
 
 
-def remove_events(tablename = tables[3], msk_date=datetime.datetime.today()):
+def remove_events(tablename=tables[3], msk_date=datetime.datetime.today()):
     conn, cursor = get_db_connection()
 
     script = f"DELETE FROM {tablename} WHERE to_date<'{msk_date}'::timestamp"
@@ -167,7 +179,7 @@ def remove_old_events_from_table1(explored_days=7):
     conn.close()
 
 
-def next_event_to_channel(columns = column_table_general, counts='1'):
+def next_event_to_channel(columns=column_table_general, counts="1"):
     """
     Getting next event_post (str) from table 3 (from up to down).
     """
@@ -183,15 +195,15 @@ def next_event_to_channel(columns = column_table_general, counts='1'):
     db_answer = cursor.fetchall()
     if db_answer:
         for ans in db_answer:
-                event = Event.from_django(ans, columns)
-                events.append(event)
-                script_update = f"UPDATE {tablename} SET status='Posted' WHERE event_id='{event.event_id}'"
-                cursor.execute(script_update)
+            event = Event.from_dsn_site(ans, columns)
+            events.append(event)
+            script_update = f"UPDATE {tablename} SET status='Posted' WHERE event_id='{event.event_id}'"
+            cursor.execute(script_update)
         conn.commit()
 
     conn.close()
 
-    if counts=='1':
+    if counts == "1":
         return events[0]
     else:
         return events
@@ -200,7 +212,7 @@ def next_event_to_channel(columns = column_table_general, counts='1'):
 def get_new_events(events):
     existing_ids = list()
     conn, cursor = get_db_connection()
-    for table in (1,2,3):
+    for table in (1, 2, 3):
         script = f"SELECT event_id FROM {tables[table]}"
         cursor.execute(script)
 
@@ -231,7 +243,7 @@ def events_count():
 
     conn, cursor = get_db_connection()
 
-    for table in (1,2,3):
+    for table in (1, 2, 3):
         tablename = tables[table]
         script = f"SELECT count(*) FROM {tablename}"
         cursor.execute(script)
@@ -241,7 +253,7 @@ def events_count():
     return count
 
 
-columns_for_posting_time = ['post_date', 'title', 'event_id']
+columns_for_posting_time = ["post_date", "title", "event_id"]
 
 
 def next_posting_time(reference):
@@ -255,8 +267,8 @@ def next_posting_time(reference):
     events = cursor.fetchall()
 
     for event in events:
-        title = event[columns.index('title')]
-        posting_time = event[columns.index('post_date')]
+        title = event[columns.index("title")]
+        posting_time = event[columns.index("post_date")]
 
         if posting_time is None:
             log.warn(
@@ -271,12 +283,11 @@ def next_posting_time(reference):
                 f"Event title: {title}."
             )
             # skip for events that posting time in past
-            if reference.hour in range(7,18):
+            if reference.hour in range(7, 18):
                 posting_time = reference + datetime.timedelta(hours=1)
         break
 
     return posting_time
-
 
 
 def next_updating_time(reference):
@@ -284,7 +295,9 @@ def next_updating_time(reference):
     everyday_str = DEFAULT_UPDATING_STRFTIME
     everyday_list = everyday_str.split(":")
     hour, minute = everyday_list
-    update_time = reference.replace(hour=int(hour), minute=int(minute)) + datetime.timedelta(days=1)
+    update_time = reference.replace(
+        hour=int(hour), minute=int(minute)
+    ) + datetime.timedelta(days=1)
 
     return update_time
 

@@ -2,8 +2,13 @@ import datetime
 import time
 from typing import List
 
-from . import clients, logger, notion_api, tasks, django
+from . import clients
+from . import logger
+from . import notion_api
+from . import tasks
+from . import dsn_site
 from .datetime_utils import STRFTIME, get_msk_today
+
 
 log = logger.get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -20,7 +25,7 @@ class Flow:
             self._run(msk_today=msk_today)
             dev_channel.send_file(logger.LOG_FILE, mode="r+b", with_remove=True)
 
-            next_time = django.next_task_time(
+            next_time = dsn_site.next_task_time(
                 msk_today=get_msk_today(replace_seconds=True)
             )
 

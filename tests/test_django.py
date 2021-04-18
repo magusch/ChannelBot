@@ -1,5 +1,5 @@
 """
-Test all interactions with django database from each parser events.
+Test all interactions with dsn_site database from each parser events.
 """
 import os
 from collections import namedtuple
@@ -10,7 +10,8 @@ import psycopg2
 import pytest
 
 import davai_s_nami_bot
-from davai_s_nami_bot import clients, database, events, utils, django
+from davai_s_nami_bot import clients, database, events, utils, dsn_site
+
 
 @pytest.mark.parametrize(
     "events",
@@ -25,9 +26,7 @@ from davai_s_nami_bot import clients, database, events, utils, django
         "radario_others_organizations",
     ],
 )
-
-
-def test_add_to_django_dev_table_1(events):
+def test_add_to_dsn_site_dev_table_1(events):
     """
     Add 1 event from each parser to notion table 3.
     """
@@ -35,7 +34,7 @@ def test_add_to_django_dev_table_1(events):
         return
 
     event = events[0]
-    django.add_events(
+    dsn_site.add_events(
         events=[event],
         explored_date=datetime.now(),
         table=3,
@@ -46,7 +45,7 @@ def test_move_approved():
     """
     Required events in dev table 1 (from test 'test_add_to_notion_dev_table_1')
     """
-    django.move_approved()
+    dsn_site.move_approved()
 
 
 def test_post_event_from_dev_table3(environ_test_id):
@@ -55,16 +54,15 @@ def test_post_event_from_dev_table3(environ_test_id):
     """
     test_clients = clients.Clients()
 
-
-    for event_django in django.next_event_to_channel(counts='3'):
-        event = events.Event.from_django(event_django)
+    for event_dsn_site in dsn_site.next_event_to_channel(counts="3"):
+        event = events.Event.from_dsn_site(event_dsn_site)
 
         if event.image:
             image_path = utils.prepare_image(event.image)
         elif event.post:
             return
         else:
-            image_path=None
+            image_path = None
 
         if event.event_id in database.get_all()["id"].values:
             with pytest.raises(psycopg2.errors.UniqueViolation):
@@ -77,7 +75,8 @@ def test_post_event_from_dev_table3(environ_test_id):
 
 def test_delete_old_events():
     msk_date = datetime.now()
-    django.remove_old_events(msk_date)
+    dsn_site.remove_old_events(msk_date)
+
 
 @pytest.fixture
 def environ_test_id(monkeypatch):

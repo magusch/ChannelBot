@@ -6,6 +6,7 @@ import PIL
 import requests
 from PIL import Image
 
+
 CONSTANTS_FILE_NAME = "prod_constants"
 WEEKNAMES = {
     0: "Пн",
@@ -52,7 +53,7 @@ REQUIRED_CONSTANT_NAMES = [
     "VK_DEV_GROUP_ID",
     "VK_ALBUM_ID",
     "VK_DEV_ALBUM_ID",
-    "DJANGO_DATABASE_URL",
+    "DSN_SITE_DATABASE_URL",
 ]
 
 

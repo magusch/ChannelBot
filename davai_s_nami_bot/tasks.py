@@ -3,9 +3,15 @@ from abc import abstractmethod
 from datetime import timedelta
 from typing import Generator, List
 
-from . import clients, database, events, notion_api, utils, django
+from . import clients
+from . import database
+from . import events
+from . import notion_api
+from . import utils
+from . import dsn_site
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
+
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -126,16 +132,22 @@ class CheckEventStatus(Task):
 
 
 class MoveApproved(Task):
-    def run(self, msk_today: datetime.datetime, *args) -> None:
-        log.info("Move approved events from table1 and table2 to table3")
-        django.move_approved()
+    """
+    Перемещение выбранных меропритяий из таблиц 1 и 2 в таблицу 3.
+    """
+
+    def run(self) -> None:
+        clients._requests_get(
+            url="",
+            params=dict(),
+        )
 
 
 class IsEmptyCheck(Task):
     def run(self, msk_today: datetime.datetime) -> None:
         log.info("Check for available events in table 3")
 
-        not_published_count = django.not_published_count()
+        not_published_count = dsn_site.not_published_count()
         text = None
 
         if not_published_count == 1:
@@ -155,7 +167,7 @@ class PostingEvent(Task):
     def run(self, msk_today: datetime.datetime) -> None:
         log.info("Check posting status")
 
-        event = django.next_event_to_channel()
+        event = dsn_site.next_event_to_channel()
 
         if event is not None:
             image_path = utils.prepare_image(event.image)
@@ -165,14 +177,14 @@ class PostingEvent(Task):
             log.info("Skipping posting time")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
-        posting_time = django.next_posting_time(msk_today)
+        posting_time = dsn_site.next_posting_time(msk_today)
         return posting_time is not None and msk_today == posting_time
 
 
 class UpdateEvents(Task):
     def _remove_old(self, msk_today: datetime.datetime) -> None:
         log.info("Removing old events")
-        django.remove_old_events(msk_today + timedelta(hours=1))
+        dsn_site.remove_old_events(msk_today + timedelta(hours=1))
         database.remove(msk_today + timedelta(hours=1))
 
     def _update_events(
@@ -183,11 +195,11 @@ class UpdateEvents(Task):
     ) -> None:
         log.info("Checking for existing events")
 
-        new_events = django.get_new_events(events)
+        new_events = dsn_site.get_new_events(events)
         log.info(f"New events count = {len(new_events)}")
 
         log.info("Updating notion table")
-        django.add_events(new_events, msk_today, table=table)
+        dsn_site.add_events(new_events, msk_today, table=table)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")
@@ -206,12 +218,12 @@ class UpdateEvents(Task):
 
         self._update_events(other_events, msk_today, table=1)
 
-        django_count = django.events_count()
+        dsn_site_count = dsn_site.events_count()
 
-        log.info(f"Events count in notion table: {django_count}")
+        log.info(f"Events count in notion table: {dsn_site_count}")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
-        updating_time = django.next_updating_time(msk_today)
+        updating_time = dsn_site.next_updating_time(msk_today)
 
         return updating_time is not None and msk_today == updating_time
 
@@ -219,7 +231,7 @@ class UpdateEvents(Task):
 def get_edges() -> List[Task]:
     return [
         MoveApproved(),
-        #CheckEventStatus(),
+        # CheckEventStatus(),
         IsEmptyCheck(),
         PostingEvent(),
         UpdateEvents(),

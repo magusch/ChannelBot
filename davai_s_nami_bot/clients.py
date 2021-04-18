@@ -7,7 +7,8 @@ import requests
 from markdown import markdown
 from telebot import TeleBot
 
-from . import database, events
+from . import database
+from . import events
 
 
 def format_text(text: str, style: str = "markdown"):
@@ -117,7 +118,9 @@ class Telegram(BaseClient):
             disable_web_page_preview=True,
         )
 
-    def send_image(self, text: str, image_path: str, *, destination_id: Union[int, str]):
+    def send_image(
+        self, text: str, image_path: str, *, destination_id: Union[int, str]
+    ):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
                 chat_id=destination_id,

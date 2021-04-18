@@ -12,6 +12,7 @@ from notion.collection import CollectionRowBlock
 from . import utils
 from .logger import catch_exceptions
 
+
 BAD_KEYWORDS = (
     "вебинар",
     "видеотренинг",
@@ -185,9 +186,9 @@ def _event_id(event: NamedTuple):
 def _price(event: NamedTuple):
     return event.price
 
+
 def _address(event: NamedTuple):
     return f"{event.place_name}, {event.adress}"
-##
 
 
 class Event:
@@ -217,10 +218,10 @@ class Event:
         )
 
     @classmethod
-    def from_django(cls, event, columns=_tags):
+    def from_dsn_site(cls, event, columns=_tags):
         event_dict = {}
         for i, tag in enumerate(columns):
-            event_dict[columns[i]]=event[i]
+            event_dict[columns[i]] = event[i]
         return cls(**event_dict)
 
     @classmethod
@@ -248,7 +249,9 @@ def not_approved_organization_filter(events: List[Event]):
         if (
             event is None
             or "финанс" in event.title.lower()
-            or (event.to_date is not None and event.to_date - event.from_date > two_days)
+            or (
+                event.to_date is not None and event.to_date - event.from_date > two_days
+            )
             or event.image is None
         ):
             continue
@@ -264,7 +267,9 @@ def _get_events(
 ) -> List[Event]:
     events = parser.get_events(*args, **kwargs)
 
-    return [Event.from_escraper(event) for event in events if event.is_registration_open]
+    return [
+        Event.from_escraper(event) for event in events if event.is_registration_open
+    ]
 
 
 def from_approved_organizations(days: int) -> List[Event]:

@@ -41,7 +41,9 @@ notion_client = NotionClient(token_v2=os.environ.get("NOTION_TOKEN_V2"))
 table1 = notion_client.get_block(os.environ.get("NOTION_TABLE1_URL"))
 table2 = notion_client.get_block(os.environ.get("NOTION_TABLE2_URL"))
 table3 = notion_client.get_block(os.environ.get("NOTION_TABLE3_URL"))
-posting_times_table = notion_client.get_block(os.environ.get("NOTION_POSTING_TIMES_URL"))
+posting_times_table = notion_client.get_block(
+    os.environ.get("NOTION_POSTING_TIMES_URL")
+)
 everyday_times = notion_client.get_block(os.environ.get("NOTION_EVERYDAY_TIMES_URL"))
 
 log = get_logger(__file__)
@@ -333,7 +335,9 @@ def next_posting_time(reference):
 
             posting_time = notion_date.start
 
-            if not isinstance(posting_time, datetime) and isinstance(posting_time, date):
+            if not isinstance(posting_time, datetime) and isinstance(
+                posting_time, date
+            ):
                 log.warn(
                     f"For event {row.get_property('Title')!r} "
                     "posting datetime without hour and minute. "
