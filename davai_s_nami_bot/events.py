@@ -237,7 +237,7 @@ class Event:
         # FIXME отладить работу
         event_dict = {}
         for i, tag in enumerate(columns):
-            event_dict[columns[i]] = event[i]
+            event_dict[tag] = data[tag]
         return cls(**event_dict)
 
     @classmethod

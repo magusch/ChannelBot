@@ -112,34 +112,25 @@ def fill_empty_post_time():
     _current_session_get(url=FILL_EMPTY_POST_TIME_URL)
 
 
-def next_event_to_channel(columns=column_table_general, counts="1"):
+def next_event_to_channel():
     """
-    Getting next event_post (str) from table 3 (from up to down).
+    Первое подходящее мероприятие из таблицы 3 для постинга в канал.
+
+    Критерии поиска мероприятия:
+    - Поиск происходит от по возрастанию значения `queue`
+    - Значение поля `status` равное `ReadyToPost`
+    - Наличие значения в поле `post_date` (равное текущему времени)
     """
-    tablename = tables[3]
+    events = database.get_all(table="events_events2post")
 
-    conn, cursor = get_db_connection()
+    event = Event.from_database(
+        events[events["status"] == "ReadyToPost"].sort_values("queue").iloc[0, :]
+    )
+    database.set_status(
+        table="events_events2post", event_id=event.event_id, status="Posted"
+    )
 
-    script = f"SELECT {', '.join(columns)} FROM {tablename} WHERE status='ReadyToPost' ORDER BY queue LIMIT {counts}"
-
-    cursor.execute(script)
-    events = list()
-
-    db_answer = cursor.fetchall()
-    if db_answer:
-        for ans in db_answer:
-            event = Event.from_dsn_site(ans, columns)
-            events.append(event)
-            script_update = f"UPDATE {tablename} SET status='Posted' WHERE event_id='{event.event_id}'"
-            cursor.execute(script_update)
-        conn.commit()
-
-    conn.close()
-
-    if counts == "1":
-        return events[0]
-    else:
-        return events
+    return event
 
 
 def get_new_events(events: List[Event]) -> List[Event]:

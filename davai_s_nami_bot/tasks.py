@@ -166,22 +166,21 @@ class PostingEvent(Task):
         self._clients = clients.Clients()
 
     def run(self, msk_today: datetime.datetime) -> None:
-        pass
-        # log.info("Check posting status")
+        log.info("Check posting status")
 
-        # event = dsn_site.next_event_to_channel()
+        event = dsn_site.next_event_to_channel()
 
-        # if event is not None:
-        #     image_path = utils.prepare_image(event.image)
-        #     self._clients.send_post(event=event, image_path=image_path)
+        if event is not None:
+            image_path = utils.prepare_image(event.image)
+            self._clients.send_post(event=event, image_path=image_path)
 
-        # else:
-        #     log.info("Skipping posting time")
+        else:
+            log.info("Skipping posting time")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
         return True
-        # posting_time = dsn_site.next_posting_time(msk_today)
-        # return posting_time is not None and msk_today == posting_time
+        posting_time = dsn_site.next_posting_time(msk_today)
+        return posting_time is not None and msk_today == posting_time
 
 
 class UpdateEvents(Task):

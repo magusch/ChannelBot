@@ -16,6 +16,7 @@ __all__ = (
     "get_from_all_tables",
     "remove",
     "remove_by_event_id",
+    "set_status",
 )
 
 TAGS = [
@@ -163,8 +164,9 @@ def add(event: Event, table: str) -> None:
     ]
 
     # FIXME
-    # - для таблицы 1 и 2 дополнительное поле `Approved` [False]
-    # - для таблицы 3 дополнительное поле `Status` [ReadyToPost]
+    # - для таблицы 1 и 2 дополнительное поле `approved` [default `False`]
+    # - для таблицы 1 и 2 дополнительное поле `explored_date`
+    # - для таблицы 3 дополнительное поле `status` [default `ReadyToPost`]
     # - для таблицы 3 дополнительное поле `queue`
 
     _insert(script, data)
@@ -188,7 +190,17 @@ def remove_by_event_id(event_id: str) -> None:
 
 def remove_by_title(title: str) -> None:
     script = sql.SQL("DELETE FROM {table} WHERE title = %s").format(
-        table=TABLE_NAME,
+        table=sql.Identifier(TABLE_NAME),
     )
 
     _insert(script, (title,))
+
+
+def set_status(table: str, event_id: str, status: str) -> None:
+    check_table(table)
+
+    script = sql.SQL(
+        "UPDATE {table} SET status = %s WHERE event_id = %s"
+    ).format(table=sql.Identifier(table))
+
+    _insert(script, data=(status, event_id))
