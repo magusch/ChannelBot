@@ -218,7 +218,23 @@ class Event:
         )
 
     @classmethod
-    def from_dsn_site(cls, event, columns=_tags):
+    def from_database(cls, data: tuple, columns=_tags):
+        """
+        Создание объекта `Event` из записи базы данных.
+
+        Parameters
+        ----------
+        data : tuple
+            Строчка данных из базы данных
+
+        columns : iterable
+            Список из параметров мероприятия
+
+        Returns
+        -------
+        Event : Объект Event
+        """
+        # FIXME отладить работу
         event_dict = {}
         for i, tag in enumerate(columns):
             event_dict[columns[i]] = event[i]

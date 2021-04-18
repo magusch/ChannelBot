@@ -1,19 +1,15 @@
 import pendulum
-import pytz
 
 
 STRFTIME = "%Y-%m-%dT%H:%M:%S"
 
-utc_3 = pytz.timezone("Europe/Moscow")
-
-
 def get_msk_today(replace_seconds=False):
-    params = dict(tzinfo=utc_3)
+    params = dict()
 
     if replace_seconds:
-        params["second"] = 00
-        params["microsecond"] = 00
+        params.update(dict(
+            second=0,
+            microsecond=0,
+        ))
 
-    utc_today = pendulum.now("utc")
-
-    return utc_today.in_timezone("Europe/Moscow").replace(**params)
+    return pendulum.now("Europe/Moscow").replace(**params)
