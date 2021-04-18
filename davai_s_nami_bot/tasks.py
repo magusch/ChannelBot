@@ -135,26 +135,30 @@ class MoveApproved(Task):
     """
     Перемещение выбранных меропритяий из таблиц 1 и 2 в таблицу 3.
     """
+
     def run(self, *args) -> None:
+        log.info("Move approved events")
         dsn_site.move_approved()
+
+        log.info("Fill empty post time")
+        dsn_site.fill_empty_post_time()
 
 
 class IsEmptyCheck(Task):
     def run(self, msk_today: datetime.datetime) -> None:
-        pass
-        # log.info("Check for available events in table 3")
+        log.info("Check for available events in table 3")
 
-        # not_published_count = dsn_site.not_published_count()
-        # text = None
+        not_published_count = dsn_site.not_published_count()
+        text = None
 
-        # if not_published_count == 1:
-        #     text = "Warning: posting last event."
+        if not_published_count == 1:
+            text = "Warning: posting last event."
 
-        # elif not_published_count == 0:
-        #     text = "Warning: not found events for posting."
+        elif not_published_count == 0:
+            text = "Warning: not found events for posting."
 
-        # if text:
-        #     dev_channel.send_text(text)
+        if text:
+            dev_channel.send_text(text)
 
 
 class PostingEvent(Task):
@@ -197,8 +201,8 @@ class UpdateEvents(Task):
         new_events = dsn_site.get_new_events(events)
         log.info(f"New events count = {len(new_events)}")
 
-        log.info("Updating notion table")
-        dsn_site.add_events(new_events, msk_today, table=table)
+        log.info("Updating database")
+        database.add_events(new_events)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         pass

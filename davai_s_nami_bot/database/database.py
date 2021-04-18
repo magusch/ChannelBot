@@ -9,7 +9,14 @@ from psycopg2 import sql
 from ..events import Event
 
 
-__all__ = ("add", "get_all", "remove", "remove_by_event_id")
+__all__ = (
+    "add",
+    "add_events",
+    "get_all",
+    "get_from_all_tables",
+    "remove",
+    "remove_by_event_id",
+)
 
 TAGS = [
     "event_id",
@@ -113,12 +120,22 @@ def get_all(table: str) -> pd.DataFrame:
     return _get_dataframe(script)
 
 
+def get_from_all_tables() -> pd.DataFrame:
+    return pd.concat(
+        [
+            get_all(table="events_eventsnotapprovednew"),
+            get_all(table="events_eventsnotapprovedold"),
+            get_all(table="events_events2post"),
+        ]
+    )
+
+
 def check_table(table: str):
     if table not in TABLES:
         raise ValueError(f"Unknown table name: {table}")
 
 
-def add_events(events: List[Event], table: str) -> None:
+def add_events(events: List[Event], table: str = "events_eventsnotapprovednew") -> None:
     for event in events:
         add(event, table)
 
@@ -148,6 +165,7 @@ def add(event: Event, table: str) -> None:
     # FIXME
     # - для таблицы 1 и 2 дополнительное поле `Approved` [False]
     # - для таблицы 3 дополнительное поле `Status` [ReadyToPost]
+    # - для таблицы 3 дополнительное поле `queue`
 
     _insert(script, data)
 

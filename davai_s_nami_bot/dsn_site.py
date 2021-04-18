@@ -16,6 +16,7 @@ BASE_URL = "http://dsn.4geek.ru/"
 MOVE_APPROVED_URL = BASE_URL + "events/move_approved_events/"
 REMOVE_OLD_URL = BASE_URL + "events/remove_old_events/"
 UPDATE_ALL_URL = BASE_URL + "events/update_all/"
+FILL_EMPTY_POST_TIME_URL = BASE_URL + "events/fill_empty_post_time/"
 CSRFTOKEN = None
 SESSION_ID = None
 
@@ -107,6 +108,10 @@ def remove_events():
     _current_session_get(url=REMOVE_OLD_URL)
 
 
+def fill_empty_post_time():
+    _current_session_get(url=FILL_EMPTY_POST_TIME_URL)
+
+
 def next_event_to_channel(columns=column_table_general, counts="1"):
     """
     Getting next event_post (str) from table 3 (from up to down).
@@ -137,33 +142,18 @@ def next_event_to_channel(columns=column_table_general, counts="1"):
         return events
 
 
-def get_new_events(events):
-    existing_ids = list()
-    conn, cursor = get_db_connection()
-    for table in (1, 2, 3):
-        script = f"SELECT event_id FROM {tables[table]}"
-        cursor.execute(script)
+def get_new_events(events: List[Event]) -> List[Event]:
+    all_events = database.get_from_all_tables()
 
-        existing_ids += [event_id[0] for event_id in cursor.fetchall()]
+    new_ids = set(all_events["event_id"]) - set([i.event_id for i in events])
 
-    new_events = list()
-    for event in events:
-        if event.event_id not in existing_ids:
-            new_events.append(event)
-
-    return new_events
+    return [i for i in events if i.event_id in new_ids]
 
 
 def not_published_count():
-    conn, cursor = get_db_connection()
+    events = database.get_all(table="events_events2post")
 
-    script = f"SELECT count(*) FROM {tables[3]} WHERE status!='Posted'  "
-
-    cursor.execute(script)
-    count = cursor.fetchone()[0]
-    cursor.close()
-
-    return count
+    return len(events[events["status"] == "ReadyToPost"])
 
 
 def events_count():
@@ -191,7 +181,7 @@ def next_posting_time(reference):
 
     if pd.isnull(events_to_post["post_date"]).any():
         log.warn("Some events have not posting datetime.")
-        events_to_post  = events_to_post[~pd.isnull(events_to_post["post_date"])]
+        events_to_post = events_to_post[~pd.isnull(events_to_post["post_date"])]
 
     if len(events_to_post) == 0:
         return None
