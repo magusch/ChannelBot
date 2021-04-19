@@ -29,8 +29,6 @@ jobs:
         CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         DEV_CHANNEL_ID: ${{ secrets.DEV_CHANNEL_ID }}
         VK_TOKEN: ${{ secrets.VK_TOKEN }}
-        VK_ALBUM_ID: ${{ secrets.VK_ALBUM_ID }}
-        VK_DEV_ALBUM_ID: ${{ secrets.VK_DEV_ALBUM_ID }}
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}

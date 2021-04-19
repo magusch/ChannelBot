@@ -42,8 +42,6 @@ REQUIRED_CONSTANT_NAMES = [
     "VK_USER_ID",
     "VK_GROUP_ID",
     "VK_DEV_GROUP_ID",
-    "VK_ALBUM_ID",
-    "VK_DEV_ALBUM_ID",
     "DSN_USERNAME",
     "DSN_PASSWORD",
 ]
