@@ -4,7 +4,6 @@ from typing import List
 
 from . import clients
 from . import logger
-from . import notion_api
 from . import tasks
 from . import dsn_site
 from .datetime_utils import STRFTIME, get_msk_today

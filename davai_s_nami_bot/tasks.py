@@ -6,7 +6,6 @@ from typing import Generator, List
 from . import clients
 from . import database
 from . import events
-from . import notion_api
 from . import utils
 from . import dsn_site
 from .exceptions import PostingDatetimeError

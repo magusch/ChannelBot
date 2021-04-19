@@ -21,30 +21,8 @@ UPDATE_ALL_URL = BASE_URL + "events/update_all/"
 FILL_EMPTY_POST_TIME_URL = BASE_URL + "events/fill_empty_post_time/"
 CSRFTOKEN = None
 SESSION_ID = None
-
-column_table_general = (
-    "event_id",
-    "title",
-    "post",
-    "image",
-    "url",
-    "price",
-    "from_date",
-    "to_date",
-    "address",
-)
-dsn_site_database_url = os.environ.get("DSN_SITE_DATABASE_URL")
-tables = {
-    1: "events_eventsnotapprovednew",
-    2: "events_eventsnotapprovedold",
-    3: "events_events2post",
-    "posting_time": "events_postingtime",
-}
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
-utc_3 = pytz.timezone("Europe/Moscow")
-
-DEFAULT_UPDATING_STRFTIME = "00:00"
 log = get_logger(__file__)
 
 

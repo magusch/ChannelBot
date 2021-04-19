@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
-from notion.collection import CollectionRowBlock
 
 from . import utils
 from .logger import catch_exceptions
@@ -239,18 +238,6 @@ class Event:
         for i, tag in enumerate(columns):
             event_dict[tag] = data[tag]
         return cls(**event_dict)
-
-    @classmethod
-    def from_notion_row(
-        cls, notion_row: CollectionRowBlock, get_property_func: Callable = None
-    ):
-        if get_property_func is None:
-            get_property_func = notion_row.get_property
-
-        else:
-            get_property_func = partial(get_property_func, notion_row)
-
-        return cls(**{tag: get_property_func(tag) for tag in cls._tags})
 
 
 def not_approved_organization_filter(events: List[Event]):

@@ -31,7 +31,7 @@ TAGS = [
     "to_date",
     "explored_date",
 ]
-DATABASE_URL = os.environ.get("DSN_SITE_DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 TABLES = [
     "events_eventsnotapprovednew",  # TODO wtf with table names!?
     "events_eventsnotapprovedold",
