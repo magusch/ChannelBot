@@ -1,2 +1,10 @@
 # flake8: noqa: F401
-from .database import add, add_events, get_all, remove, remove_by_event_id, set_status
+from .database import (
+    add,
+    add_events,
+    get_all,
+    get_from_all_tables,
+    remove,
+    remove_by_event_id,
+    set_status,
+)

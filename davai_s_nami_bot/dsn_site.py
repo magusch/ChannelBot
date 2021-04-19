@@ -5,6 +5,7 @@ from typing import Any, List
 import psycopg2
 import requests
 import pandas as pd
+from fake_useragent import UserAgent
 
 from .events import Event
 from .logger import catch_exceptions, get_logger
@@ -12,7 +13,8 @@ from . import database
 from . import clients
 
 
-BASE_URL = "http://dsn.4geek.ru/"
+BASE_URL = "http://127.0.0.1:8000/"
+CHECK_EVENT_STATUS_URL = BASE_URL + "events/check_event_status/"
 MOVE_APPROVED_URL = BASE_URL + "events/move_approved_events/"
 REMOVE_OLD_URL = BASE_URL + "events/remove_old_events/"
 UPDATE_ALL_URL = BASE_URL + "events/update_all/"
@@ -56,15 +58,16 @@ def create_session():
         password=os.environ.get("DSN_PASSWORD"),
         next=BASE_URL,
     )
+    headers = {"User-Agent": UserAgent().random}
 
     session = requests.session()
-    session.get(login_url)
+    session.get(login_url, headers=headers)
 
     CSRFTOKEN = session.cookies["csrftoken"]
 
     login_data["csrfmiddlewaretoken"] = CSRFTOKEN
 
-    response = session.post(login_url, data=login_data)
+    response = session.post(login_url, data=login_data, headers=headers)
 
     SESSION_ID = session.cookies["sessionid"]
 
@@ -100,11 +103,15 @@ def get_post_date(cursor):
     return last_post_date + datetime.timedelta(hours=2)  # TODO: BAD!!!!
 
 
+def check_event_status():
+    _current_session_get(url=CHECK_EVENT_STATUS_URL)
+
+
 def move_approved():
     _current_session_get(url=MOVE_APPROVED_URL)
 
 
-def remove_events():
+def remove_old():
     _current_session_get(url=REMOVE_OLD_URL)
 
 
@@ -136,9 +143,9 @@ def next_event_to_channel():
 def get_new_events(events: List[Event]) -> List[Event]:
     all_events = database.get_from_all_tables()
 
-    new_ids = set(all_events["event_id"]) - set([i.event_id for i in events])
+    new_ids = set([i.event_id for i in events]) - set(all_events["event_id"])
 
-    return [i for i in events if i.event_id in new_ids]
+    return [i for i in set(events) if i.event_id in new_ids]
 
 
 def not_published_count():

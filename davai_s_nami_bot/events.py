@@ -346,17 +346,21 @@ def get_timepad_events(
         request_params["cities"] += ", Без города"
 
     # for getting all events (max limit 100)
+    event_ids = set()
     new_events = list()
     count = 0
     new_count = 1
     while new_count > 0:
         request_params["skip"] = count
 
-        new = _get_events(
+        _new = _get_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
         )
+        new = [i for i in _new if i.event_id not in event_ids]
+        event_ids.update([i.event_id for i in _new])
+
         new_count = len(new)
 
         new_events += new
@@ -367,7 +371,7 @@ def get_timepad_events(
     if events_filter:
         new_events = events_filter(new_events)
 
-    return unique(new_events)  # checking for unique -- just in case
+    return new_events
 
 
 def get_radario_events(
@@ -397,7 +401,3 @@ def get_radario_events(
         new_events = events_filter(new_events)
 
     return unique(new_events)
-
-
-def unique(events: List[Event]) -> List[Event]:
-    return list(set(events))

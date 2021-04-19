@@ -127,8 +127,18 @@ def get_from_all_tables() -> pd.DataFrame:
             get_all(table="events_eventsnotapprovednew"),
             get_all(table="events_eventsnotapprovedold"),
             get_all(table="events_events2post"),
-        ]
+        ],
+        sort=False,
     )
+
+
+def rows_number(table: str) -> int:
+    check_table(table)
+
+    script = sql.SQL("SELECT count(*) FROM {table}").format(table=sql.Identifier(table))
+    count = _get_dataframe(script)
+
+    return count.loc[0, "count"]
 
 
 def check_table(table: str):
@@ -146,7 +156,7 @@ def add(event: Event, table: str) -> None:
 
     script = sql.SQL(
         "INSERT INTO {table} ({fields}) values "
-        "(%s, %s, %s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
+        "(%s, %s, %s, %s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
     ).format(
         table=sql.Identifier(table),
         fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in TAGS]),
@@ -155,6 +165,7 @@ def add(event: Event, table: str) -> None:
     data = [
         event.event_id,
         event.title,
+        event.post,
         event.image,
         event.url,
         event.price,
@@ -199,8 +210,8 @@ def remove_by_title(title: str) -> None:
 def set_status(table: str, event_id: str, status: str) -> None:
     check_table(table)
 
-    script = sql.SQL(
-        "UPDATE {table} SET status = %s WHERE event_id = %s"
-    ).format(table=sql.Identifier(table))
+    script = sql.SQL("UPDATE {table} SET status = %s WHERE event_id = %s").format(
+        table=sql.Identifier(table)
+    )
 
     _insert(script, data=(status, event_id))
