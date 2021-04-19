@@ -26,9 +26,10 @@ TAGS = [
     "image",
     "url",
     "price",
+    "address",
     "from_date",
     "to_date",
-    "address",
+    "explored_date",
 ]
 DATABASE_URL = os.environ.get("DSN_SITE_DATABASE_URL")
 TABLES = [
@@ -146,33 +147,90 @@ def check_table(table: str):
         raise ValueError(f"Unknown table name: {table}")
 
 
-def add_events(events: List[Event], table: str = "events_eventsnotapprovednew") -> None:
-    for event in events:
-        add(event, table)
-
-
-def add(event: Event, table: str) -> None:
-    check_table(table)
-
+def get_last_queue_value(table: str) -> int:
     script = sql.SQL(
-        "INSERT INTO {table} ({fields}) values "
-        "(%s, %s, %s, %s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
+        "SELECT queue FROM {table} WHERE status = 'ReadyToPost' ORDER BY queue DESC LIMIT 1"
     ).format(
         table=sql.Identifier(table),
-        fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in TAGS]),
     )
+
+    queue = _get_dataframe(script)
+
+    if queue.empty:
+        return 0
+
+    return queue.loc[0, "queue"]
+
+
+def add_events(
+    events: List[Event],
+    explored_date: datetime,
+    table: str = "events_eventsnotapprovednew",
+    queue_increase=2,
+) -> None:
+    queue_value = None
+
+    if table == "events_events2post":
+        value = int(get_last_queue_value(table))
+
+        def func(value=value, queue_increase=queue_increase):
+            while True:
+                value += queue_increase
+                yield value
+
+        queue_value = func()
+
+        params = dict(status="ReadyToPost")
+
+    else:
+        queue_value = None
+        params = dict(approved=False)
+
+    for event in events:
+        add(event, table, explored_date, queue_value, constant_params=params)
+
+
+def add(
+    event: Event,
+    table: str,
+    explored_date: datetime,
+    queue_value: int = None,
+    constant_params: dict = None,
+) -> None:
+    check_table(table)
 
     data = [
         event.event_id,
         event.title,
         event.post,
-        event.image,
+        event.image or "",
         event.url,
         event.price,
-        getattr(event.from_date, "start", None),
-        getattr(event.to_date, "start", None),
         event.address,
+        event.from_date,
+        event.to_date,
+        explored_date,
     ]
+
+    tags = TAGS[:]
+    if queue_value:
+        tags.insert(0, "queue")
+        data.insert(0, next(queue_value))
+
+    if constant_params:
+        for tag, value in constant_params.items():
+            tags.insert(0, tag)
+            data.insert(0, value)
+
+    script = sql.SQL(
+        "INSERT INTO {table} ({fields}) values "
+        "({placeholders}, "
+        "cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
+    ).format(
+        table=sql.Identifier(table),
+        fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in tags]),
+        placeholders=sql.SQL(", ").join([sql.SQL("%s") for tag in tags[:-3]]),
+    )
 
     # FIXME
     # - для таблицы 1 и 2 дополнительное поле `approved` [default `False`]

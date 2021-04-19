@@ -88,13 +88,18 @@ class PostingEvent(Task):
 
 
 class UpdateEvents(Task):
-    def _update_events(self, events: List[events.Event], table: str) -> None:
+    def _update_events(
+        self, events: List[events.Event], table: str, msk_today: datetime
+    ) -> None:
         log.info("Checking for existing events")
         new_events = dsn_site.get_new_events(events)
         log.info(f"New events count = {len(new_events)}")
 
         log.info("Updating database")
-        database.add_events(new_events, table=table)
+        database.add_events(new_events, explored_date=msk_today, table=table)
+
+        log.info("Fill empty post time")
+        dsn_site.fill_empty_post_time()
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")
@@ -106,19 +111,27 @@ class UpdateEvents(Task):
         approved_events = events.from_approved_organizations(days=7)
         log.info(f"Collected {len(approved_events)} approved events.")
 
-        self._update_events(approved_events, table="events_events2post")
+        self._update_events(
+            approved_events,
+            table="events_events2post",
+            msk_today=msk_today,
+        )
 
         log.info("Getting new events from other organizations for next 7 days")
         other_events = events.from_not_approved_organizations(days=7)
         log.info(f"Collected {len(other_events)} events")
 
-        self._update_events(other_events, table="events_eventsnotapprovednew")
+        self._update_events(
+            other_events,
+            table="events_eventsnotapprovednew",
+            msk_today=msk_today,
+        )
 
         events_count = sum(
             [
-                dsn_site.events_count(table="events_eventsnotapprovednew"),
-                dsn_site.events_count(table="events_eventsnotapprovedold"),
-                dsn_site.events_count(table="events_events2post"),
+                database.rows_number(table="events_eventsnotapprovednew"),
+                database.rows_number(table="events_eventsnotapprovedold"),
+                database.rows_number(table="events_events2post"),
             ]
         )
 

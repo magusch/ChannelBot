@@ -114,7 +114,7 @@ def _post(event: NamedTuple):
         "\n\n"
         f"**Где:** {event.place_name}, {event.adress} \n"
         f"**Когда:** {date_from_to} \n"
-        f"**Вход:** [{event.price}] ({event.url})"
+        f"**Вход:** [{event.price}]({event.url})"
     )
 
     return title + post_text + footer
@@ -400,4 +400,4 @@ def get_radario_events(
     if events_filter:
         new_events = events_filter(new_events)
 
-    return unique(new_events)
+    return new_events
