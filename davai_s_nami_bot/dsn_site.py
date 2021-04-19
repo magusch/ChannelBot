@@ -26,6 +26,10 @@ DEFAULT_UPDATING_STRFTIME = "00:00"
 log = get_logger(__file__)
 
 
+def _headers():
+    return {"User-Agent": UserAgent().random}
+
+
 def create_session():
     global CSRFTOKEN
     global SESSION_ID
@@ -36,16 +40,14 @@ def create_session():
         password=os.environ.get("DSN_PASSWORD"),
         next=BASE_URL,
     )
-    headers = {"User-Agent": UserAgent().random}
-
     session = requests.session()
-    session.get(login_url, headers=headers)
+    session.get(login_url, headers=_headers())
 
     CSRFTOKEN = session.cookies["csrftoken"]
 
     login_data["csrfmiddlewaretoken"] = CSRFTOKEN
 
-    response = session.post(login_url, data=login_data, headers=headers)
+    response = session.post(login_url, data=login_data, headers=_headers())
 
     SESSION_ID = session.cookies["sessionid"]
 
@@ -58,27 +60,7 @@ def _current_session_get(url):
     session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
     session.cookies["sessionid"] = SESSION_ID
 
-    return session.get(url)
-
-
-def get_queue(cursor):
-    """
-    ?
-    """
-    script = f"SELECT queue FROM {tables[3]} ORDER BY queue DESC LIMIT 1"
-    cursor.execute(script)
-    return cursor.fetchone()[0] + 2
-
-
-def get_post_date(cursor):
-    """
-    ?
-    """
-    script = f"SELECT post_date FROM {tables[3]} ORDER BY post_date DESC LIMIT 1"
-    cursor.execute(script)
-    last_post_date = cursor.fetchone()[0]
-
-    return last_post_date + datetime.timedelta(hours=2)  # TODO: BAD!!!!
+    return session.get(url, headers=_headers())
 
 
 def check_event_status():
