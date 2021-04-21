@@ -2,6 +2,7 @@ import os
 from typing import List
 from datetime import datetime
 
+import pytz
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
@@ -32,6 +33,7 @@ TAGS = [
     "explored_date",
 ]
 DATABASE_URL = os.environ.get("DATABASE_URL")
+TIMEZONE = pytz.timezone("Europe/Moscow")
 TABLES = [
     "events_eventsnotapprovednew",  # TODO wtf with table names!?
     "events_eventsnotapprovedold",
@@ -85,6 +87,24 @@ def _insert(script, data):
     db_cursor.close()
 
 
+def _convert_to_timezone(values):
+    if isinstance(values, list):
+        raise TypeError("TODO")
+
+    elif isinstance(values, pd.DataFrame):
+        datetime_columns = values.columns[
+            [isinstance(i, pd.DatetimeTZDtype) for i in values.dtypes]
+        ]
+        values[datetime_columns] = values[datetime_columns].apply(
+            lambda x: x.dt.tz_convert("Europe/Moscow")
+        )
+
+    else:
+        raise TypeError(f"Unknown type: {type(values).__name__}")
+
+    return values
+
+
 def _get(script):
     db_cursor = get_db_cursor()
     db_cursor.execute(script)
@@ -93,16 +113,17 @@ def _get(script):
 
     db_cursor.close()
 
-    return values
+    return _convert_to_timezone(values)
 
 
 def _get_dataframe(script):
     db_connection = get_db_connection()
 
-    return pd.read_sql_query(script, con=db_connection)
+    return _convert_to_timezone(pd.read_sql_query(script, con=db_connection))
 
 
 def get_as_event(table: str, event_id: str) -> Event:
+    # TODO проверить работоспособность
     check_table(table)
 
     script = sql.SQL("SELECT * FROM {table} WHERE event_id = {event_id}").format(
