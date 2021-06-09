@@ -23,16 +23,16 @@ def move_rows(from_table, to_table):
         notion_api.move_row(row, to_table=to_table, with_remove=False)
 
 
+# убран парсер Radario
+# TODO включить в тест Radario
 @pytest.mark.parametrize(
     "events",
     [
         events.timepad_approved_organizations(days=1),
         events.timepad_others_organizations(days=1),
-        events.radario_others_organizations(days=1),
     ],
     ids=[
         "timepad_approved_organizations",
-        "timepad_others_organizations",
         "radario_others_organizations",
     ],
 )
