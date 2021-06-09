@@ -274,7 +274,8 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    return timepad_others_organizations(days) + radario_others_organizations(days)
+    # мероприятия от radario (radario_others_organizations(days)) выключены
+    return timepad_others_organizations(days)
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
