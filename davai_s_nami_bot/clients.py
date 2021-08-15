@@ -1,4 +1,4 @@
-import os
+import os, datetime
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Any, Dict, Union
@@ -41,7 +41,7 @@ class BaseClient(ABC):
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         text = format_text(event.post, style=self.formatter_style)
 
-        if image_path is None:
+        if image_path is None or '':
             return self.send_text(
                 text=text,
                 **self.constants.get(environ, {}),
@@ -82,8 +82,8 @@ class Telegram(BaseClient):
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
-
-        database.add(event, message.message_id)
+        #explored_date = datetime.datetime.now()
+        #database.add(event, message.message_id, explored_date) #TODO: post in special table (idk)
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(

@@ -3,6 +3,7 @@ from .database import (
     add,
     add_events,
     get_all,
+    get_ready_to_post,
     get_from_all_tables,
     rows_number,
     remove,

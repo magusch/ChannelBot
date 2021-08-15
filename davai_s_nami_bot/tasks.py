@@ -83,7 +83,7 @@ class PostingEvent(Task):
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
         posting_time = dsn_site.next_posting_time(msk_today)
-        return posting_time is not None and msk_today == posting_time
+        return posting_time is not None and abs(msk_today - posting_time).seconds < 60
 
 
 class UpdateEvents(Task):
@@ -150,4 +150,11 @@ def get_edges() -> List[Task]:
         IsEmptyCheck(),
         PostingEvent(),
         UpdateEvents(),
+    ]
+
+def get_posting() -> List[Task]:
+    return [
+        CheckEventStatus(),
+        IsEmptyCheck(),
+        PostingEvent()
     ]

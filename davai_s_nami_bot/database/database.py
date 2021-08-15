@@ -14,6 +14,7 @@ __all__ = (
     "add",
     "add_events",
     "get_all",
+    "get_ready_to_post",
     "get_from_all_tables",
     "remove",
     "remove_by_event_id",
@@ -137,6 +138,16 @@ def get_all(table: str) -> pd.DataFrame:
     check_table(table)
 
     script = sql.SQL("SELECT * FROM {table_name}").format(
+        table_name=sql.Identifier(table)
+    )
+
+    return _get_dataframe(script)
+
+
+def get_ready_to_post(table: str) -> pd.DataFrame:
+    check_table(table)
+
+    script = sql.SQL("SELECT * FROM {table_name} WHERE status='ReadyToPost'").format(
         table_name=sql.Identifier(table)
     )
 

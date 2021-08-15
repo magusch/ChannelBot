@@ -84,7 +84,7 @@ def read_constants():
 
 
 def prepare_image(image_url):
-    if image_url is None or isinstance(image_url, list):
+    if image_url is None or isinstance(image_url, list) or image_url=='':
         image_path = None
 
     else:

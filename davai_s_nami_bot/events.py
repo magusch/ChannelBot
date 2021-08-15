@@ -90,8 +90,8 @@ def _title(event: NamedTuple):
 def _post(event: NamedTuple):
     title = _title(event)
 
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
 
     date_from_to = date_to_post(event.date_from, event.date_to)
 
@@ -100,7 +100,7 @@ def _post(event: NamedTuple):
         month=month_name(event.date_from),
     )
 
-    title = f"**{title_date}** {title}\n\n"
+    title = f"*{title_date}* {title}\n\n"
 
     post_text = (
         event.post_text.strip()
@@ -111,9 +111,9 @@ def _post(event: NamedTuple):
 
     footer = (
         "\n\n"
-        f"**Где:** {event.place_name}, {event.adress} \n"
-        f"**Когда:** {date_from_to} \n"
-        f"**Вход:** [{event.price}]({event.url})"
+        f"*Где:* {event.place_name}, {event.adress} \n"
+        f"*Когда:* {date_from_to} \n"
+        f"*Вход:* [{event.price}]({event.url})"
     )
 
     return title + post_text + footer

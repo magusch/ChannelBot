@@ -88,7 +88,7 @@ def next_event_to_channel():
     - Значение поля `status` равное `ReadyToPost`
     - Наличие значения в поле `post_date` (равное текущему времени)
     """
-    events = database.get_all(table="events_events2post")
+    events = database.get_ready_to_post(table="events_events2post")
 
     event = Event.from_database(
         events[events["status"] == "ReadyToPost"].sort_values("queue").iloc[0, :]
@@ -133,9 +133,10 @@ columns_for_posting_time = ["post_date", "title", "event_id"]
 
 
 def next_posting_time(reference):
-    all_events = database.get_all(table="events_events2post")
+    all_events = database.get_ready_to_post(table="events_events2post")
 
     events_to_post = all_events[all_events["post_date"] >= reference]
+
 
     if pd.isnull(events_to_post["post_date"]).any():
         log.warn("Some events have not posting datetime.")
@@ -143,8 +144,8 @@ def next_posting_time(reference):
 
     if len(events_to_post) == 0:
         return None
-
-    return events_to_post.sort_values("queue")["post_date"].iloc[0].to_pydatetime()
+    #TODO: Not sure this is good logic, to sort by post_date and get post_time, but post first by queue
+    return events_to_post.sort_values("post_date")["post_date"].iloc[0].to_pydatetime()
 
 
 def next_updating_time(reference):
