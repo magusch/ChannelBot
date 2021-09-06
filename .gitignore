@@ -136,3 +136,5 @@ dmypy.json
 .vscode/
 misk
 *.database
+/prod_constants_good
+/prod_constants_notion
