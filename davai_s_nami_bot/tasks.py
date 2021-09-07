@@ -152,6 +152,7 @@ def get_edges() -> List[Task]:
         UpdateEvents(),
     ]
 
+
 def get_posting() -> List[Task]:
     return [
         CheckEventStatus(),
