@@ -5,4 +5,4 @@ pillow==7.2.0
 psycopg2-binary==2.8.5
 pyTelegramBotAPI==3.7.2
 requests<=2.25.1, >=2.24.0
-escraper@git+https://git@github.com/ArtemErmulin/escraper.git@master
+escraper@git+https://git@github.com/ArtemErmulin/escraper.git@ticketscloud

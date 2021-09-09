@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud
 
 from . import utils
 from .logger import catch_exceptions
@@ -80,6 +80,7 @@ two_days = timedelta(days=2)
 ## PARSERS
 timepad_parser = Timepad()
 radario_parser = Radario()
+ticketscloud_parser = Ticketscloud()
 
 
 ## ESCRAPER EVENTS PARSERS
@@ -291,7 +292,7 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    return timepad_others_organizations(days) + radario_others_organizations(days)
+    return timepad_others_organizations(days) + radario_others_organizations(days) #+ ticketscloud_others_organizations(days)
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
@@ -304,6 +305,9 @@ def timepad_others_organizations(days: int) -> List[Event]:
 
 def radario_others_organizations(days: int) -> List[Event]:
     return get_radario_events(days)
+
+def ticketscloud_others_organizations(days: int) -> List[Event]:
+    return get_ticketscloud_events(days)
 
 
 def get_timepad_events(
@@ -383,6 +387,23 @@ def get_radario_events(
     }
 
     new_events = _get_events(radario_parser, request_params=request_params)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+
+    return new_events
+
+
+def get_ticketscloud_events(
+    days: int, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+    tags = ("adress",
+            "place_name",
+            "post_text", "price",
+            "title",
+            "url","poster_imag", 'date_from','date_to', 'is_registration_open')
+
+    new_events = _get_events(ticketscloud_parser, tags=tags)
 
     if events_filter:
         new_events = events_filter(new_events)
