@@ -7,6 +7,7 @@
 - [Database module](#database)
 - [Contributing to `channelbot`](#contributing-to-channelbot)
 
+
 ## Update tables
 Для обновления таблиц с мероприятиями, можно запустить скрипт
 ```bash
