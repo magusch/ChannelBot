@@ -70,7 +70,7 @@ TIMEPAD_OTHERS_PARAMS = dict(
     organization_ids_exclude=(
         ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
     ),
-    price_max=500,
+    price_max=1000,
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )

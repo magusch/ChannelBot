@@ -145,11 +145,11 @@ class UpdateEvents(Task):
 
 def get_edges() -> List[Task]:
     return [
-        MoveApproved(),
         CheckEventStatus(),
         IsEmptyCheck(),
         PostingEvent(),
-        UpdateEvents(),
+        MoveApproved(),
+        UpdateEvents()
     ]
 
 
