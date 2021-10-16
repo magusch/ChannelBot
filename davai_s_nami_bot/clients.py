@@ -83,7 +83,8 @@ class Telegram(BaseClient):
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
-        #database.add(event, message.message_id, explored_date) #TODO: post in special table (idk)
+        database.add_event_for_telegram(event, message.message_id)
+        #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(

@@ -105,6 +105,7 @@ class UpdateEvents(Task):
 
         log.info("Remove old events")
         dsn_site.remove_old()
+        database.remove_event_from_DSN_bot(msk_today + timedelta(hours=1))
 
         log.info("Getting events from approved organizations for next 7 days")
         approved_events = events.from_approved_organizations(days=7)

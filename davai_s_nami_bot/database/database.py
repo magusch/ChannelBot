@@ -40,8 +40,12 @@ TABLES = [
     "events_eventsnotapprovedold",
     "events_events2post",
     "events_postingtime",
-    "telegram_posted",  # TODO ещё одна таблица для постов, которые опубликованы в телеграм
+    "dev_events",  # telegram_posted TODO ещё одна таблица для постов, которые опубликованы в телеграм
 ]
+
+DSN_BOT_TABLE = "dev_events"   #table for telegram bot "Давай с нами, Бот"
+DSN_BOT_TAGS = ["id", "title", "post_id", "date_from", "date_to", "price"] # Tags for telegram bot "Давай с нами, Бот"
+
 column_table_add = {
     1: ("explored_date", "approved"),
     3: (
@@ -271,6 +275,34 @@ def add(
     # - для таблицы 3 дополнительное поле `queue`
 
     _insert(script, data)
+
+
+def add_event_for_DSN_bot(event, post_id):
+    script = sql.SQL(
+        "INSERT INTO {table} ({fields}) values "
+        "(%s, %s, %s, cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), %s)"
+    ).format(
+        table=sql.Identifier(DSN_BOT_TABLE),
+        fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in DSN_BOT_TAGS]),
+    )
+
+    data = [
+        event.event_id,
+        event.title,
+        post_id,
+        getattr(event.from_date, "start", None),
+        getattr(event.to_date, "start", None),
+        event.price,
+    ]
+
+    _insert(script, data)
+
+def remove_event_from_DSN_bot(date):
+    script = sql.SQL("DELETE FROM {table} WHERE date_to < cast(%s as TIMESTAMP)").format(
+        table=sql.Identifier(DSN_BOT_TABLE)
+    )
+
+    _insert(script, (date,))
 
 
 def remove(date: datetime) -> None:
