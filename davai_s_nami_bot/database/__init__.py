@@ -9,4 +9,7 @@ from .database import (
     remove,
     remove_by_event_id,
     set_status,
+    add_event_for_DSN_bot,
+    remove_event_from_DSN_bot
+
 )
