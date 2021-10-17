@@ -8,8 +8,12 @@ from .database import (
     rows_number,
     remove,
     remove_by_event_id,
-    set_status,
-    add_event_for_DSN_bot,
-    remove_event_from_DSN_bot
+    set_status
 
+)
+
+from .database_dsn_bot import (
+    add_event_for_dsn_bot,
+    remove_event_from_dsn_bot,
+    select_dsn_bot
 )
