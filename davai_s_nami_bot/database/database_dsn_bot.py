@@ -65,8 +65,8 @@ def add_event_for_dsn_bot(event, post_id):
         event.event_id,
         event.title,
         post_id,
-        getattr(event.from_date, "start", None),
-        getattr(event.to_date, "start", None),
+        event.from_date,
+        event.to_date,
         event.price,
     ]
 
@@ -82,4 +82,4 @@ def remove_event_from_dsn_bot(date):
 
 def select_dsn_bot():
     script = "SELECT * FROM dev_events Limit 10"
-    print(_get(script))
+    _get(script)
