@@ -77,6 +77,14 @@ TIMEPAD_OTHERS_PARAMS = dict(
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 
+TICKETSCLOUD_ORG_IDS = ['5dce558174fd6b0bcaa66524','5e3d551b44d20ecf697408e4', '5e3bec5fea9c82d6958f8551', '5d0fb0e759d59a1095ea1b2d',
+                        '606afea333c340d4ee51b001','5f73840e094c46ba38df3426','5cb9f1fbad3df9000c9d6c6a','5f5234d89aa0cd1e7d380866',
+                        '5fd84f24ae1e29b732c6756c','5dd47966c189df3040c1ae3a', '5bb25b9ee5b64d000cfcc38c', '5c01321a269b85000becd652',
+                        '5c7950a93df5de000c93e287', '5f75c8e17540a6f988fa0a1f', '6036cfb79ad7272eea7734bf', '5f104439d473aea92c126338',
+                        '5daf03692c4c8cd18ef6b0da','5bb3766290566f000b409adf','5d8cd897cb535bfd631b7348', '5f5a3a5e50f7d892d28ffdb5',
+                        '5f6d96bf06a12bb6586080c4', '5c6eac03afa1a9000cc77e34' ]
+
+
 ## PARSERS
 timepad_parser = Timepad()
 radario_parser = Radario()
@@ -292,7 +300,7 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    return timepad_others_organizations(days) + radario_others_organizations(days) #+ ticketscloud_others_organizations(days)
+    return timepad_others_organizations(days) + radario_others_organizations(days) + ticketscloud_others_organizations(days)
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
@@ -393,17 +401,11 @@ def get_radario_events(
 
     return new_events
 
-
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    tags = ("adress",
-            "place_name",
-            "post_text", "price",
-            "title",
-            "url","poster_imag", 'date_from','date_to', 'is_registration_open')
 
-    new_events = _get_events(ticketscloud_parser, tags=tags)
+    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS)
 
     if events_filter:
         new_events = events_filter(new_events)
