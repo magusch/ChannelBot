@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, VK
 
 from . import utils
 from .logger import catch_exceptions
@@ -88,7 +88,8 @@ TICKETSCLOUD_ORG_IDS = ['5dce558174fd6b0bcaa66524','5e3d551b44d20ecf697408e4', '
 ## PARSERS
 timepad_parser = Timepad()
 radario_parser = Radario()
-ticketscloud_parser = Ticketscloud()
+#ticketscloud_parser = Ticketscloud()
+vk_parser = VK()
 
 
 ## ESCRAPER EVENTS PARSERS
@@ -300,7 +301,7 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    return timepad_others_organizations(days) + radario_others_organizations(days) + ticketscloud_others_organizations(days)
+    return vk_others_organizations(days) #timepad_others_organizations(days) + radario_others_organizations(days) + vk_others_organizations(days) #+ ticketscloud_others_organizations(days)
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
@@ -316,6 +317,9 @@ def radario_others_organizations(days: int) -> List[Event]:
 
 def ticketscloud_others_organizations(days: int) -> List[Event]:
     return get_ticketscloud_events(days)
+
+def vk_others_organizations(days: int) -> List[Event]:
+    return get_vk_events(days)
 
 
 def get_timepad_events(
@@ -407,6 +411,16 @@ def get_ticketscloud_events(
 
     new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS)
 
+    if events_filter:
+        new_events = events_filter(new_events)
+
+    return new_events
+
+
+def get_vk_events(
+    days: int, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+    new_events = _get_events(vk_parser)
     if events_filter:
         new_events = events_filter(new_events)
 

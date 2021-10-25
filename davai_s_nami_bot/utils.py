@@ -45,6 +45,7 @@ REQUIRED_CONSTANT_NAMES = [
     "DSN_USERNAME",
     "DSN_PASSWORD",
     "DSN_DATABASE_URL",
+    "VK_ID",
 ]
 
 
