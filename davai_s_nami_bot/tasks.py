@@ -139,7 +139,6 @@ class UpdateEvents(Task):
         log.info(f"Events count in database: {events_count}")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
-        return True
         updating_time = dsn_site.next_updating_time(msk_today)
 
         return updating_time is not None and msk_today == updating_time
