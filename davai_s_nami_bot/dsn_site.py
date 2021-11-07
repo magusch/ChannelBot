@@ -150,9 +150,15 @@ def next_posting_time(reference):
 
 def next_updating_time(reference):
     hour, minute = DEFAULT_UPDATING_STRFTIME.split(":")
+    hour, minute = int(hour), int(minute)
     update_time = reference.replace(
-        hour=int(hour), minute=int(minute)
-    ) + datetime.timedelta(days=1)
+        hour=hour, minute=minute
+    )
+
+    if reference.hour > hour or (
+            reference.hour == hour and reference.minute > minute
+    ):
+        update_time += datetime.timedelta(days=1)
 
     return update_time
 
