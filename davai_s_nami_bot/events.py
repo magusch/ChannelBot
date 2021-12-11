@@ -91,6 +91,9 @@ radario_parser = Radario()
 #ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 
+PARSER_URLS = {
+    'timepad.ru' : timepad_parser, 'vk.':vk_parser  #'ticketscloud.org' : ticketscloud_parser, 'radario.ru': radario_parser,
+}
 
 ## ESCRAPER EVENTS PARSERS
 def _title(event: NamedTuple):
@@ -285,6 +288,15 @@ def _get_events(
     ]
 
 
+@catch_exceptions()
+def _get_event(
+    parser: escraper.parsers.base.BaseParser, *args, **kwargs
+) -> List[Event]:
+    event = parser.get_event(*args, **kwargs)
+
+    return Event.from_escraper(event)
+
+
 def from_approved_organizations(days: int) -> List[Event]:
     """
     Getting events from approved organizations (see. APPROVED_ORGANIZATIONS).
@@ -425,3 +437,10 @@ def get_vk_events(
         new_events = events_filter(new_events)
 
     return new_events
+
+def from_url(event_url):
+    for parser_base_url, parser in PARSER_URLS.items():
+        if parser_base_url in event_url:
+            return _get_event(parser, event_url=event_url)
+
+    return None
