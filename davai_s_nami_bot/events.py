@@ -87,7 +87,7 @@ TICKETSCLOUD_ORG_IDS = ['5dce558174fd6b0bcaa66524','5e3d551b44d20ecf697408e4', '
                         '5fd84f24ae1e29b732c6756c','5dd47966c189df3040c1ae3a', '5bb25b9ee5b64d000cfcc38c', '5c01321a269b85000becd652',
                         '5c7950a93df5de000c93e287', '5f75c8e17540a6f988fa0a1f', '6036cfb79ad7272eea7734bf', '5f104439d473aea92c126338',
                         '5daf03692c4c8cd18ef6b0da','5bb3766290566f000b409adf','5d8cd897cb535bfd631b7348', '5f5a3a5e50f7d892d28ffdb5',
-                        '5f6d96bf06a12bb6586080c4', '5c6eac03afa1a9000cc77e34', '5e060d4c36db15fb7f777ae8' ]
+                        '5f6d96bf06a12bb6586080c4', '5c6eac03afa1a9000cc77e34', '5e060d4c36db15fb7f777ae8', '60a44a97d54ac08a34b10301' ]
 
 
 ## PARSERS
