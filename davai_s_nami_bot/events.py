@@ -92,7 +92,7 @@ radario_parser = Radario()
 vk_parser = VK()
 
 PARSER_URLS = {
-    'timepad.ru' : timepad_parser, 'vk.':vk_parser  #'ticketscloud.org' : ticketscloud_parser, 'radario.ru': radario_parser,
+    'timepad.ru': timepad_parser, 'vk.': vk_parser  #'ticketscloud.org' : ticketscloud_parser, 'radario.ru': radario_parser,
 }
 
 ## ESCRAPER EVENTS PARSERS
@@ -442,5 +442,3 @@ def from_url(event_url):
     for parser_base_url, parser in PARSER_URLS.items():
         if parser_base_url in event_url:
             return _get_event(parser, event_url=event_url)
-
-    return None

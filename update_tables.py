@@ -7,8 +7,5 @@ from davai_s_nami_bot.tasks import UpdateEvents, EventsFromUrl
 
 msk_today = get_msk_today(replace_seconds=True)
 
-# for task in [UpdateEvents]:
-#     task().run(msk_today)
-
-for task in [EventsFromUrl]:
+for task in [UpdateEvents, EventsFromUrl]:
     task().run(msk_today)

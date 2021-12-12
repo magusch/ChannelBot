@@ -187,12 +187,12 @@ class EventsFromUrl(Task):
 
 def get_edges() -> List[Task]:
     return [
-        # CheckEventStatus(),
-        # IsEmptyCheck(),
-        # PostingEvent(),
-        # MoveApproved(),
+        CheckEventStatus(),
+        IsEmptyCheck(),
+        PostingEvent(),
+        MoveApproved(),
         EventsFromUrl(),
-        # UpdateEvents(),
+        UpdateEvents(),
 
     ]
 
