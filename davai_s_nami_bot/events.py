@@ -313,7 +313,11 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    return vk_others_organizations(days) #timepad_others_organizations(days) + radario_others_organizations(days) + vk_others_organizations(days) #+ ticketscloud_others_organizations(days)
+    events = timepad_others_organizations(days) + radario_others_organizations(days) #+ ticketscloud_others_organizations(days)
+
+    if date.today().weekday() == 0:
+        events += vk_others_organizations(days)
+    return events
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
@@ -430,12 +434,12 @@ def get_ticketscloud_events(
 
 
 def get_vk_events(
-    days: int, events_filter: Callable[[List[Event]], List[Event]] = None
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    new_events = _get_events(vk_parser)
+    new_events = _get_events(vk_parser, days=days)
     if events_filter:
         new_events = events_filter(new_events)
-
+    print(new_events)
     return new_events
 
 def from_url(event_url):
