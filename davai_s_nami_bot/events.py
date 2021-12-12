@@ -444,10 +444,9 @@ def get_ticketscloud_events(
 def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    new_events = _get_events(vk_parser, days=days)
+    new_events = _get_events(vk_parser)
     if events_filter:
         new_events = events_filter(new_events)
-    print(new_events)
     return new_events
 
 def from_url(event_url):
