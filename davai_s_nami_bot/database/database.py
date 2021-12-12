@@ -15,6 +15,7 @@ __all__ = (
     "add_events",
     "get_all",
     "get_ready_to_post",
+    "get_scrape_it_events",
     "get_from_all_tables",
     "remove",
     "remove_by_event_id",
@@ -157,6 +158,16 @@ def get_ready_to_post(table: str) -> pd.DataFrame:
     return _get_dataframe(script)
 
 
+def get_scrape_it_events(table: str) -> pd.DataFrame:
+    check_table(table)
+
+    script = sql.SQL("SELECT event_id, url FROM {table_name} WHERE status='Scrape'").format(
+        table_name=sql.Identifier(table)
+    )
+
+    return _get_dataframe(script)
+
+
 def get_from_all_tables() -> pd.DataFrame:
     return pd.concat(
         [
@@ -276,6 +287,16 @@ def add(
     _insert(script, data)
 
 
+def remove_by_event_id(
+    event_ids: List[str],
+    table: str = "events_events2post",
+) -> None:
+
+    script = sql.SQL("DELETE FROM {table} WHERE event_id in (%s)").format(
+        table=sql.Identifier(table),
+    )
+
+    _insert(script, event_ids)
 
 
 def remove(date: datetime) -> None:
@@ -284,14 +305,6 @@ def remove(date: datetime) -> None:
     ).format(table=sql.Identifier(TABLE_NAME))
 
     _insert(script, (date,))
-
-
-def remove_by_event_id(event_id: str) -> None:
-    script = sql.SQL("DELETE FROM {table} WHERE id = %s").format(
-        table=sql.Identifier(TABLE_NAME),
-    )
-
-    _insert(script, (event_id,))
 
 
 def remove_by_title(title: str) -> None:

@@ -4,6 +4,7 @@ from .database import (
     add_events,
     get_all,
     get_ready_to_post,
+    get_scrape_it_events,
     get_from_all_tables,
     rows_number,
     remove,

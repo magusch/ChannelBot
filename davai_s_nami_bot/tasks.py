@@ -144,13 +144,54 @@ class UpdateEvents(Task):
         return updating_time is not None and msk_today == updating_time
 
 
+class EventsFromUrl(Task):
+    def _update_events(
+        self, events: List[events.Event], table: str, msk_today: datetime
+    ) -> None:
+        log.info("Checking for existing events")
+        #new_events = dsn_site.get_new_events(events)
+        log.info(f"New events from url count = {len(events)}")
+
+        log.info("Updating database")
+        database.add_events(events, explored_date=msk_today, table=table)
+
+    def run(self, msk_today: datetime.datetime, *args) -> None:
+        log.info("Start get post from url.")
+
+        events_from_urls = []
+        event_to_parse = database.get_scrape_it_events(table="events_events2post",)
+
+        for url in list(event_to_parse['url']):
+            event = events.from_url(url)
+            events_from_urls.append(event)
+
+        if not events_from_urls:
+            log.info("Nothing from url")
+            return
+
+        database.remove_by_event_id(list(event_to_parse['event_id']))
+
+        self._update_events(
+            events_from_urls,
+            table="events_events2post",
+            msk_today=msk_today,
+        )
+
+
+    def is_need_running(self, msk_today: datetime.datetime) -> bool:
+        updating_time = dsn_site.next_updating_time(msk_today)
+
+        return updating_time is not None and msk_today == updating_time
+
+
 def get_edges() -> List[Task]:
     return [
         CheckEventStatus(),
         IsEmptyCheck(),
         PostingEvent(),
         MoveApproved(),
-        UpdateEvents()
+        EventsFromUrl(),
+        UpdateEvents(),
     ]
 
 
