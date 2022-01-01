@@ -12,7 +12,7 @@ from .logger import catch_exceptions, get_logger
 from . import database
 from . import clients
 
-BASE_URL = os.environ.get("BASE_URL"),
+BASE_URL = os.environ.get("BASE_URL")
 CHECK_EVENT_STATUS_URL = BASE_URL + "events/check_event_status/"
 MOVE_APPROVED_URL = BASE_URL + "events/move_approved_events/"
 REMOVE_OLD_URL = BASE_URL + "events/remove_old_events/"
