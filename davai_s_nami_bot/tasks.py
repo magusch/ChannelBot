@@ -8,6 +8,7 @@ from . import database
 from . import events
 from . import utils
 from . import dsn_site
+from . import dsn_site_session
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
 
@@ -32,7 +33,7 @@ class Task:
 
 class CheckEventStatus(Task):
     def run(self, *args) -> None:
-        dsn_site.check_event_status()
+        dsn_site_session.check_event_status()
 
 
 class MoveApproved(Task):
@@ -42,10 +43,10 @@ class MoveApproved(Task):
 
     def run(self, *args) -> None:
         log.info("Move approved events")
-        dsn_site.move_approved()
+        dsn_site_session.move_approved()
 
         log.info("Fill empty post time")
-        dsn_site.fill_empty_post_time()
+        dsn_site_session.fill_empty_post_time()
 
 
 class IsEmptyCheck(Task):
@@ -98,13 +99,13 @@ class UpdateEvents(Task):
         database.add_events(new_events, explored_date=msk_today, table=table)
 
         log.info("Fill empty post time")
-        dsn_site.fill_empty_post_time()
+        dsn_site_session.fill_empty_post_time()
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")
 
         log.info("Remove old events")
-        dsn_site.remove_old()
+        dsn_site_session.remove_old()
         database.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
 
 
@@ -149,7 +150,7 @@ class EventsFromUrl(Task):
         self, events: List[events.Event], table: str, msk_today: datetime
     ) -> None:
         log.info("Checking for existing events")
-        #new_events = dsn_site.get_new_events(events)
+
         log.info(f"New events from url count = {len(events)}")
 
         log.info("Updating database")

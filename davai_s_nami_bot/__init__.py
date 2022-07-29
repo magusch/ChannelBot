@@ -3,9 +3,9 @@ from .utils import read_constants
 
 read_constants()
 
-from . import dsn_site
+from . import dsn_site_session
 
-dsn_site.create_session()
+dsn_site_session.create_session()
 
 from . import flow
 from . import tasks

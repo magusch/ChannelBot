@@ -8,60 +8,22 @@ from typing import Any, Callable, Dict, List, NamedTuple
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK
 
+from .parameters_for_channel import *
 from . import utils
 from .logger import catch_exceptions
 
 
-BAD_KEYWORDS = (
-    "вебинар",
-    "видеотренинг",
-    "тренинг",
-    "HR",
-    "консультация",
-)
-APPROVED_ORGANIZATIONS = [
-    "57992",   # Манеж
-    "79462",   # Новая Голландия
-    "42587",   # Молодёжный центр Эрмитажа
-    "186669",  # musicAeterna
-    "109981",  # ГЦСИ в Санкт-Петербурге
-    "67092",   # Музей советских игровых автоматов
-    "43027",   # Театр-студия
-    "78132",   # Театр-фестиваль «Балтийский дом»
-    "75134",   # Ленфильм
-    "191811",  # Планетарий 1
-    "130063",  # МИСП
-    "267817",  # Маяковка
-    "30148",   # ЦСИ Курёхина
-    "112209",  # Севкабель
-]
 
-BORING_ORGANIZATIONS = [
-    "185394",  # Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
-    "106118",  # АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
-    "212547",  # Иерусалимская Сказка
-    "146675",  # Корни и Крылья https://korni-i-krylya.timepad.ru
-    "252995",  # Музей Христианской Культуры
-    "63354",   # Семейный досуговый клуб ШтангенЦиркулб
-    "181043",  # Фонд
-]
 
-CATEGORY_IDS_EXCLUDE = [
-    "217",  # Бизнесс
-    "376",  # Спорт
-    "379",  # Для детей
-    "399",  # Красота и здоровье
-    "453",  # Психология и самопознание
-    "1315",  # Образование за рубежом
-    "452",  # ИТ и интернет
-    "382",  # Иностранные языки
-    "2335",  # Интеллектуальные игры
-    "524",  # Хобби и творчество
-    "461",  # Экскурсии и путешествия
-    "462",  # Другие события
-]
+BAD_KEYWORDS = parameters_list_ids('timepad', 'bad_keywords')
+
+APPROVED_ORGANIZATIONS = parameters_list_ids('timepad', 'approved_organization')
+BORING_ORGANIZATIONS = parameters_list_ids('timepad', 'boring_organization')
+
+CATEGORY_IDS_EXCLUDE = parameters_list_ids('timepad', 'exclude_categories')
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
+
 TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
     cities="Санкт-Петербург",
@@ -75,20 +37,14 @@ TIMEPAD_OTHERS_PARAMS = dict(
     organization_ids_exclude=(
         ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
     ),
-    price_max=1200,
+    price_max=parameter_value('timepad', 'price_max'),
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 
-TICKETSCLOUD_ORG_IDS = ['5dce558174fd6b0bcaa66524','5e3d551b44d20ecf697408e4', '5e3bec5fea9c82d6958f8551', '5d0fb0e759d59a1095ea1b2d',
-                        '606afea333c340d4ee51b001','5f73840e094c46ba38df3426','5cb9f1fbad3df9000c9d6c6a','5f5234d89aa0cd1e7d380866',
-                        '5fd84f24ae1e29b732c6756c','5dd47966c189df3040c1ae3a', '5bb25b9ee5b64d000cfcc38c', '5c01321a269b85000becd652',
-                        '5c7950a93df5de000c93e287', '5f75c8e17540a6f988fa0a1f', '6036cfb79ad7272eea7734bf', '5f104439d473aea92c126338',
-                        '5daf03692c4c8cd18ef6b0da','5bb3766290566f000b409adf','5d8cd897cb535bfd631b7348', '5f5a3a5e50f7d892d28ffdb5',
-                        '5f6d96bf06a12bb6586080c4', '5c6eac03afa1a9000cc77e34', '5e060d4c36db15fb7f777ae8', '60a44a97d54ac08a34b10301' ]
-
+TICKETSCLOUD_ORG_IDS = parameters_list_ids('ticketscloud', 'org_id')
 
 ## PARSERS
 timepad_parser = Timepad()
@@ -97,7 +53,7 @@ ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 
 PARSER_URLS = {
-    'timepad.ru': timepad_parser, 'vk.': vk_parser  #'ticketscloud.org' : ticketscloud_parser, 'radario.ru': radario_parser,
+    'timepad.ru': timepad_parser, 'vk.': vk_parser, 'ticketscloud.': ticketscloud_parser,# 'radario.ru': radario_parser,
 }
 
 ## ESCRAPER EVENTS PARSERS
