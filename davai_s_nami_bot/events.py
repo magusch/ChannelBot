@@ -69,10 +69,12 @@ def _post(event: NamedTuple):
 
     date_from_to = date_to_post(event.date_from, event.date_to)
 
-    title_date = "{day} {month}".format(
-        day=event.date_from.day,
-        month=month_name(event.date_from),
-    )
+
+    # title_date = "{day} {month}".format(
+    #     day=event.date_from.day,
+    #     month=month_name(event.date_from),
+    # )
+    title_date = date_to_title(event.date_from, event.date_to)
 
     title = f"*{title_date}* {title}\n\n"
 
@@ -85,7 +87,7 @@ def _post(event: NamedTuple):
 
     footer = (
         "\n\n"
-        f"*Где:* {event.place_name}, {event.adress} \n"
+        f"*Где:* {event.place_name}, [{event.adress}](https://2gis.ru/spb/search/{event.adress})\n"
         f"*Когда:* {date_from_to} \n"
         f"*Вход:* [{event.price}]({event.url})"
     )
@@ -101,6 +103,34 @@ def month_name(dt: datetime):
     return utils.MONTHNAMES[dt.month]
 
 
+def date_to_title(date_from: datetime, date_to: datetime):
+    title_date = ''
+    if date_to is None:
+        title_date = "{day} {month}".format(
+            day=date_from.day,
+            month=month_name(date_from),
+        )
+    elif date_from.month != date_to.month:
+        title_date = "{day_s} {month_s} – {day_e} {month_e}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day,
+            month_e=month_name(date_to)
+        )
+    elif date_from.day != date_to.day:
+        title_date = "{day_s} {day_e} {month_s}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day
+        )
+    else:
+        title_date = "{day} {month}".format(
+            day=date_from.day,
+            month=month_name(date_from),
+        )
+    return title_date
+
+
 def date_to_post(date_from: datetime, date_to: datetime):
     s_weekday = weekday_name(date_from)
     s_day = date_from.day
@@ -109,6 +139,7 @@ def date_to_post(date_from: datetime, date_to: datetime):
     s_minute = date_from.minute
 
     if date_to is not None:
+        e_weekday = weekday_name(date_to)
         e_day = date_to.day
         e_month = month_name(date_to)
         e_hour = date_to.hour
@@ -118,9 +149,13 @@ def date_to_post(date_from: datetime, date_to: datetime):
             start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
             end_format = f"{e_hour:02}:{e_minute:02}"
 
+        elif s_month!=e_month:
+            start_format = f"{s_weekday}-{e_weekday}, {s_day} {s_month} - {e_day} {e_month} {s_hour:02}:{s_minute:02}–{e_hour:02}:{e_minute:02}"
         else:
-            start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
-            end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
+            # start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
+            # end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
+            start_format = f"{s_weekday}-{e_weekday}, {s_day}–{e_day} {s_month} {s_hour:02}:{s_minute:02}-"
+            end_format = f"{e_hour:02}:{e_minute:02}"
 
     else:
         end_format = ""
@@ -225,7 +260,6 @@ def not_approved_organization_filter(events: List[Event]):
     for event in events:
         if (
             event is None
-            or "финанс" in event.title.lower()
             or (
                 event.to_date is not None and event.to_date - event.from_date > two_days
             )

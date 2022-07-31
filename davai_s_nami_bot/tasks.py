@@ -95,11 +95,13 @@ class UpdateEvents(Task):
         new_events = dsn_site.get_new_events(events)
         log.info(f"New events count = {len(new_events)}")
 
-        log.info("Updating database")
-        database.add_events(new_events, explored_date=msk_today, table=table)
+        if len(new_events) > 0:
+            log.info("Updating database")
+            database.add_events(new_events, explored_date=msk_today, table=table)
 
-        log.info("Fill empty post time")
-        dsn_site_session.fill_empty_post_time()
+            log.info("Fill empty post time")
+            answer = dsn_site_session.fill_empty_post_time()
+            log.info(answer)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")

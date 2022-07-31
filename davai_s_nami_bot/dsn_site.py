@@ -13,16 +13,9 @@ from . import database
 from . import clients
 
 
-
-
 DEFAULT_UPDATING_STRFTIME = "00:00"
 
 log = get_logger(__file__)
-
-
-
-
-
 
 
 def next_event_to_channel():
