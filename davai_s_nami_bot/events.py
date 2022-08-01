@@ -150,7 +150,8 @@ def date_to_post(date_from: datetime, date_to: datetime):
             end_format = f"{e_hour:02}:{e_minute:02}"
 
         elif s_month!=e_month:
-            start_format = f"{s_weekday}-{e_weekday}, {s_day} {s_month} - {e_day} {e_month} {s_hour:02}:{s_minute:02}–{e_hour:02}:{e_minute:02}"
+            start_format = f"{s_weekday}-{e_weekday}, {s_day} {s_month} - "
+            end_format = f"{e_day} {e_month} {s_hour:02}:{s_minute:02}–{e_hour:02}:{e_minute:02}"
         else:
             # start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
             # end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
