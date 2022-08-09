@@ -295,8 +295,8 @@ def remove_by_event_id(
     script = sql.SQL("DELETE FROM {table} WHERE event_id in (%s)").format(
         table=sql.Identifier(table),
     )
-
-    _insert(script, event_ids)
+    string_events_ids = "'" + "', '".join(event_ids) + "'"
+    _insert(script, (string_events_ids,))
 
 
 def remove(date: datetime) -> None:
