@@ -2,7 +2,6 @@ numpy==1.18.4
 pandas==0.25.3
 markdown==3.3.3
 fake-useragent==0.1.11
-pendulum==2.1.0
 pillow==9.0.0
 psycopg2-binary==2.8.5
 pyTelegramBotAPI==3.7.2
