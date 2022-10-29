@@ -1,9 +1,6 @@
-import os, datetime
-import pytz
+import datetime
 from typing import Any, List
 
-import psycopg2
-import requests
 import pandas as pd
 
 
