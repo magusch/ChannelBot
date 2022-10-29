@@ -29,9 +29,7 @@ def create_session():
     CSRFTOKEN = session.cookies["csrftoken"]
 
     login_data["csrfmiddlewaretoken"] = CSRFTOKEN
-    print(login_url, login_data)
     response = session.post(login_url, data=login_data, headers=_headers())
-    print(response.content)
     SESSION_ID = session.cookies["sessionid"]
     #assert response.ok
 
