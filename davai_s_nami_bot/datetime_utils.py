@@ -1,4 +1,5 @@
-import pendulum
+import datetime
+from datetime import timezone as tz, timedelta as td
 
 
 STRFTIME = "%Y-%m-%dT%H:%M:%S"
@@ -15,4 +16,4 @@ def get_msk_today(replace_seconds=False):
             )
         )
 
-    return pendulum.now("Europe/Moscow").replace(**params)
+    return datetime.datetime.now(tz(td(hours=3))).replace(**params)
