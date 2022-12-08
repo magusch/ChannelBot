@@ -53,7 +53,7 @@ ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 
 PARSER_URLS = {
-    'timepad.ru': timepad_parser, 'vk.': vk_parser, 'ticketscloud.': ticketscloud_parser,# 'radario.ru': radario_parser,
+    'timepad.ru': timepad_parser, 'vk.': vk_parser, 'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
 }
 
 ## ESCRAPER EVENTS PARSERS
