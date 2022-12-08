@@ -87,7 +87,7 @@ def _post(event: NamedTuple):
 
     footer = (
         "\n\n"
-        f"*Где:* {event.place_name}, [{event.adress}](https://2gis.ru/spb/search/{event.adress})\n"
+        f"*Где:* [{event.place_name}, {event.adress}](https://2gis.ru/spb/search/{event.adress})\n"
         f"*Когда:* {date_from_to} \n"
         f"*Вход:* [{event.price}]({event.url})"
     )
@@ -117,8 +117,14 @@ def date_to_title(date_from: datetime, date_to: datetime):
             day_e=date_to.day,
             month_e=month_name(date_to)
         )
+    elif date_to.day-date_from.day==1:
+        title_date = "{day_s} и {day_e} {month_s}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day
+        )
     elif date_from.day != date_to.day:
-        title_date = "{day_s} {day_e} {month_s}".format(
+        title_date = "{day_s} – {day_e} {month_s}".format(
             day_s=date_from.day,
             month_s=month_name(date_from),
             day_e=date_to.day
