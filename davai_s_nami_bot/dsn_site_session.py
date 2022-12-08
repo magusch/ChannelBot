@@ -35,7 +35,7 @@ def create_session():
 
 
 def _headers():
-    return {"User-Agent": UserAgent().random}
+    return {"User-Agent": "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/22.0.1216.0 Safari/537.2'"} #UserAgent().random}
 
 
 def _current_session_get(url):
