@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets
 
 from .parameters_for_channel import *
 from . import utils
@@ -51,9 +51,12 @@ timepad_parser = Timepad()
 radario_parser = Radario()
 ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
+qt_parser = QTickets()
 
 PARSER_URLS = {
-    'timepad.ru': timepad_parser, 'vk.': vk_parser, 'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
+    'timepad.ru': timepad_parser, 'vk.': vk_parser,
+    'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
+    'qtickets.events': qt_parser
 }
 
 ## ESCRAPER EVENTS PARSERS
@@ -317,9 +320,10 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 def from_not_approved_organizations(days: int) -> List[Event]:
     events = timepad_others_organizations(days) + radario_others_organizations(days) \
              + ticketscloud_others_organizations(days)
-
     if date.today().weekday() == 0:
         events += vk_others_organizations(days)
+    elif date.today().weekday() % 2 == 1:
+        events += qtickets_others_organizations(days*2)
     return events
 
 
@@ -341,6 +345,9 @@ def ticketscloud_others_organizations(days: int) -> List[Event]:
 
 def vk_others_organizations(days: int) -> List[Event]:
     return get_vk_events(days)
+
+def qtickets_others_organizations(days: int) -> List[Event]:
+    return get_qtickets_events(days)
 
 
 def get_timepad_events(
@@ -442,6 +449,20 @@ def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
     new_events = _get_events(vk_parser)
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def get_qtickets_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    request_params = {
+        "days": days,
+    }
+
+    new_events = _get_events(qt_parser, request_params=request_params)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
