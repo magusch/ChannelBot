@@ -1,4 +1,4 @@
-import re
+import re, json
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
@@ -12,6 +12,7 @@ from .parameters_for_channel import *
 from . import utils
 from .logger import catch_exceptions
 
+from .dsn_site_session import place_address
 
 
 
@@ -88,9 +89,11 @@ def _post(event: NamedTuple):
         .replace("*", r"\*")
     )
 
+    address_line = address_line_to_post(event)
+
     footer = (
         "\n\n"
-        f"*Где:* [{event.place_name}, {event.adress}](https://2gis.ru/spb/search/{event.adress})\n"
+        f"*Где:* {address_line}\n"
         f"*Когда:* {date_from_to} \n"
         f"*Вход:* [{event.price}]({event.url})"
     )
@@ -172,6 +175,22 @@ def date_to_post(date_from: datetime, date_to: datetime):
         start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}"
 
     return start_format + end_format
+
+
+def address_line_to_post(event):
+    raw_address = f"{event.place_name}, {event.adress}"
+    address = place_address(raw_address)
+
+    address_line = None
+    if address.status_code<300:
+        address_dict = address.json()
+        if address_dict['response_code']<400:
+            address_line = address_dict["address_for_post"]
+
+    if not address_line:
+        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/spb/search/{event.adress})"
+
+    return address_line
 
 
 def _url(event: NamedTuple):

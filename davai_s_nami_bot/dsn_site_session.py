@@ -1,7 +1,6 @@
 import os
 import requests
 
-from fake_useragent import UserAgent
 
 BASE_URL = os.environ.get("BASE_URL")
 CHECK_EVENT_STATUS_URL = BASE_URL + "events/check_event_status/"
@@ -10,6 +9,7 @@ REMOVE_OLD_URL = BASE_URL + "events/remove_old_events/"
 UPDATE_ALL_URL = BASE_URL + "events/update_all/"
 FILL_EMPTY_POST_TIME_URL = BASE_URL + "events/fill_empty_post_time/"
 PARAMETERS_FOR_CHANNEL = BASE_URL + "events/parameters_for_channel/"
+PLACE_ADDRESS = BASE_URL + "place/place_address/"
 CSRFTOKEN = None
 SESSION_ID = None
 
@@ -61,4 +61,8 @@ def parameter_for_dsn_channel(parameters={}):
     query_parameters = '?'
     for p_key, p_value in parameters.items():
         query_parameters += f"{p_key}={p_value}&"
-    return _current_session_get(url=PARAMETERS_FOR_CHANNEL+query_parameters)
+    return _current_session_get(url=PARAMETERS_FOR_CHANNEL + query_parameters)
+
+def place_address(raw_address):
+    url = f"{PLACE_ADDRESS}?address={raw_address}"
+    return _current_session_get(url=url)
