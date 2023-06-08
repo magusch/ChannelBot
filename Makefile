@@ -18,4 +18,4 @@ test:
 
 deploy:
 	chmod +x build.sh
-	systemctl restart channelbot.service
+	sudo systemctl restart channelbot.service
