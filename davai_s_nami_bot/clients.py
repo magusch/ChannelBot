@@ -1,4 +1,4 @@
-import os
+import os, datetime
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Any, Dict, Union
@@ -7,53 +7,29 @@ import requests
 from markdown import markdown
 from telebot import TeleBot
 
-from . import database, events
+from . import database
+from . import events
 
 
-def format_text(text: str, style: str = "markdown"):
+def format_text(text: str, style: str = None):
     """
-    Форматирование текста с разметкой из таблицы notion.
-
-    Разметка из таблицы notion:
-        __text__ - bold
-        [text] (link) - link
-        _text_ - italic
+    Редактирование форматирования (только для ВКонтакте)
     """
-
-    if style == "markdown":  # TODO remove
-        formatted = text.replace("__", "*").replace("] (", "](").replace("_", r"\_")
-
-    elif style == "html":
-        formatted = (
-            markdown(
-                text.replace("] (", "](").replace(  # enable link
-                    "\n", "<br>"
-                )  # \n not convert to <br> in package markdown =(
-            )
-            .replace("<p>", "")  # remove paragraph tags (telegram doesn't accept this)
-            .replace("</p>", "")
-            .replace("<br>", "\n")
-        )
-
-    elif style == "vk":
+    if style == "vk":
         formatted = (
             text.replace("Где:", "🏙 Где:")
             .replace("Когда:", "⏰ Когда:")
             .replace("Вход:", "💸 Вход:")
-            .replace("Билеты:", "💸 Билеты:")
+            .replace("Вход свободный", "🏄 Вход свободный")
+            .replace("Билеты:", "🎟 Билеты:")
             .replace("[", "")
-            .replace("]", "")
+            .replace("]", " ")
             .replace("_", "")
             .replace("*", "")
         )
 
-    else:  # remove notion formating
-        formatted = (
-            text.replace("__", "")
-            .replace("] (", " (")
-            .replace(" [", " ")
-            .replace("_", "")
-        )
+    else:
+        formatted = text
 
     return formatted
 
@@ -66,7 +42,7 @@ class BaseClient(ABC):
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         text = format_text(event.post, style=self.formatter_style)
 
-        if image_path is None:
+        if image_path is None or '':
             return self.send_text(
                 text=text,
                 **self.constants.get(environ, {}),
@@ -97,18 +73,19 @@ class Telegram(BaseClient):
         dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
     )
     name = "telegram_channel"
-    formatter_style = "html"
+    formatter_style = None
 
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
-            parse_mode="html",
+            parse_mode="markdown",
         )
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
-
-        database.add(event, message.message_id)
+        #explored_date = datetime.datetime.now()
+        database.add_event_for_dsn_bot(event, message.message_id)
+        #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(
@@ -117,7 +94,9 @@ class Telegram(BaseClient):
             disable_web_page_preview=True,
         )
 
-    def send_image(self, text: str, image_path: str, *, destination_id: Union[int, str]):
+    def send_image(
+        self, text: str, image_path: str, *, destination_id: Union[int, str]
+    ):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
                 chat_id=destination_id,

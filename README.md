@@ -7,6 +7,20 @@
 - [Database module](#database)
 - [Contributing to `channelbot`](#contributing-to-channelbot)
 
+## Требования к окружению
+Константы:
+ - `TIMEPAD_TOKEN` - токен от сайта timepad.ru
+ - `BOT_TOKEN` - токен для телеграм бота
+ - `DATABASE_URL` - URI от базы данных на heroku
+ - `CHANNEL_ID` - ID основного телеграм канала
+ - `DEV_CHANNEL_ID` - ID телеграм канала (_для разработки_)
+ - `VK_TOKEN` - токен от ВКонтакте
+ - `VK_USER_ID` - ID пользователя в ВКонтакте
+ - `VK_GROUP_ID` - ID группы для постинга
+ - `VK_DEV_GROUP_ID` - ID группы для постинга (_для разработки_)
+ - `DSN_USERNAME` - имя пользователя с полным доступом от сайта dsn.4geek.ru
+ - `DSN_PASSWORD` - пароль для пользователя с полным доступом на сайте dsn.4geek.ru
+
 
 ## Update tables
 Для обновления таблиц с мероприятиями, можно запустить скрипт
@@ -94,4 +108,3 @@ git commit -am "Fix typo"
 ```
 
 и так далее.
-

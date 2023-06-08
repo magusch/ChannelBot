@@ -3,9 +3,15 @@ from abc import abstractmethod
 from datetime import timedelta
 from typing import Generator, List
 
-from . import clients, database, events, notion_api, utils
+from . import clients
+from . import database
+from . import events
+from . import utils
+from . import dsn_site
+from . import dsn_site_session
 from .exceptions import PostingDatetimeError
 from .logger import get_logger
+
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -26,118 +32,28 @@ class Task:
 
 
 class CheckEventStatus(Task):
-    def _is_weekday(self, dt: datetime.datetime) -> bool:
-        return dt.weekday() in [0, 1, 2, 3, 4]
-
-    def _in_past(self, dt: datetime.datetime, msk_today: datetime.datetime) -> bool:
-        return dt.hour < msk_today.hour or (
-            dt.hour == msk_today.hour and dt.minute < msk_today.minute
-        )
-
-    def _datetimes_schecule(
-        self, msk_today: datetime.datetime
-    ) -> Generator[None, datetime.datetime, None]:
-        weekday = notion_api.get_weekday_posting_times(msk_today)
-        weekend = notion_api.get_weekend_posting_times(msk_today)
-
-        current_day_datetimes = list()
-        if self._is_weekday(msk_today):
-            today_datetimes = weekday
-        else:
-            today_datetimes = weekend
-
-        for dt in today_datetimes:
-            if not self._in_past(dt, msk_today):
-                current_day_datetimes.append(
-                    dt.replace(
-                        year=msk_today.year,
-                        month=msk_today.month,
-                        day=msk_today.day,
-                    )
-                )
-
-        if current_day_datetimes:
-            yield current_day_datetimes
-
-        while True:
-            msk_today += timedelta(days=1)
-            ymd = dict(
-                year=msk_today.year,
-                month=msk_today.month,
-                day=msk_today.day,
-            )
-
-            datetimes = weekday if self._is_weekday(msk_today) else weekend
-            yield [i.replace(**ymd) for i in datetimes]
-
-    def _posting_datetimes(
-        self, msk_today: datetime.datetime
-    ) -> Generator[None, datetime.datetime, None]:
-        datetimes_schecule = self._datetimes_schecule(msk_today)
-
-        while True:
-            day_schedule = next(datetimes_schecule)
-            yield from day_schedule
-
-    def run(self, msk_today: datetime.datetime, *args) -> None:
-        log.info("Check events posting status")
-
-        posting_datetimes = self._posting_datetimes(msk_today)
-        posting_datetime = next(posting_datetimes)
-
-        for row in notion_api.table3.collection.get_rows():
-            if row.status == "Posted":
-                continue
-
-            if row.status is None:
-                notion_api.set_property(row, "status", "Ready to post")
-
-            if row.posting_datetime is None:
-                if row.status == "Skip posting time":
-                    posting_datetime = next(posting_datetimes)  # skip time
-                    notion_api.set_property(row, "status", "Ready to post")
-
-                notion_api.set_property(row, "posting_datetime", posting_datetime)
-                posting_datetime = next(posting_datetimes)
-
-            else:
-                while row.posting_datetime.start >= posting_datetime:
-                    posting_datetime = next(posting_datetimes)
-
-                if row.status == "Skip posting time":
-                    posting_datetime = next(posting_datetimes)  # skip time
-                    notion_api.set_property(row, "status", "Ready to post")
-
-                    notion_api.set_property(row, "posting_datetime", posting_datetime)
-                    posting_datetime = next(posting_datetimes)
-
-                if row.posting_datetime.start < msk_today:
-                    raise PostingDatetimeError(
-                        "Unexcepteble error: posting_datetime is in the past!\n"
-                        "Please, check table 3,\nevent title: {}\nevent id: {}.".format(
-                            row.Title, row.Event_id
-                        )
-                    )
-
-            if row.status != "Ready to post":
-                raise ValueError(f"Unavailable posting status: {row.status}")
-
-        notion_api.check_posting_datetime()  # in table 3
+    def run(self, *args) -> None:
+        dsn_site_session.check_event_status()
 
 
 class MoveApproved(Task):
-    def run(self, msk_today: datetime.datetime, *args) -> None:
-        notion_api.update_table_views()
+    """
+    Перемещение выбранных меропритяий из таблиц 1 и 2 в таблицу 3.
+    """
 
-        log.info("Move approved events from table1 and table2 to table3")
-        notion_api.move_approved()
+    def run(self, *args) -> None:
+        log.info("Move approved events")
+        dsn_site_session.move_approved()
+
+        log.info("Fill empty post time")
+        dsn_site_session.fill_empty_post_time()
 
 
 class IsEmptyCheck(Task):
     def run(self, msk_today: datetime.datetime) -> None:
         log.info("Check for available events in table 3")
 
-        not_published_count = notion_api.not_published_count()
+        not_published_count = dsn_site.not_published_count()
         text = None
 
         if not_published_count == 1:
@@ -157,7 +73,7 @@ class PostingEvent(Task):
     def run(self, msk_today: datetime.datetime) -> None:
         log.info("Check posting status")
 
-        event = notion_api.next_event_to_channel()
+        event = dsn_site.next_event_to_channel()
 
         if event is not None:
             image_path = utils.prepare_image(event.image)
@@ -167,62 +83,124 @@ class PostingEvent(Task):
             log.info("Skipping posting time")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
-        posting_time = notion_api.next_posting_time(msk_today)
-        return posting_time is not None and msk_today == posting_time
+        posting_time = dsn_site.next_posting_time(msk_today)
+        return posting_time is not None and abs(msk_today - posting_time).seconds < 60
 
 
 class UpdateEvents(Task):
-    def _remove_old(self, msk_today: datetime.datetime) -> None:
-        log.info("Removing old events")
-        notion_api.remove_old_events(msk_today + timedelta(hours=1))
-        database.remove(msk_today + timedelta(hours=1))
-
     def _update_events(
-        self,
-        events: List[events.Event],
-        msk_today: datetime.datetime,
-        table: notion_api.TableView = None,
+        self, events: List[events.Event], table: str, msk_today: datetime
     ) -> None:
         log.info("Checking for existing events")
+        new_events = dsn_site.get_new_events(events)
+        log.info(f"New events count = {len(new_events)}")
 
-        new_events = notion_api.get_new_events(events)
-        log.info(f"New evenst count = {len(new_events)}")
+        if len(new_events) > 0:
+            log.info("Updating database")
+            database.add_events(new_events, explored_date=msk_today, table=table)
 
-        log.info("Updating notion table")
-        notion_api.add_events(new_events, msk_today, table=table)
+            log.info("Fill empty post time")
+            answer = dsn_site_session.fill_empty_post_time()
+            log.info(answer)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")
 
-        self._remove_old(msk_today)
+        log.info("Remove old events")
+        dsn_site_session.remove_old()
+        database.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
+
 
         log.info("Getting events from approved organizations for next 7 days")
         approved_events = events.from_approved_organizations(days=7)
         log.info(f"Collected {len(approved_events)} approved events.")
 
-        self._update_events(approved_events, msk_today, table=notion_api.table3)
+        self._update_events(
+            approved_events,
+            table="events_events2post",
+            msk_today=msk_today,
+        )
 
         log.info("Getting new events from other organizations for next 7 days")
         other_events = events.from_not_approved_organizations(days=7)
         log.info(f"Collected {len(other_events)} events")
 
-        self._update_events(other_events, msk_today, table=notion_api.table1)
+        self._update_events(
+            other_events,
+            table="events_eventsnotapprovednew",
+            msk_today=msk_today,
+        )
 
-        notion_count = notion_api.events_count()
+        events_count = sum(
+            [
+                database.rows_number(table="events_eventsnotapprovednew"),
+                database.rows_number(table="events_eventsnotapprovedold"),
+                database.rows_number(table="events_events2post"),
+            ]
+        )
 
-        log.info(f"Events count in notion table: {notion_count}")
+        log.info(f"Events count in database: {events_count}")
 
     def is_need_running(self, msk_today: datetime.datetime) -> bool:
-        updating_time = notion_api.next_updating_time(msk_today)
+        updating_time = dsn_site.next_updating_time(msk_today)
+
+        return updating_time is not None and msk_today == updating_time
+
+
+class EventsFromUrl(Task):
+    def _update_events(
+        self, events: List[events.Event], table: str, msk_today: datetime
+    ) -> None:
+        log.info("Checking for existing events")
+
+        log.info(f"New events from url count = {len(events)}")
+
+        log.info("Updating database")
+        database.add_events(events, explored_date=msk_today, table=table)
+
+    def run(self, msk_today: datetime.datetime, *args) -> None:
+        log.info("Start get post from url.")
+
+        events_from_urls = []
+        event_to_parse = database.get_scrape_it_events(table="events_events2post",)
+
+        for url in list(event_to_parse['url']):
+            event = events.from_url(url)
+            events_from_urls.append(event)
+
+        if not events_from_urls:
+            log.info("Nothing from url")
+            return
+
+        database.remove_by_event_id(list(event_to_parse['event_id']))
+
+        self._update_events(
+            events_from_urls,
+            table="events_events2post",
+            msk_today=msk_today,
+        )
+
+
+    def is_need_running(self, msk_today: datetime.datetime) -> bool:
+        updating_time = dsn_site.next_updating_time(msk_today)
 
         return updating_time is not None and msk_today == updating_time
 
 
 def get_edges() -> List[Task]:
     return [
-        MoveApproved(),
         CheckEventStatus(),
         IsEmptyCheck(),
         PostingEvent(),
+        MoveApproved(),
+        EventsFromUrl(),
         UpdateEvents(),
+    ]
+
+
+def get_posting() -> List[Task]:
+    return [
+        CheckEventStatus(),
+        IsEmptyCheck(),
+        PostingEvent()
     ]

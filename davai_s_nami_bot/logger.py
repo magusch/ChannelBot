@@ -4,6 +4,7 @@ from typing import Callable
 
 from .datetime_utils import STRFTIME
 
+
 LOG_FILE = "bot_logs.txt"
 
 

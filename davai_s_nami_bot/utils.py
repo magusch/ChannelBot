@@ -6,6 +6,7 @@ import PIL
 import requests
 from PIL import Image
 
+
 CONSTANTS_FILE_NAME = "prod_constants"
 WEEKNAMES = {
     0: "Пн",
@@ -35,23 +36,17 @@ REQUIRED_CONSTANT_NAMES = [
     "TIMEPAD_TOKEN",
     "BOT_TOKEN",
     "DATABASE_URL",
-    "NOTION_TOKEN_V2",
-    "NOTION_TABLE1_URL",
-    "NOTION_TABLE2_URL",
-    "NOTION_TABLE3_URL",
-    "NOTION_POSTING_TIMES_URL",
-    "NOTION_EVERYDAY_TIMES_URL",
-    "NOTION_TEST_TABLE1_URL",
-    "NOTION_TEST_TABLE2_URL",
-    "NOTION_TEST_TABLE3_URL",
     "CHANNEL_ID",
     "DEV_CHANNEL_ID",
     "VK_TOKEN",
     "VK_USER_ID",
     "VK_GROUP_ID",
     "VK_DEV_GROUP_ID",
-    "VK_ALBUM_ID",
-    "VK_DEV_ALBUM_ID",
+    "DSN_USERNAME",
+    "DSN_PASSWORD",
+    "DSN_DATABASE_URL",
+    "VK_ID",
+    "BASE_URL"
 ]
 
 
@@ -92,7 +87,7 @@ def read_constants():
 
 
 def prepare_image(image_url):
-    if image_url is None or isinstance(image_url, list):
+    if image_url is None or isinstance(image_url, list) or image_url=='':
         image_path = None
 
     else:

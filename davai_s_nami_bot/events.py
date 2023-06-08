@@ -1,4 +1,4 @@
-import re
+import re, json
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
@@ -6,57 +6,25 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad
-from notion.collection import CollectionRowBlock
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets
 
+from .parameters_for_channel import *
 from . import utils
 from .logger import catch_exceptions
 
-BAD_KEYWORDS = (
-    "вебинар",
-    "видеотренинг",
-    "тренинг",
-    "HR",
-    "консультация",
-)
-APPROVED_ORGANIZATIONS = [
-    "57992",  # Манеж
-    "79462",  # Новая Голландия
-    "42587",  # Молодёжный центр Эрмитажа
-    "186669",  # musicAeterna
-    "109981",  # ГЦСИ в Санкт-Петербурге
-    "67092",  # Музей советских игровых автоматов
-    "43027",  # Театр-студия
-    "78132",  # Театр-фестиваль «Балтийский дом»
-    "75134",  # Ленфильм
-]
+from .dsn_site_session import place_address
 
-BORING_ORGANIZATIONS = [
-    "185394",  # Арт-экспо выставки https://art-ekspo-vystavki.timepad.ru/
-    "106118",  # АНО «ЦДПО — «АЛЬФА-ДИАЛОГ»
-    "212547",  # Иерусалимская Сказка
-    "146675",  # Корни и Крылья https://korni-i-krylya.timepad.ru
-    "252995",  # Музей Христианской Культуры
-    "63354",  # Семейный досуговый клуб ШтангенЦиркулб
-    "181043",  # Фонд
-]
 
-CATEGORY_IDS_EXCLUDE = [
-    "217",  # Бизнесс
-    "376",  # Спорт
-    "379",  # Для детей
-    "399",  # Красота и здоровье
-    "453",  # Психология и самопознание
-    "1315",  # Образование за рубежом
-    "452",  # ИТ и интернет
-    "382",  # Иностранные языки
-    "2335",  # Интеллектуальные игры
-    "524",  # Хобби и творчество
-    "461",  # Экскурсии и путешествия
-    "462",  # Другие события
-]
-STARTS_AT_MIN = "{year_month_day}T11:00:00"
+
+BAD_KEYWORDS = parameters_list_ids('timepad', 'bad_keywords')
+
+APPROVED_ORGANIZATIONS = parameters_list_ids('timepad', 'approved_organization')
+BORING_ORGANIZATIONS = parameters_list_ids('timepad', 'boring_organization')
+
+CATEGORY_IDS_EXCLUDE = parameters_list_ids('timepad', 'exclude_categories')
+STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
+
 TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
     cities="Санкт-Петербург",
@@ -70,17 +38,27 @@ TIMEPAD_OTHERS_PARAMS = dict(
     organization_ids_exclude=(
         ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
     ),
-    price_max=500,
+    price_max=parameter_value('timepad', 'price_max'),
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 
+TICKETSCLOUD_ORG_IDS = parameters_list_ids('ticketscloud', 'org_id')
+
 ## PARSERS
 timepad_parser = Timepad()
 radario_parser = Radario()
+ticketscloud_parser = Ticketscloud()
+vk_parser = VK()
+qt_parser = QTickets()
 
+PARSER_URLS = {
+    'timepad.ru': timepad_parser, 'vk.': vk_parser,
+    'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
+    'qtickets.events': qt_parser
+}
 
 ## ESCRAPER EVENTS PARSERS
 def _title(event: NamedTuple):
@@ -90,17 +68,19 @@ def _title(event: NamedTuple):
 def _post(event: NamedTuple):
     title = _title(event)
 
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "**«", title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»**", title)
+    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
 
     date_from_to = date_to_post(event.date_from, event.date_to)
 
-    title_date = "{day} {month}".format(
-        day=event.date_from.day,
-        month=month_name(event.date_from),
-    )
 
-    title = f"**{title_date}** {title}\n\n"
+    # title_date = "{day} {month}".format(
+    #     day=event.date_from.day,
+    #     month=month_name(event.date_from),
+    # )
+    title_date = date_to_title(event.date_from, event.date_to)
+
+    title = f"*{title_date}* {title}\n\n"
 
     post_text = (
         event.post_text.strip()
@@ -109,11 +89,13 @@ def _post(event: NamedTuple):
         .replace("*", r"\*")
     )
 
+    address_line = address_line_to_post(event)
+
     footer = (
         "\n\n"
-        f"**Где:** {event.place_name}, {event.adress} \n"
-        f"**Когда:** {date_from_to} \n"
-        f"**Вход:** [{event.price}] ({event.url})"
+        f"*Где:* {address_line}\n"
+        f"*Когда:* {date_from_to} \n"
+        f"*Вход:* [{event.price}]({event.url})"
     )
 
     return title + post_text + footer
@@ -127,6 +109,40 @@ def month_name(dt: datetime):
     return utils.MONTHNAMES[dt.month]
 
 
+def date_to_title(date_from: datetime, date_to: datetime):
+    title_date = ''
+    if date_to is None:
+        title_date = "{day} {month}".format(
+            day=date_from.day,
+            month=month_name(date_from),
+        )
+    elif date_from.month != date_to.month:
+        title_date = "{day_s} {month_s} – {day_e} {month_e}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day,
+            month_e=month_name(date_to)
+        )
+    elif date_to.day-date_from.day==1:
+        title_date = "{day_s} и {day_e} {month_s}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day
+        )
+    elif date_from.day != date_to.day:
+        title_date = "{day_s} – {day_e} {month_s}".format(
+            day_s=date_from.day,
+            month_s=month_name(date_from),
+            day_e=date_to.day
+        )
+    else:
+        title_date = "{day} {month}".format(
+            day=date_from.day,
+            month=month_name(date_from),
+        )
+    return title_date
+
+
 def date_to_post(date_from: datetime, date_to: datetime):
     s_weekday = weekday_name(date_from)
     s_day = date_from.day
@@ -135,6 +151,7 @@ def date_to_post(date_from: datetime, date_to: datetime):
     s_minute = date_from.minute
 
     if date_to is not None:
+        e_weekday = weekday_name(date_to)
         e_day = date_to.day
         e_month = month_name(date_to)
         e_hour = date_to.hour
@@ -144,15 +161,36 @@ def date_to_post(date_from: datetime, date_to: datetime):
             start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
             end_format = f"{e_hour:02}:{e_minute:02}"
 
+        elif s_month!=e_month:
+            start_format = f"{s_weekday}-{e_weekday}, {s_day} {s_month} - "
+            end_format = f"{e_day} {e_month} {s_hour:02}:{s_minute:02}–{e_hour:02}:{e_minute:02}"
         else:
-            start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
-            end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
+            # start_format = f"с {s_day} {s_month} {s_hour:02}:{s_minute:02} "
+            # end_format = f"по {e_day} {e_month} {e_hour:02}:{e_minute:02}"
+            start_format = f"{s_weekday}-{e_weekday}, {s_day}–{e_day} {s_month} {s_hour:02}:{s_minute:02}-"
+            end_format = f"{e_hour:02}:{e_minute:02}"
 
     else:
         end_format = ""
         start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}"
 
     return start_format + end_format
+
+
+def address_line_to_post(event):
+    raw_address = f"{event.place_name}, {event.adress}"
+    address = place_address(raw_address)
+
+    address_line = None
+    if address.status_code<300:
+        address_dict = address.json()
+        if address_dict['response_code']<400:
+            address_line = address_dict["address_for_post"]
+
+    if not address_line:
+        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/spb/search/{event.adress})"
+
+    return address_line
 
 
 def _url(event: NamedTuple):
@@ -186,7 +224,8 @@ def _price(event: NamedTuple):
     return event.price
 
 
-##
+def _address(event: NamedTuple):
+    return f"{event.place_name}, {event.adress}"
 
 
 class Event:
@@ -199,6 +238,7 @@ class Event:
         image=_image,
         event_id=_event_id,
         price=_price,
+        address=_address,
     )
     _tags = list(_escraper_event_parsers)
 
@@ -215,16 +255,27 @@ class Event:
         )
 
     @classmethod
-    def from_notion_row(
-        cls, notion_row: CollectionRowBlock, get_property_func: Callable = None
-    ):
-        if get_property_func is None:
-            get_property_func = notion_row.get_property
+    def from_database(cls, data: tuple, columns=_tags):
+        """
+        Создание объекта `Event` из записи базы данных.
 
-        else:
-            get_property_func = partial(get_property_func, notion_row)
+        Parameters
+        ----------
+        data : tuple
+            Строчка данных из базы данных
 
-        return cls(**{tag: get_property_func(tag) for tag in cls._tags})
+        columns : iterable
+            Список из параметров мероприятия
+
+        Returns
+        -------
+        Event : Объект Event
+        """
+        # FIXME отладить работу
+        event_dict = {}
+        for i, tag in enumerate(columns):
+            event_dict[tag] = data[tag]
+        return cls(**event_dict)
 
 
 def not_approved_organization_filter(events: List[Event]):
@@ -238,8 +289,9 @@ def not_approved_organization_filter(events: List[Event]):
     for event in events:
         if (
             event is None
-            or "финанс" in event.title.lower()
-            or (event.to_date is not None and event.to_date - event.from_date > two_days)
+            or (
+                event.to_date is not None and event.to_date - event.from_date > two_days
+            )
             or event.image is None
         ):
             continue
@@ -255,7 +307,18 @@ def _get_events(
 ) -> List[Event]:
     events = parser.get_events(*args, **kwargs)
 
-    return [Event.from_escraper(event) for event in events if event.is_registration_open]
+    return [
+        Event.from_escraper(event) for event in events if event.is_registration_open
+    ]
+
+
+@catch_exceptions()
+def _get_event(
+    parser: escraper.parsers.base.BaseParser, *args, **kwargs
+) -> List[Event]:
+    event = parser.get_event(*args, **kwargs)
+
+    return Event.from_escraper(event)
 
 
 def from_approved_organizations(days: int) -> List[Event]:
@@ -274,8 +337,13 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    # мероприятия от radario (radario_others_organizations(days)) выключены
-    return timepad_others_organizations(days)
+    events = timepad_others_organizations(days) + radario_others_organizations(days) \
+             + ticketscloud_others_organizations(days)
+    if date.today().weekday() == 0:
+        events += vk_others_organizations(days)
+    elif date.today().weekday() % 2 == 1:
+        events += qtickets_others_organizations(days*2)
+    return events
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
@@ -288,6 +356,17 @@ def timepad_others_organizations(days: int) -> List[Event]:
 
 def radario_others_organizations(days: int) -> List[Event]:
     return get_radario_events(days)
+
+
+def ticketscloud_others_organizations(days: int) -> List[Event]:
+    return get_ticketscloud_events(days)
+
+
+def vk_others_organizations(days: int) -> List[Event]:
+    return get_vk_events(days)
+
+def qtickets_others_organizations(days: int) -> List[Event]:
+    return get_qtickets_events(days)
 
 
 def get_timepad_events(
@@ -317,17 +396,21 @@ def get_timepad_events(
         request_params["cities"] += ", Без города"
 
     # for getting all events (max limit 100)
+    event_ids = set()
     new_events = list()
     count = 0
     new_count = 1
     while new_count > 0:
         request_params["skip"] = count
 
-        new = _get_events(
+        _new = _get_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
         )
+        new = [i for i in _new if i.event_id not in event_ids]
+        event_ids.update([i.event_id for i in _new])
+
         new_count = len(new)
 
         new_events += new
@@ -338,7 +421,7 @@ def get_timepad_events(
     if events_filter:
         new_events = events_filter(new_events)
 
-    return unique(new_events)  # checking for unique -- just in case
+    return new_events
 
 
 def get_radario_events(
@@ -367,8 +450,43 @@ def get_radario_events(
     if events_filter:
         new_events = events_filter(new_events)
 
-    return unique(new_events)
+    return new_events
+
+def get_ticketscloud_events(
+    days: int, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+
+    return new_events
 
 
-def unique(events: List[Event]) -> List[Event]:
-    return list(set(events))
+def get_vk_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+    new_events = _get_events(vk_parser)
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def get_qtickets_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    request_params = {
+        "days": days,
+    }
+
+    new_events = _get_events(qt_parser, request_params=request_params)
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+def from_url(event_url):
+    for parser_base_url, parser in PARSER_URLS.items():
+        if parser_base_url in event_url:
+            return _get_event(parser, event_url=event_url)
