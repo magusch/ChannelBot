@@ -24,6 +24,7 @@ BORING_ORGANIZATIONS = parameters_list_ids('timepad', 'boring_organization')
 CATEGORY_IDS_EXCLUDE = parameters_list_ids('timepad', 'exclude_categories')
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
+FINISH_LINK = parameters_list_ids('dsn_site', 'finish_link')[0]
 
 TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
@@ -94,8 +95,9 @@ def _post(event: NamedTuple):
     footer = (
         "\n\n"
         f"*Где:* {address_line}\n"
-        f"*Когда:* {date_from_to} \n"
-        f"*Вход:* [{event.price}]({event.url})"
+        f"*Когда:* {date_from_to}\n"
+        f"*Вход:* [{event.price}]({event.url})\n"
+        f"\n{FINISH_LINK}"
     )
 
     return title + post_text + footer
