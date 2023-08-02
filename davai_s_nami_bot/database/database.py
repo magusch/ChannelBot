@@ -30,6 +30,7 @@ TAGS = [
     "url",
     "price",
     "address",
+    "full_text",
     "from_date",
     "to_date",
     "explored_date",
@@ -253,6 +254,7 @@ def add(
         event.url,
         event.price,
         event.address,
+        event.full_text,
         event.from_date,
         event.to_date,
         explored_date,
@@ -292,11 +294,11 @@ def remove_by_event_id(
     table: str = "events_events2post",
 ) -> None:
 
-    script = sql.SQL("DELETE FROM {table} WHERE event_id in (%s)").format(
+    script = sql.SQL("DELETE FROM {table} WHERE event_id in ({values})").format(
         table=sql.Identifier(table),
+        values=sql.SQL(",").join([sql.SQL("%s") for event_id in event_ids]),
     )
-    string_events_ids = "'" + "', '".join(event_ids) + "'"
-    _insert(script, (string_events_ids,))
+    _insert(script, (event_ids),)
 
 
 def remove(date: datetime) -> None:

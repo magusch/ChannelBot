@@ -146,6 +146,7 @@ class VKRequests(BaseClient):
         )
 
     def send_text(self, text: str, *, destination_id: Union[int, str], **kwargs):
+        text = text.replace("@DavaiSNami", '@davaisnamispb')
         content = dict(
             owner_id=destination_id,
             from_group=1,
@@ -165,6 +166,7 @@ class VKRequests(BaseClient):
         *,
         destination_id: Union[int, str],
     ):
+        text = text.replace("@DavaiSNami", "@davaisnamispb")
         with open(image_path, "rb") as image_obj:
             attachments = self._upload_image_to_wall(destination_id, image_obj)
 
