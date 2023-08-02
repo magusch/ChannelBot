@@ -66,6 +66,9 @@ def _title(event: NamedTuple):
     return event.title.replace("`", r"\`").replace("_", r"\_").replace("*", r"\*")
 
 
+def _full_text(event: NamedTuple):
+    return event.full_text
+
 def _post(event: NamedTuple):
     title = _title(event)
 
@@ -234,6 +237,7 @@ class Event:
     _escraper_event_parsers = dict(
         title=_title,
         post=_post,
+        full_text=_full_text,
         url=_url,
         from_date=_from_date,
         to_date=_to_date,
