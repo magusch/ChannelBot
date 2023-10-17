@@ -70,40 +70,41 @@ def _full_text(event: NamedTuple):
     return event.full_text
 
 def _post(event: NamedTuple):
-    title = _title(event)
-
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
-
-    date_from_to = date_to_post(event.date_from, event.date_to)
-
-
-    # title_date = "{day} {month}".format(
-    #     day=event.date_from.day,
-    #     month=month_name(event.date_from),
+    return event.post_text
+    # title = _title(event)
+    #
+    # title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    # title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
+    #
+    # date_from_to = date_to_post(event.date_from, event.date_to)
+    #
+    #
+    # # title_date = "{day} {month}".format(
+    # #     day=event.date_from.day,
+    # #     month=month_name(event.date_from),
+    # # )
+    # title_date = date_to_title(event.date_from, event.date_to)
+    #
+    # title = f"*{title_date}* {title}\n\n"
+    #
+    # post_text = (
+    #     event.post_text.strip()
+    #     .replace("`", r"\`")
+    #     .replace("_", r"\_")
+    #     .replace("*", r"\*")
     # )
-    title_date = date_to_title(event.date_from, event.date_to)
-
-    title = f"*{title_date}* {title}\n\n"
-
-    post_text = (
-        event.post_text.strip()
-        .replace("`", r"\`")
-        .replace("_", r"\_")
-        .replace("*", r"\*")
-    )
-
-    address_line = address_line_to_post(event)
-
-    footer = (
-        "\n\n"
-        f"*Где:* {address_line}\n"
-        f"*Когда:* {date_from_to}\n"
-        f"*Вход:* [{event.price}]({event.url})\n"
-        f"\n{FINISH_LINK}"
-    )
-
-    return title + post_text + footer
+    #
+    # address_line = address_line_to_post(event)
+    #
+    # footer = (
+    #     "\n\n"
+    #     f"*Где:* {address_line}\n"
+    #     f"*Когда:* {date_from_to}\n"
+    #     f"*Вход:* [{event.price}]({event.url})\n"
+    #     f"\n{FINISH_LINK}"
+    # )
+    #
+    # return title + post_text + footer
 
 
 def weekday_name(dt: datetime):

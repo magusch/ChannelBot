@@ -97,11 +97,12 @@ class UpdateEvents(Task):
 
         if len(new_events) > 0:
             log.info("Updating database")
-            database.add_events(new_events, explored_date=msk_today, table=table)
+            inserted_ids = database.add_events(new_events, explored_date=msk_today, table=table)
 
             log.info("Fill empty post time")
             answer = dsn_site_session.fill_empty_post_time()
             log.info(answer)
+            return inserted_ids
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start updating events.")
@@ -115,11 +116,14 @@ class UpdateEvents(Task):
         approved_events = events.from_approved_organizations(days=7)
         log.info(f"Collected {len(approved_events)} approved events.")
 
-        self._update_events(
+        inserted_ids = self._update_events(
             approved_events,
             table="events_events2post",
             msk_today=msk_today,
         )
+
+        if inserted_ids is not None:
+            dsn_site_session.make_post_text(inserted_ids)
 
         log.info("Getting new events from other organizations for next 7 days")
         other_events = events.from_not_approved_organizations(days=7)
@@ -156,7 +160,10 @@ class EventsFromUrl(Task):
         log.info(f"New events from url count = {len(events)}")
 
         log.info("Updating database")
-        database.add_events(events, explored_date=msk_today, table=table)
+        inserted_ids = database.add_events(events, explored_date=msk_today, table=table)
+
+        if inserted_ids is not None:
+            dsn_site_session.make_post_text(inserted_ids)
 
     def run(self, msk_today: datetime.datetime, *args) -> None:
         log.info("Start get post from url.")

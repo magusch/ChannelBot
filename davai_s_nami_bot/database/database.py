@@ -88,8 +88,12 @@ def _insert(script, data):
     db_cursor.execute(script, data)
     db_connection.commit()
 
+    last_insert_ids = db_cursor.fetchall()
+
     db_connection.close()
     db_cursor.close()
+
+    return last_insert_ids
 
 
 def _convert_to_timezone(values):
@@ -233,8 +237,13 @@ def add_events(
         queue_value = None
         params = dict(approved=False)
 
+    list_inserted_ids = []
     for event in events:
-        add(event, table, explored_date, queue_value, constant_params=params)
+        id = add(event, table, explored_date, queue_value, constant_params=params)
+        if type(id) == list:
+            list_inserted_ids.append(id[0][0])
+
+    return list_inserted_ids
 
 
 def add(
@@ -274,6 +283,7 @@ def add(
         "INSERT INTO {table} ({fields}) values "
         "({placeholders}, "
         "cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
+        "RETURNING id"
     ).format(
         table=sql.Identifier(table),
         fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in tags]),
@@ -286,7 +296,7 @@ def add(
     # - для таблицы 3 дополнительное поле `status` [default `ReadyToPost`]
     # - для таблицы 3 дополнительное поле `queue`
 
-    _insert(script, data)
+    return _insert(script, data)
 
 
 def remove_by_event_id(
