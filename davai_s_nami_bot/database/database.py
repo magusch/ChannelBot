@@ -88,7 +88,10 @@ def _insert(script, data):
     db_cursor.execute(script, data)
     db_connection.commit()
 
-    last_insert_ids = db_cursor.fetchall()
+    if db_cursor.rowcount > 0:
+        last_insert_ids = db_cursor.fetchall()
+    else:
+        last_insert_ids = None
 
     db_connection.close()
     db_cursor.close()
