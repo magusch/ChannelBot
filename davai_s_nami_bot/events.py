@@ -344,12 +344,31 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    events = timepad_others_organizations(days) + radario_others_organizations(days) \
-             + ticketscloud_others_organizations(days)
+    events = []
+
+    function_list = [
+        timepad_others_organizations,
+        radario_others_organizations,
+        ticketscloud_others_organizations,
+    ]
+
+    for func in function_list:
+        try:
+            events += func(days)
+        except Exception as e:
+            print(f"An error occurred in {func.__name__}: {e}")
+
     if date.today().weekday() == 0:
-        events += vk_others_organizations(days)
+        try:
+            events += vk_others_organizations(days)
+        except Exception as e:
+            print(f"An error occurred in vk_others_organizations: {e}")
     elif date.today().weekday() % 2 == 1:
-        events += qtickets_others_organizations(days*2)
+        try:
+            events += qtickets_others_organizations(days*2)
+        except Exception as e:
+            print(f"An error occurred in qtickets_others_organizations: {e}")
+
     return events
 
 
