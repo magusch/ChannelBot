@@ -76,9 +76,9 @@ TIMEPAD_OTHERS_PARAMS = dict(
     cities=timepad_city,
     moderation_statuses="featured, shown",
     organization_ids_exclude=(
-        ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
+        ", ".join(APPROVED_ORGANIZATIONS+BORING_ORGANIZATIONS)
     ),
-    price_max=parameter_value('timepad', 'price_max'),
+    price_max=parameters_list_ids('timepad', 'price_max')[0],
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
