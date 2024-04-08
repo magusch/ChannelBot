@@ -41,6 +41,7 @@ def _headers():
 
 def _current_session_get(url):
     session = requests.session()
+    if CSRFTOKEN is None or SESSION_ID is None: create_session()
 
     session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
     session.cookies["sessionid"] = SESSION_ID

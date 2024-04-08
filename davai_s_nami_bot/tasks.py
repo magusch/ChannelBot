@@ -91,6 +91,9 @@ class UpdateEvents(Task):
     def _update_events(
         self, events: List[events.Event], table: str, msk_today: datetime
     ) -> None:
+
+        dsn_site_session.create_session()
+
         log.info("Checking for existing events")
         new_events = dsn_site.get_new_events(events)
         log.info(f"New events count = {len(new_events)}")
