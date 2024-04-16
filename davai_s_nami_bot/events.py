@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS
 
 from .parameters_for_channel import *
 from . import utils
@@ -37,6 +37,7 @@ RADARIO_CITY = 'spb'
 QT_CITY = 'spb'
 VK_CITY_ID = '2'
 VK_CITY = 'Санкт-Петербург'
+MTS_CITY = 'sankt-peterburg'
 
 if CITY != 'spb':
     timepad_cities = parameters_list_ids('timepad', 'city')
@@ -60,6 +61,10 @@ if CITY != 'spb':
         VK_CITY = vk_cities[0]
     else:
         VK_CITY = ''
+
+    mts_cities = parameters_list_ids('mts', 'city')
+    if mts_cities:
+        MTS_CITY = mts_cities[0]
 
 
 
@@ -93,11 +98,12 @@ radario_parser = Radario()
 ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 qt_parser = QTickets()
+mts_parser = MTS()
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
-    'qtickets.events': qt_parser
+    'qtickets.events': qt_parser, 'live.mts.ru': mts_parser
 }
 
 ## ESCRAPER EVENTS PARSERS
@@ -397,16 +403,23 @@ def from_not_approved_organizations(days: int) -> List[Event]:
         except Exception as e:
             print(f"An error occurred in {func.__name__}: {e}")
 
-    if date.today().weekday() == 0:
+    weekday = date.today().weekday()
+    if weekday == 6:
         try:
             events += vk_others_organizations(days)
         except Exception as e:
             print(f"An error occurred in vk_others_organizations: {e}")
-    elif date.today().weekday() % 2 == 1:
+    elif weekday % 2 == 1:
         try:
             events += qtickets_others_organizations(days*2)
         except Exception as e:
             print(f"An error occurred in qtickets_others_organizations: {e}")
+    elif weekday == 0 or weekday == 4:
+        try:
+            events += mts_others_organization(days)
+        except Exception as e:
+            print(f"An error occurred in mts_others_organization: {e}")
+
 
     return events
 
@@ -430,8 +443,13 @@ def ticketscloud_others_organizations(days: int) -> List[Event]:
 def vk_others_organizations(days: int) -> List[Event]:
     return get_vk_events(days)
 
+
 def qtickets_others_organizations(days: int) -> List[Event]:
     return get_qtickets_events(days)
+
+
+def mts_others_organization(days: int) -> List[Event]:
+    return get_mts_events(days)
 
 
 def get_timepad_events(
@@ -560,6 +578,24 @@ def get_qtickets_events(
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
+
+
+def get_mts_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+    request_params = {
+            "city": MTS_CITY,
+            "categories": categories
+    }
+
+    new_events = _get_events(mts_parser, request_params=request_params)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
 
 def from_url(event_url):
     for parser_base_url, parser in PARSER_URLS.items():
