@@ -267,6 +267,9 @@ def _image(event: NamedTuple):
     return event.poster_imag
 
 
+def _category(event: NamedTuple):
+    return event.category
+
 def _event_id(event: NamedTuple):
     return event.id
 
@@ -290,6 +293,7 @@ class Event:
         image=_image,
         event_id=_event_id,
         price=_price,
+        category=_category,
         address=_address,
     )
     _tags = list(_escraper_event_parsers)
@@ -420,7 +424,6 @@ def from_not_approved_organizations(days: int) -> List[Event]:
         except Exception as e:
             print(f"An error occurred in mts_others_organization: {e}")
 
-
     return events
 
 
@@ -540,7 +543,7 @@ def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS, city=CITY)
+    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS, city=CITY, tags=ALL_EVENT_TAGS)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -559,7 +562,7 @@ def get_vk_events(
         'city': VK_CITY
     }
 
-    new_events = _get_events(vk_parser, request_params=request_params)
+    new_events = _get_events(vk_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -574,7 +577,7 @@ def get_qtickets_events(
         "city": QT_CITY
     }
 
-    new_events = _get_events(qt_parser, request_params=request_params)
+    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -590,7 +593,7 @@ def get_mts_events(
             "categories": categories
     }
 
-    new_events = _get_events(mts_parser, request_params=request_params)
+    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
 
     if events_filter:
         new_events = events_filter(new_events)
