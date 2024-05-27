@@ -141,7 +141,6 @@ class UpdateEvents(Task):
         events_count = sum(
             [
                 database.rows_number(table="events_eventsnotapprovednew"),
-                database.rows_number(table="events_eventsnotapprovedold"),
                 database.rows_number(table="events_events2post"),
             ]
         )

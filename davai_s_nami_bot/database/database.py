@@ -39,8 +39,8 @@ TAGS = [
 DATABASE_URL = os.environ.get("DATABASE_URL")
 TIMEZONE = pytz.timezone("Europe/Moscow")
 TABLES = [
-    "events_eventsnotapprovednew",  # TODO wtf with table names!?
-    "events_eventsnotapprovedold",
+    "events_eventsnotapprovednew",
+    "events_eventsnotapprovedproposed",
     "events_events2post",
     "events_postingtime",
     "dev_events",  # telegram_posted TODO ещё одна таблица для постов, которые опубликованы в телеграм
@@ -181,7 +181,7 @@ def get_from_all_tables() -> pd.DataFrame:
     return pd.concat(
         [
             get_all(table="events_eventsnotapprovednew"),
-            get_all(table="events_eventsnotapprovedold"),
+            get_all(table="events_eventsnotapprovedproposed"),
             get_all(table="events_events2post"),
         ],
         sort=False,
