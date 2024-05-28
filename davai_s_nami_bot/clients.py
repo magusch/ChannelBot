@@ -9,7 +9,7 @@ from telebot import TeleBot
 
 from . import database
 from . import events
-from parameters_for_channel import parameter_value
+from .parameters_for_channel import parameter_value
 
 
 def format_text(text: str, style: str = None):
