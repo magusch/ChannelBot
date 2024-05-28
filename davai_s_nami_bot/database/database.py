@@ -43,7 +43,8 @@ TABLES = [
     "events_eventsnotapprovedproposed",
     "events_events2post",
     "events_postingtime",
-    "dev_events",  # telegram_posted TODO ещё одна таблица для постов, которые опубликованы в телеграм
+    "dev_events",
+    "events_event",
 ]
 
 
@@ -340,3 +341,14 @@ def set_status(table: str, event_id: str, status: str) -> None:
     )
 
     _insert(script, data=(status, event_id))
+
+
+def set_post_url(event_id: str, post_url: str) -> None:
+    table = TABLES[5]
+    check_table(table)
+
+    script = sql.SQL("UPDATE {table} SET post_url = %s WHERE event_id = %s").format(
+        table=sql.Identifier(table)
+    )
+
+    _insert(script, data=(post_url, event_id))
