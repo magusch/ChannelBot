@@ -344,7 +344,7 @@ def set_status(table: str, event_id: str, status: str) -> None:
 
 
 def set_post_url(event_id: str, post_url: str) -> None:
-    table = TABLES[5]
+    table = TABLES[2]
     check_table(table)
 
     script = sql.SQL("UPDATE {table} SET post_url = %s WHERE event_id = %s").format(
