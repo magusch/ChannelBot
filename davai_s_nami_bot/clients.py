@@ -75,13 +75,14 @@ class Telegram(BaseClient):
     )
     name = "telegram_channel"
     formatter_style = None
-    channel_link = parameter_value('dsn_site', 'channel_link')
+
 
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="markdown",
         )
+        self.channel_link = parameter_value('dsn_site', 'channel_link')
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
