@@ -590,7 +590,8 @@ def get_mts_events(
     categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
     request_params = {
             "city": MTS_CITY,
-            "categories": categories
+            "categories": categories,
+            "days": days
     }
 
     new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
