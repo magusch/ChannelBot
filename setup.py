@@ -5,6 +5,7 @@ with open("requirements.txt") as fp:
 
 setuptools.setup(
     name="channelbot",
+    version="1.0.2",
     packages=setuptools.find_packages(),
     install_requires=install_requires,
     include_package_data=True,

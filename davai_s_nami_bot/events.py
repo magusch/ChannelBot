@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS
 
 from .parameters_for_channel import *
 from . import utils
@@ -26,20 +26,64 @@ STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
 FINISH_LINK = parameters_list_ids('dsn_site', 'finish_link')[0]
 
+cities = parameters_list_ids('dsn_site', 'city')
+if cities:
+    CITY = cities[0]
+else:
+    CITY = 'spb'
+
+timepad_city = "Санкт-Петербург"
+RADARIO_CITY = 'spb'
+QT_CITY = 'spb'
+VK_CITY_ID = '2'
+VK_CITY = 'Санкт-Петербург'
+MTS_CITY = 'sankt-peterburg'
+
+if CITY != 'spb':
+    timepad_cities = parameters_list_ids('timepad', 'city')
+    if timepad_cities:
+        timepad_city = timepad_cities[0]
+
+    radario_cities = parameters_list_ids('radario', 'city')
+    if radario_cities:
+        RADARIO_CITY = radario_cities[0]
+
+    qt_cities = parameters_list_ids('qtickets', 'city')
+    if qt_cities:
+        QT_CITY = qt_cities[0]
+
+    vk_cities_id = parameters_list_ids('vk', 'city_id')
+    if vk_cities_id:
+        VK_CITY_ID = vk_cities_id[0]
+
+    vk_cities = parameters_list_ids('vk', 'city')
+    if vk_cities:
+        VK_CITY = vk_cities[0]
+    else:
+        VK_CITY = ''
+
+    mts_cities = parameters_list_ids('mts', 'city')
+    if mts_cities:
+        MTS_CITY = mts_cities[0]
+
+
+
+
+
 TIMEPAD_APPROVED_PARAMS = dict(
     limit=100,
-    cities="Санкт-Петербург",
+    cities=timepad_city,
     moderation_statuses="featured, shown",
     organization_ids=", ".join(APPROVED_ORGANIZATIONS),
 )
 TIMEPAD_OTHERS_PARAMS = dict(
     limit=100,
-    cities="Санкт-Петербург",
+    cities=timepad_city,
     moderation_statuses="featured, shown",
     organization_ids_exclude=(
-        ", ".join(APPROVED_ORGANIZATIONS) + ", " + ", ".join(BORING_ORGANIZATIONS)
+        ", ".join(APPROVED_ORGANIZATIONS+BORING_ORGANIZATIONS)
     ),
-    price_max=parameter_value('timepad', 'price_max'),
+    price_max=parameters_list_ids('timepad', 'price_max')[0],
     category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
     keywords_exclude=", ".join(BAD_KEYWORDS),
 )
@@ -54,11 +98,12 @@ radario_parser = Radario()
 ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 qt_parser = QTickets()
+mts_parser = MTS()
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
-    'qtickets.events': qt_parser
+    'qtickets.events': qt_parser, 'live.mts.ru': mts_parser
 }
 
 ## ESCRAPER EVENTS PARSERS
@@ -70,40 +115,41 @@ def _full_text(event: NamedTuple):
     return event.full_text
 
 def _post(event: NamedTuple):
-    title = _title(event)
-
-    title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
-    title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
-
-    date_from_to = date_to_post(event.date_from, event.date_to)
-
-
-    # title_date = "{day} {month}".format(
-    #     day=event.date_from.day,
-    #     month=month_name(event.date_from),
+    return event.post_text
+    # title = _title(event)
+    #
+    # title = re.sub(r"[\"«](?=[^\ \.!\n])", "*«", title)
+    # title = re.sub(r"[\"»](?=[^a-zA-Zа-яА-Я0-9]|$)", "»*", title)
+    #
+    # date_from_to = date_to_post(event.date_from, event.date_to)
+    #
+    #
+    # # title_date = "{day} {month}".format(
+    # #     day=event.date_from.day,
+    # #     month=month_name(event.date_from),
+    # # )
+    # title_date = date_to_title(event.date_from, event.date_to)
+    #
+    # title = f"*{title_date}* {title}\n\n"
+    #
+    # post_text = (
+    #     event.post_text.strip()
+    #     .replace("`", r"\`")
+    #     .replace("_", r"\_")
+    #     .replace("*", r"\*")
     # )
-    title_date = date_to_title(event.date_from, event.date_to)
-
-    title = f"*{title_date}* {title}\n\n"
-
-    post_text = (
-        event.post_text.strip()
-        .replace("`", r"\`")
-        .replace("_", r"\_")
-        .replace("*", r"\*")
-    )
-
-    address_line = address_line_to_post(event)
-
-    footer = (
-        "\n\n"
-        f"*Где:* {address_line}\n"
-        f"*Когда:* {date_from_to}\n"
-        f"*Вход:* [{event.price}]({event.url})\n"
-        f"\n{FINISH_LINK}"
-    )
-
-    return title + post_text + footer
+    #
+    # address_line = address_line_to_post(event)
+    #
+    # footer = (
+    #     "\n\n"
+    #     f"*Где:* {address_line}\n"
+    #     f"*Когда:* {date_from_to}\n"
+    #     f"*Вход:* [{event.price}]({event.url})\n"
+    #     f"\n{FINISH_LINK}"
+    # )
+    #
+    # return title + post_text + footer
 
 
 def weekday_name(dt: datetime):
@@ -193,7 +239,7 @@ def address_line_to_post(event):
             address_line = address_dict["address_for_post"]
 
     if not address_line:
-        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/spb/search/{event.adress})"
+        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/{CITY}/search/{event.adress})"
 
     return address_line
 
@@ -221,6 +267,9 @@ def _image(event: NamedTuple):
     return event.poster_imag
 
 
+def _category(event: NamedTuple):
+    return event.category
+
 def _event_id(event: NamedTuple):
     return event.id
 
@@ -244,6 +293,7 @@ class Event:
         image=_image,
         event_id=_event_id,
         price=_price,
+        category=_category,
         address=_address,
     )
     _tags = list(_escraper_event_parsers)
@@ -343,12 +393,37 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
-    events = timepad_others_organizations(days) + radario_others_organizations(days) \
-             + ticketscloud_others_organizations(days)
-    if date.today().weekday() == 0:
-        events += vk_others_organizations(days)
-    elif date.today().weekday() % 2 == 1:
-        events += qtickets_others_organizations(days*2)
+    events = []
+
+    function_list = [
+        timepad_others_organizations,
+        radario_others_organizations,
+        ticketscloud_others_organizations,
+    ]
+
+    for func in function_list:
+        try:
+            events += func(days)
+        except Exception as e:
+            print(f"An error occurred in {func.__name__}: {e}")
+
+    weekday = date.today().weekday()
+    if weekday == 6:
+        try:
+            events += vk_others_organizations(days)
+        except Exception as e:
+            print(f"An error occurred in vk_others_organizations: {e}")
+    elif weekday % 2 == 1:
+        try:
+            events += qtickets_others_organizations(days*2)
+        except Exception as e:
+            print(f"An error occurred in qtickets_others_organizations: {e}")
+    elif weekday == 0 or weekday == 4:
+        try:
+            events += mts_others_organization(days)
+        except Exception as e:
+            print(f"An error occurred in mts_others_organization: {e}")
+
     return events
 
 
@@ -371,8 +446,13 @@ def ticketscloud_others_organizations(days: int) -> List[Event]:
 def vk_others_organizations(days: int) -> List[Event]:
     return get_vk_events(days)
 
+
 def qtickets_others_organizations(days: int) -> List[Event]:
     return get_qtickets_events(days)
+
+
+def mts_others_organization(days: int) -> List[Event]:
+    return get_mts_events(days)
 
 
 def get_timepad_events(
@@ -449,6 +529,7 @@ def get_radario_events(
         "from": date_from,
         "to": date_to,
         "category": category,
+        "city": RADARIO_CITY,
     }
 
     new_events = _get_events(radario_parser, request_params=request_params)
@@ -462,7 +543,7 @@ def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS)
+    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS, city=CITY, tags=ALL_EVENT_TAGS)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -473,7 +554,15 @@ def get_ticketscloud_events(
 def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    new_events = _get_events(vk_parser)
+
+
+    request_params = {
+        'days': 15,
+        'city_id': VK_CITY_ID,
+        'city': VK_CITY
+    }
+
+    new_events = _get_events(vk_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -485,12 +574,32 @@ def get_qtickets_events(
 
     request_params = {
         "days": days,
+        "city": QT_CITY
     }
 
-    new_events = _get_events(qt_parser, request_params=request_params)
+    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
+
+
+def get_mts_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+    request_params = {
+            "city": MTS_CITY,
+            "categories": categories,
+            "days": days
+    }
+
+    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
 
 def from_url(event_url):
     for parser_base_url, parser in PARSER_URLS.items():

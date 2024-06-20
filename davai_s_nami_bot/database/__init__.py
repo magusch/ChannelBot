@@ -9,8 +9,8 @@ from .database import (
     rows_number,
     remove,
     remove_by_event_id,
-    set_status
-
+    set_status,
+    set_post_url
 )
 
 from .database_dsn_bot import (

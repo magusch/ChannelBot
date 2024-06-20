@@ -9,6 +9,7 @@ from telebot import TeleBot
 
 from . import database
 from . import events
+from .parameters_for_channel import parameter_value
 
 
 def format_text(text: str, style: str = None):
@@ -75,16 +76,20 @@ class Telegram(BaseClient):
     name = "telegram_channel"
     formatter_style = None
 
+
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="markdown",
         )
+        self.channel_link = parameter_value('dsn_site', 'channel_link')
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
         database.add_event_for_dsn_bot(event, message.message_id)
+        post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
+        database.set_post_url(event.event_id, post_url)
         #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):

@@ -10,6 +10,7 @@ UPDATE_ALL_URL = BASE_URL + "events/update_all/"
 FILL_EMPTY_POST_TIME_URL = BASE_URL + "events/fill_empty_post_time/"
 PARAMETERS_FOR_CHANNEL = BASE_URL + "events/parameters_for_channel/"
 PLACE_ADDRESS = BASE_URL + "place/place_address/"
+MAKE_POST = BASE_URL + "events/make_post/"
 CSRFTOKEN = None
 SESSION_ID = None
 
@@ -40,6 +41,7 @@ def _headers():
 
 def _current_session_get(url):
     session = requests.session()
+    if CSRFTOKEN is None or SESSION_ID is None: create_session()
 
     session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
     session.cookies["sessionid"] = SESSION_ID
@@ -66,3 +68,13 @@ def parameter_for_dsn_channel(parameters={}):
 def place_address(raw_address):
     url = f"{PLACE_ADDRESS}?address={raw_address}"
     return _current_session_get(url=url)
+
+def make_post_text(ids):
+    if type(ids) == list:
+        ids_string = ','.join(map(str, ids))
+    else:
+        ids_string = ids
+    url = f"{MAKE_POST}{ids_string}"
+    _current_session_get(url=url)
+
+

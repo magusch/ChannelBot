@@ -29,6 +29,7 @@ TAGS = [
     "image",
     "url",
     "price",
+    "category",
     "address",
     "full_text",
     "from_date",
@@ -38,11 +39,12 @@ TAGS = [
 DATABASE_URL = os.environ.get("DATABASE_URL")
 TIMEZONE = pytz.timezone("Europe/Moscow")
 TABLES = [
-    "events_eventsnotapprovednew",  # TODO wtf with table names!?
-    "events_eventsnotapprovedold",
+    "events_eventsnotapprovednew",
+    "events_eventsnotapprovedproposed",
     "events_events2post",
     "events_postingtime",
-    "dev_events",  # telegram_posted TODO ещё одна таблица для постов, которые опубликованы в телеграм
+    "dev_events",
+    "events_event",
 ]
 
 
@@ -88,8 +90,15 @@ def _insert(script, data):
     db_cursor.execute(script, data)
     db_connection.commit()
 
+    try:
+        last_insert_ids = db_cursor.fetchall()
+    except:
+        last_insert_ids = None
+
     db_connection.close()
     db_cursor.close()
+
+    return last_insert_ids
 
 
 def _convert_to_timezone(values):
@@ -173,7 +182,7 @@ def get_from_all_tables() -> pd.DataFrame:
     return pd.concat(
         [
             get_all(table="events_eventsnotapprovednew"),
-            get_all(table="events_eventsnotapprovedold"),
+            get_all(table="events_eventsnotapprovedproposed"),
             get_all(table="events_events2post"),
         ],
         sort=False,
@@ -233,8 +242,13 @@ def add_events(
         queue_value = None
         params = dict(approved=False)
 
+    list_inserted_ids = []
     for event in events:
-        add(event, table, explored_date, queue_value, constant_params=params)
+        id = add(event, table, explored_date, queue_value, constant_params=params)
+        if type(id) == list:
+            list_inserted_ids.append(id[0][0])
+
+    return list_inserted_ids
 
 
 def add(
@@ -253,6 +267,7 @@ def add(
         event.image or "",
         event.url,
         event.price,
+        event.category,
         event.address,
         event.full_text,
         event.from_date,
@@ -274,6 +289,7 @@ def add(
         "INSERT INTO {table} ({fields}) values "
         "({placeholders}, "
         "cast(%s as TIMESTAMP), cast(%s as TIMESTAMP), cast(%s as TIMESTAMP))"
+        "RETURNING id"
     ).format(
         table=sql.Identifier(table),
         fields=sql.SQL(", ").join([sql.Identifier(tag) for tag in tags]),
@@ -286,7 +302,7 @@ def add(
     # - для таблицы 3 дополнительное поле `status` [default `ReadyToPost`]
     # - для таблицы 3 дополнительное поле `queue`
 
-    _insert(script, data)
+    return _insert(script, data)
 
 
 def remove_by_event_id(
@@ -325,3 +341,14 @@ def set_status(table: str, event_id: str, status: str) -> None:
     )
 
     _insert(script, data=(status, event_id))
+
+
+def set_post_url(event_id: str, post_url: str) -> None:
+    table = TABLES[2]
+    check_table(table)
+
+    script = sql.SQL("UPDATE {table} SET post_url = %s WHERE event_id = %s").format(
+        table=sql.Identifier(table)
+    )
+
+    _insert(script, data=(post_url, event_id))
