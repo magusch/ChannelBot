@@ -1,0 +1,3 @@
+FROM channelbot_base:latest
+
+CMD ["celery", "-A", "davai_s_nami_bot.celery_app", "worker", "--loglevel=info"]

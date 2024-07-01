@@ -6,7 +6,7 @@ from ..events import Event
 
 DSN_DATABASE_URL = os.environ.get("DSN_DATABASE_URL")
 
-DSN_BOT_TABLE = "dev_events"   #table for telegram bot "Давай с нами, Бот"
+DSN_BOT_TABLE = "bot_events"   #table for telegram bot "Давай с нами, Бот"
 DSN_BOT_TAGS = ["id", "title", "post_id", "date_from", "date_to", "price"] # Tags for telegram bot "Давай с нами, Бот"
 
 
@@ -81,5 +81,5 @@ def remove_event_from_dsn_bot(date):
 
 
 def select_dsn_bot():
-    script = "SELECT * FROM dev_events Limit 10"
+    script = "SELECT * FROM bot_events Limit 10"
     _get(script)

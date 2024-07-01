@@ -43,7 +43,7 @@ TABLES = [
     "events_eventsnotapprovedproposed",
     "events_events2post",
     "events_postingtime",
-    "dev_events",
+    "bot_events",
     "events_event",
 ]
 
