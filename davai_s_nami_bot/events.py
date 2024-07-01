@@ -562,7 +562,7 @@ def get_vk_events(
         'city': VK_CITY
     }
 
-    new_events = _get_events(vk_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    new_events = _get_events(vk_parser, request_params=request_params)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
