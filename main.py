@@ -61,6 +61,10 @@ async def get_status(task_id: str, token: str = Depends(verify_token)):
     else:
         return {"status": result.state}
 
+@app.get("/")
+async def index():
+    return {'message': 'Hello. How are you?'}
+
 
 if __name__ == '__main__':
     import uvicorn

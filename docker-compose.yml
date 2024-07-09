@@ -1,15 +1,16 @@
 version: '3.8'
 
 services:
-  web:
+  fastapi_app:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        SERVICE: web
+      target: dependencies
     container_name: fastapi_app
     ports:
       - "8005:8005"
+    environment:
+      - SERVICE=fastapi_app
     depends_on:
       - redis
 
@@ -17,10 +18,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        SERVICE: celery_worker
+      target: dependencies
     container_name: celery_worker
-    command: celery -A davai_s_nami_bot.celery_app worker --loglevel=info
+    environment:
+      - SERVICE=celery_worker
+      - REDIS_HOST=redis
     depends_on:
       - redis
 
@@ -28,10 +30,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        SERVICE: celery_beat
+      target: dependencies
     container_name: celery_beat
-    command: celery -A davai_s_nami_bot.celery_app beat --loglevel=info
+    environment:
+      - SERVICE=celery_beat
+      - REDIS_HOST=redis
     depends_on:
       - redis
 
@@ -40,3 +43,5 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+    environment:
+      - REDIS_HOST=redis
