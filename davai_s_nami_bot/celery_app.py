@@ -9,10 +9,9 @@ def create_celery_app():
         'davai_s_nami_bot',
         broker=os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
         backend=os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+        broker_connection_retry_on_startup=True,
     )
 
-    print(f'broker:')
-    print(os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
 
 
     celery_app.conf.update(
@@ -37,5 +36,4 @@ def create_celery_app():
 celery_app = create_celery_app()
 
 redis_host = os.getenv('REDIS_HOST', 'localhost')
-print(redis_host)
 redis_client = Redis(host=redis_host, port=6379, db=0)

@@ -47,24 +47,26 @@ def schedule_posting_tasks():
 
     if current_scheduled_info:
         current_scheduled_time_str = current_scheduled_info.get(b'time').decode('utf-8')
-        current_scheduled_time = datetime.datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+        current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+        current_scheduled_time_good = msk_today.replace(
+            hour=current_scheduled_time.hour, minute=current_scheduled_time.minute, second=0, microsecond=0
+        )
         current_task_id = current_scheduled_info.get(b'task_id').decode('utf-8')
-
-        if event_time < current_scheduled_time:
-            # Отменяем старую задачу
+        if event_time < current_scheduled_time_good:
+            # Cancel old task
             if current_task_id:
                 celery_app.control.revoke(current_task_id, terminate=True)
 
-            # Планируем новую задачу
+            # Schedule new task with new time
             result = post_to_telegram.apply_async((), eta=event_time)
             redis_client.hset(redis_key,
                               mapping={'time': event_time_str, 'task_id': result.id})
-            print(f"Posting task rescheduled to {event_time_str}")
+            log.info(f"Posting task rescheduled to {event_time_str}")
     else:
         result = post_to_telegram.apply_async((), eta=event_time)
         redis_client.hset(redis_key,
                           mapping={'time': event_time_str, 'task_id': result.id})
-        print(f"Posting task scheduled to {event_time_str}")
+        log.info(f"Posting task scheduled to {event_time_str}")
 
 
 @celery_app.task
