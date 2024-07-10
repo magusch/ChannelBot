@@ -7,7 +7,6 @@ import pandas as pd
 from .events import Event
 from .logger import catch_exceptions, get_logger
 from . import database
-from . import clients
 
 
 DEFAULT_UPDATING_STRFTIME = "00:00"
@@ -26,12 +25,20 @@ def next_event_to_channel():
     """
     events = database.get_event_to_post_now(table="events_events2post")
 
-    event = Event.from_database(
-        events[events["status"] == "ReadyToPost"].sort_values("queue").iloc[0, :]
-    )
-    database.set_status(
-        table="events_events2post", event_id=event.event_id, status="Posted"
-    )
+    if events is None or events.empty:
+        event = None
+    else:
+        filtered_events = events[events["status"] == "ReadyToPost"].sort_values("queue")
+
+        if not filtered_events.empty:
+            event = Event.from_database(
+                filtered_events.iloc[0, :]
+            )
+            database.set_status(
+                table="events_events2post", event_id=event.event_id, status="Posted"
+            )
+        else:
+            event = None
 
     return event
 
