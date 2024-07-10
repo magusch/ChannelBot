@@ -20,6 +20,7 @@ __all__ = (
     "remove",
     "remove_by_event_id",
     "set_status",
+    "get_event_to_post_now",
 )
 
 TAGS = [
@@ -167,6 +168,16 @@ def get_ready_to_post(table: str) -> pd.DataFrame:
 
     return _get_dataframe(script)
 
+
+def get_event_to_post_now(table: str) -> pd.DataFrame:
+    check_table(table)
+
+    script = sql.SQL("SELECT * FROM {table_name} WHERE status='ReadyToPost' "
+                     "AND post_date BETWEEN NOW() - INTERVAL '5 minutes' AND NOW() + INTERVAL '5 minutes';").format(
+        table_name=sql.Identifier(table)
+    )
+
+    return _get_dataframe(script)
 
 def get_scrape_it_events(table: str) -> pd.DataFrame:
     check_table(table)

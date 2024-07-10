@@ -24,7 +24,7 @@ def next_event_to_channel():
     - Значение поля `status` равное `ReadyToPost`
     - Наличие значения в поле `post_date` (равное текущему времени)
     """
-    events = database.get_ready_to_post(table="events_events2post")
+    events = database.get_event_to_post_now(table="events_events2post")
 
     event = Event.from_database(
         events[events["status"] == "ReadyToPost"].sort_values("queue").iloc[0, :]

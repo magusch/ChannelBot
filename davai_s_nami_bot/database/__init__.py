@@ -10,7 +10,8 @@ from .database import (
     remove,
     remove_by_event_id,
     set_status,
-    set_post_url
+    set_post_url,
+    get_event_to_post_now
 )
 
 from .database_dsn_bot import (

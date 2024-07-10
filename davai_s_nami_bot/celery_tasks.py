@@ -22,16 +22,12 @@ def post_to_telegram():
     log.info(f"Posting event")
 
     event = dsn_site.next_event_to_channel()
-
     if event is not None:
-        msk_today = get_msk_today()
-        if abs(event.posting_time - msk_today) < timedelta(seconds=300):
-            image_path = utils.prepare_image(event.image)
-            clients.Clients().send_post(event=event, image_path=image_path)
-        else:
-            log.info("Time schedule for event was changed or event already posted")
+        image_path = utils.prepare_image(event.image)
+        clients.Clients().send_post(event=event, image_path=image_path)
+        log.info("Event was posted")
     else:
-        log.info("Event not found or already posted")
+        log.info("Event not found (or time was changed) or already posted")
     schedule_posting_tasks.apply_async()
 
 
@@ -41,6 +37,9 @@ def schedule_posting_tasks():
     msk_today = get_msk_today()
     event_time = dsn_site.next_posting_time(msk_today)
 
+    if event_time is None:
+        log.info("No events for posting")
+        return
     event_time_str = event_time.strftime('%Y-%m-%d %H:%M:%S')
     redis_key = 'posting_event'
     current_scheduled_info = redis_client.hgetall(redis_key)
@@ -52,8 +51,8 @@ def schedule_posting_tasks():
             hour=current_scheduled_time.hour, minute=current_scheduled_time.minute, second=0, microsecond=0
         )
         current_task_id = current_scheduled_info.get(b'task_id').decode('utf-8')
-        if event_time < current_scheduled_time_good:
-            # Cancel old task
+        if abs(current_scheduled_time_good - event_time) > timedelta(minutes=4):
+            # Cancel old task time
             if current_task_id:
                 celery_app.control.revoke(current_task_id, terminate=True)
 
