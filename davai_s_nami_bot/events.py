@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture
 
 from .parameters_for_channel import *
 from . import utils
@@ -38,6 +38,7 @@ QT_CITY = 'spb'
 VK_CITY_ID = '2'
 VK_CITY = 'Санкт-Петербург'
 MTS_CITY = 'sankt-peterburg'
+CULTURE_CITY = 'sankt-peterburg'
 
 if CITY != 'spb':
     timepad_cities = parameters_list_ids('timepad', 'city')
@@ -66,7 +67,9 @@ if CITY != 'spb':
     if mts_cities:
         MTS_CITY = mts_cities[0]
 
-
+    culture_cities = parameters_list_ids('culture', 'city')
+    if culture_cities:
+        CULTURE_CITY = culture_cities[0]
 
 
 
@@ -99,11 +102,13 @@ ticketscloud_parser = Ticketscloud()
 vk_parser = VK()
 qt_parser = QTickets()
 mts_parser = MTS()
+culture_parser = Culture()
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
-    'qtickets.events': qt_parser, 'live.mts.ru': mts_parser
+    'qtickets.events': qt_parser, 'live.mts.ru': mts_parser,
+    'culture.ru': culture_parser
 }
 
 ## ESCRAPER EVENTS PARSERS
@@ -418,11 +423,17 @@ def from_not_approved_organizations(days: int) -> List[Event]:
             events += qtickets_others_organizations(days*2)
         except Exception as e:
             print(f"An error occurred in qtickets_others_organizations: {e}")
-    elif weekday == 0 or weekday == 4:
+
+    if weekday == 0 or weekday == 4:
         try:
             events += mts_others_organization(days)
         except Exception as e:
             print(f"An error occurred in mts_others_organization: {e}")
+    elif weekday == 2 or weekday == 5:
+        try:
+            events += culture_others_organizations(days)
+        except Exception as e:
+            print(f"An error occurred in culture_organizations: {e}")
 
     return events
 
@@ -453,6 +464,10 @@ def qtickets_others_organizations(days: int) -> List[Event]:
 
 def mts_others_organization(days: int) -> List[Event]:
     return get_mts_events(days)
+
+
+def culture_others_organizations(days: int) -> List[Event]:
+    return get_culture_events(days)
 
 
 def get_timepad_events(
@@ -595,6 +610,23 @@ def get_mts_events(
     }
 
     new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def get_culture_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    #categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+    request_params = {
+            "city": CULTURE_CITY,
+            "days": days
+    }
+
+    new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
 
     if events_filter:
         new_events = events_filter(new_events)
