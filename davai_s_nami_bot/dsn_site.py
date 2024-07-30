@@ -16,12 +16,11 @@ log = get_logger(__file__)
 
 def next_event_to_channel():
     """
-    Первое подходящее мероприятие из таблицы 3 для постинга в канал.
+    The first event from event2post table for posting
 
-    Критерии поиска мероприятия:
-    - Поиск происходит от по возрастанию значения `queue`
-    - Значение поля `status` равное `ReadyToPost`
-    - Наличие значения в поле `post_date` (равное текущему времени)
+    Event search criteria:
+    - Field `status` has `ReadyToPost` value
+    - Datetime now is similar to `post_date`
     """
     events = database.get_event_to_post_now(table="events_events2post")
 

@@ -9,8 +9,8 @@ from . import events
 from . import utils
 from . import dsn_site
 from . import dsn_site_session
-from .datetime_utils import get_msk_today
-from .logger import get_logger
+from .datetime_utils import get_msk_today, STRFTIME
+from .logger import get_logger, LOG_FILE, log_task
 
 
 log = get_logger(__file__)
@@ -29,6 +29,7 @@ def post_to_telegram():
     else:
         log.info("Event not found (or time was changed) or already posted")
     schedule_posting_tasks.apply_async()
+    dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
 
 
 @celery_app.task
@@ -174,8 +175,20 @@ def events_from_url(event_url=None):
 
 
 @celery_app.task
+@log_task
 def full_update():
     is_empty_check.apply_async()
     move_approved.apply_async()
     events_from_url.apply_async()
     update_events.apply_async()
+
+    dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
+
+    next_time = dsn_site.next_task_time(
+        msk_today=get_msk_today(replace_seconds=True)
+    )
+
+    msg = "Next scheduled time in {time}".format(
+        time=next_time.strftime(STRFTIME),
+    )
+    dev_channel.send_text(msg)
