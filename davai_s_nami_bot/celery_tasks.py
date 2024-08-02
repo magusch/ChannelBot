@@ -174,8 +174,25 @@ def events_from_url(event_url=None):
         dsn_site_session.make_post_text(inserted_ids)
 
 
+
 @celery_app.task
+def ai_update_event(event={}, is_new=0):
+    log.info("Start get post from url.")
+
+    msk_today = get_msk_today()
+    ai_helper = OpenAIHelper()
+
+    ai_event = ai_helper.new_event_data(event)
+    if is_new == 1:
+        ai_event['event_id'] = 'AI-' + str(datetime.today().timestamp())[0:10]
+        new_event_tuple = events.Event.from_dict(ai_event)
+        inserted_ids = database.add_events([new_event_tuple], explored_date=msk_today, table="events_events2post")
+        if inserted_ids is not None:
+            dsn_site_session.make_post_text(inserted_ids)
+    return ai_event
+
 @log_task
+@celery_app.task
 def full_update():
     is_empty_check.apply_async()
     move_approved.apply_async()
