@@ -1,8 +1,7 @@
-import re, json
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
-from functools import partial
+
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
@@ -336,6 +335,17 @@ class Event:
         event_dict = {}
         for i, tag in enumerate(columns):
             event_dict[tag] = data[tag]
+        return cls(**event_dict)
+
+    @classmethod
+    def from_dict(cls, event_dict: dict, columns=_tags):
+        for i, tag in enumerate(columns):
+            if tag not in event_dict.keys():
+                if 'date' in tag:
+                    event_dict[tag] = datetime.today()
+                else:
+                    event_dict[tag] = ''
+        event_dict = {k: event_dict[k] for k in columns}
         return cls(**event_dict)
 
 

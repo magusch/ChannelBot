@@ -47,7 +47,8 @@ REQUIRED_CONSTANT_NAMES = [
     "DSN_DATABASE_URL",
     "VK_ID",
     "BASE_URL",
-    "API_TOKEN"
+    "API_TOKEN",
+    "OPENAI_API_KEY",
 ]
 
 

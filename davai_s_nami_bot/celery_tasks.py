@@ -1,4 +1,4 @@
-import datetime
+import datetime, json
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 
 from datetime import datetime, timedelta
@@ -11,6 +11,8 @@ from . import dsn_site
 from . import dsn_site_session
 from .datetime_utils import get_msk_today, STRFTIME
 from .logger import get_logger, LOG_FILE, log_task
+
+from .helper.open_ai_helper import OpenAIHelper
 
 
 log = get_logger(__file__)
