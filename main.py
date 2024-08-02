@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -74,7 +74,15 @@ async def update_parameters(token: str = Depends(verify_token)):
     return {'message': 'Task PARAMETERS added to queue', 'task_id': task.id}
 
 
-from fastapi import Request
+@app.post('/api/ai_update_event/')
+async def new_event_from_data(request: Request, token: str = Depends(verify_token), ):
+    data = await request.json()
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.ai_update_event',
+        args=[data['event'], data['is_new']],
+    )
+    return {'message': 'Task NEW EVENT added to queue', 'task_id': task.id}
 
 
 if __name__ == '__main__':
