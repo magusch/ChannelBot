@@ -43,9 +43,9 @@ async def update_events(token: str = Depends(verify_token)):
 
 
 @app.post('/api/get_event_from_url/#{event_url}')
-async def update_events(event_url: str, token: str = Depends(verify_token)):
+async def event_from_url(event_url: str, token: str = Depends(verify_token)):
     task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.full_update',
+        'davai_s_nami_bot.celery_tasks.events_from_url',
         args=event_url,
     )
     return {'message': 'Task updating from url added to queue', 'task_id': task.id}
@@ -64,6 +64,17 @@ async def get_status(task_id: str, token: str = Depends(verify_token)):
 @app.get("/")
 async def index():
     return {'message': 'Hello. How are you?'}
+
+
+@app.post('/api/param/')
+async def update_parameters(token: str = Depends(verify_token)):
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.update_parameters',
+    )
+    return {'message': 'Task PARAMETERS added to queue', 'task_id': task.id}
+
+
+from fastapi import Request
 
 
 if __name__ == '__main__':

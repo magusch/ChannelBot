@@ -194,6 +194,7 @@ def ai_update_event(event={}, is_new=0):
 @log_task
 @celery_app.task
 def full_update():
+    update_parameters.apply_async()
     is_empty_check.apply_async()
     move_approved.apply_async()
     events_from_url.apply_async()
@@ -209,3 +210,24 @@ def full_update():
         time=next_time.strftime(STRFTIME),
     )
     dev_channel.send_text(msg)
+
+
+@celery_app.task
+def update_parameters(parameters={}):
+    response_parameters = dsn_site_session.parameter_for_dsn_channel(parameters)
+    dsn_parameters = {}
+    for param in response_parameters.json():
+        if param["site"] not in dsn_parameters.keys():
+            dsn_parameters[param["site"]] = {
+                param["parameter_name"] : [param["value"]]
+            }
+        elif param['parameter_name'] not in dsn_parameters[param["site"]].keys():
+            dsn_parameters[param["site"]][param['parameter_name']] = [
+                param["value"]
+            ]
+        else:
+            dsn_parameters[param["site"]][param['parameter_name']].append(param["value"])
+
+
+    for site, params in dsn_parameters.items():
+        redis_client.setex(f'parameters:{site}', 36000, json.dumps(params))
