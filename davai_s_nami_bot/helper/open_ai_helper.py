@@ -66,9 +66,11 @@ class OpenAIHelper:
             if d.strip() == '':
                 continue
             divided = d.split('=>')
-            event_data[divided[0].strip()] = divided[-1].strip().replace(';','')
+            event_data[divided[0].strip().lower()] = divided[-1].strip().replace(';','')
 
-        if 'Текст' not in event_data or len(event_data['Текст'].strip()) < 100: event_data['Текст'] = self.answer
+        if 'текст' not in event_data or len(event_data['текст'].strip()) < 100:
+            event_data['текст'] = self.answer
+        event_data['full_answer'] = self.answer
         return event_data
 
     def new_event_data(self, event):
@@ -82,8 +84,8 @@ class OpenAIHelper:
 
         ai_event = {}
         for key, new_event_data in ai_event_data.items():
-            if key.lower() in replace_phrases.keys():
-                ai_event[replace_phrases[key.lower()]] = new_event_data
+            if key in replace_phrases.keys():
+                ai_event[replace_phrases[key]] = new_event_data
             else:
-                ai_event[key.lower()] = new_event_data
+                ai_event[key] = new_event_data
         return ai_event
