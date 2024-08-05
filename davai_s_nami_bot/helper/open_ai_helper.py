@@ -14,7 +14,6 @@ class OpenAIHelper:
         self.system_message = param.site_parameters('openai_system_message', last=1)
         self.user_message = param.site_parameters('openai_user_message', last=1)
         self.openai_model = param.site_parameters('openai_model', last=1) or 'gpt-4o'
-        print(self.system_message)
 
     def refactor_post(self, event):
         if self.system_message is not None:

@@ -1,4 +1,7 @@
 import datetime, json
+import requests
+from bs4 import BeautifulSoup
+
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 
 from datetime import datetime, timedelta
@@ -159,9 +162,17 @@ def events_from_url(event_url=None):
 
     if event_url is not None: list_event_to_parse.append(event_url)
 
+    not_existed_parser_event = []
+
     for url in list_event_to_parse:
         event = events.from_url(url)
-        events_from_urls.append(event)
+        if event is not None:
+            events_from_urls.append(event)
+        else:
+            not_existed_parser_event.append(url)
+
+    if not_existed_parser_event:
+        download_event_page.apply_async([not_existed_parser_event])
 
     if not events_from_urls:
         log.info("Nothing from url")
@@ -175,6 +186,15 @@ def events_from_url(event_url=None):
     if inserted_ids is not None:
         dsn_site_session.make_post_text(inserted_ids)
 
+
+@celery_app.task
+def download_event_page(urls=[]):
+    for url in urls:
+        response = requests.get(url)
+        if response.status_code < 300:
+            body = BeautifulSoup(response.text, 'html.parser').get_text()
+            event = {'full_text': body, 'url': url}
+            ai_update_event.apply_async([event, 1])
 
 
 @celery_app.task
@@ -192,6 +212,7 @@ def ai_update_event(event={}, is_new=0):
         if inserted_ids is not None:
             dsn_site_session.make_post_text(inserted_ids)
     return ai_event
+
 
 @log_task
 @celery_app.task

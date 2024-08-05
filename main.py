@@ -42,11 +42,17 @@ async def update_events(token: str = Depends(verify_token)):
     return {'message': 'Task Full Update added to queue', 'task_id': task.id}
 
 
-@app.post('/api/get_event_from_url/#{event_url}')
-async def event_from_url(event_url: str, token: str = Depends(verify_token)):
+@app.post('/api/get_event_from_url/')
+async def event_from_url(request: Request, token: str = Depends(verify_token)):
+    data = await request.json()
+    if 'event_url' in data.keys():
+        event_url = data['event_url']
+    else:
+        event_url = None
+
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.events_from_url',
-        args=event_url,
+        args=[event_url],
     )
     return {'message': 'Task updating from url added to queue', 'task_id': task.id}
 
