@@ -482,7 +482,7 @@ def culture_others_organizations(days: int) -> List[Event]:
 
 def get_timepad_events(
     days: int,
-    request_params: Dict[str, Any],
+    request_params: Dict[str, Any] = None,
     events_filter: Callable[[List[Event]], List[Event]] = None,
     with_online: bool = True,
 ) -> List[Event]:
@@ -494,8 +494,11 @@ def get_timepad_events(
             f"Too much days for getting events: {days}."
             f"Maximum is {MAX_NEXT_DAYS} days."
         )
-
     today = date.today()
+
+    if request_params is None:
+        request_params = TIMEPAD_OTHERS_PARAMS.copy()
+
     request_params["starts_at_min"] = STARTS_AT_MIN.format(
         year_month_day=today.strftime("%Y-%m-%d")
     )
