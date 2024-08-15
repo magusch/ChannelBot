@@ -126,6 +126,28 @@ def _update_events(events, table, msk_today):
         log.info(answer)
         return inserted_ids
 
+@celery_app.task
+def update_event_from_sites(sites=None, days=7):
+    if sites is None or sites[0] == 'all':
+        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture']
+    log.info("Start updating events from special sites.")
+    msk_today = get_msk_today()
+
+    for site in sites:
+        if site in events.escraper_sites.keys():
+            log.info(f"Getting new events from {site} for next {days} days")
+            other_events = events.escraper_sites[site](days)
+            log.info(f"Collected {len(other_events)} events")
+
+            _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
+
+    events_count = sum([
+        database.rows_number(table="events_eventsnotapprovednew"),
+        database.rows_number(table="events_events2post"),
+    ])
+
+    log.info(f"Events count in database: {events_count}")
+
 
 @celery_app.task
 def move_approved():

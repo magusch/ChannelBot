@@ -582,7 +582,7 @@ def get_vk_events(
 
 
     request_params = {
-        'days': 15,
+        'days': days * 2,
         'city_id': VK_CITY_ID,
         'city': VK_CITY
     }
@@ -641,6 +641,17 @@ def get_culture_events(
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
+
+
+escraper_sites = {
+    'timepad':      get_timepad_events,
+    'radario':      get_radario_events,
+    'ticketscloud': get_ticketscloud_events,
+    'vk':           get_vk_events,
+    'qtickets':     get_qtickets_events,
+    'mts':          get_mts_events,
+    'culture':      get_culture_events
+}
 
 
 def from_url(event_url):
