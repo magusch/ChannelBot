@@ -9,7 +9,8 @@ from telebot import TeleBot
 
 from . import database
 from . import events
-from .parameters_for_channel import parameter_value
+
+from helper.dsn_parameters import DSNParameters
 
 
 def format_text(text: str, style: str = None):
@@ -82,7 +83,8 @@ class Telegram(BaseClient):
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="markdown",
         )
-        self.channel_link = parameter_value('dsn_site', 'channel_link')
+        param = DSNParameters()
+        self.channel_link = param.site_parameters('channel_link', last=1)
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
