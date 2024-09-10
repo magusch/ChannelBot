@@ -10,7 +10,7 @@ from telebot import TeleBot
 from . import database
 from . import events
 
-from helper.dsn_parameters import DSNParameters
+from .helper.dsn_parameters import DSNParameters
 
 
 def format_text(text: str, style: str = None):
