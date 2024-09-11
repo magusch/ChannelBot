@@ -4,6 +4,8 @@ from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 
+from .crud import get_events_by_date_and_category
+
 from datetime import datetime, timedelta
 
 from . import clients
@@ -16,7 +18,6 @@ from .datetime_utils import get_msk_today, STRFTIME
 from .logger import get_logger, LOG_FILE, log_task
 
 from .helper.open_ai_helper import OpenAIHelper
-
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -276,3 +277,14 @@ def update_parameters(parameters={}):
 
     for site, params in dsn_parameters.items():
         redis_client.setex(f'parameters:{site}', 36000, json.dumps(params))
+
+
+@celery_app.task
+def get_posted_events(parameters={}):
+    start_date = parameters.get('date_from', datetime.utcnow())
+    end_date = parameters.get('date_to', datetime.utcnow())
+    category = parameters.get('category', None)
+
+    events = get_events_by_date_and_category(start_date, end_date, category)
+    return events
+
