@@ -83,13 +83,17 @@ class Telegram(BaseClient):
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="markdown",
         )
-        param = DSNParameters()
-        self.channel_link = param.site_parameters('channel_link', last=1)
+        self.param = DSNParameters()
+        self.channel_link = self.param.site_parameters('channel_link', last=1)
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
         database.add_event_for_dsn_bot(event, message.message_id)
+
+        if self.channel_link is None:
+            self.channel_link = self.param.site_parameters('channel_link', last=1)
+
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
         database.set_post_url(event.event_id, post_url)
         #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
