@@ -22,14 +22,14 @@ class DSNParameters:
         self.timepad_boring_organizations = self.read_param('timepad')['boring_organization']
 
     def site_parameters(self, key, last=0):
-        if key in self.read_param('dsn_site').keys():
+        site_params = self.read_param('dsn_site')
+        if key in site_params.keys():
             if last == 1:
-                self.read_param('dsn_site')[key][-1]
+                return site_params[key][-1]
             else:
-                self.read_param('dsn_site')[key]
+                return site_params[key]
         else:
             return None
-
 
     def read_param(self, site):
         if site not in self.sites.keys():
@@ -50,10 +50,10 @@ class DSNParameters:
         else:
             self.update_parameters()
 
-
     def update_parameters(self):
         celery_app.send_task(
             'davai_s_nami_bot.celery_tasks.update_parameters',
         )
+
 
 dsn_parameters = DSNParameters()
