@@ -4,10 +4,10 @@ from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 
-from .crud import get_events_by_date_and_category
 
 from datetime import datetime, timedelta
 
+from . import crud
 from . import clients
 from . import database
 from . import events
@@ -282,9 +282,17 @@ def update_parameters(parameters={}):
 @celery_app.task
 def get_posted_events(parameters={}):
     start_date = parameters.get('date_from', datetime.utcnow())
-    end_date = parameters.get('date_to', datetime.utcnow())
+    end_date = parameters.get('date_to', start_date)
     category = parameters.get('category', None)
+    fields = parameters.get('fields', [])
 
-    events = get_events_by_date_and_category(start_date, end_date, category)
+    events = crud.get_events_by_date_and_category(start_date, end_date, category, fields)
     return events
+
+
+@celery_app.task
+def get_exhibitions_celery(parameters={}):
+    exhibs = crud.get_exhibitions()
+
+    return exhibs
 

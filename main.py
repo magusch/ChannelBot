@@ -112,6 +112,14 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
     return {'message': 'GET EVENTS', 'task_id': task.id}
 
 
+@app.post('/api/get_exhibitions/')
+async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.get_exhibitions_celery',
+    )
+    return {'message': 'GET Exhibitions', 'task_id': task.id}
+
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)

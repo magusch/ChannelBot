@@ -10,8 +10,20 @@ class Events2Posts(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String)
     title = Column(String, nullable=False)
+    full_text = Column(String, nullable=True)
+    image = Column(String, nullable=True)
     price = Column(String, nullable=True)
     status = Column(String, nullable=False)
     post_url = Column(String, nullable=False)
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
+    address = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+
+
+class Exhibitions(Base):
+    __tablename__ = 'exhibitions'
+
+    post_id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    date_before = Column(DateTime, nullable=True)
