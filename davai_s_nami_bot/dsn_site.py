@@ -87,7 +87,7 @@ def next_posting_time(reference):
     if len(events_to_post) == 0:
         return None
     #TODO: Not sure this is good logic, to sort by post_date and get post_time, but post first by queue
-    return events_to_post.sort_values("post_date")["post_date"].iloc[0].to_pydatetime()
+    return events_to_post.sort_values("post_date")["post_date"].iloc[0]
 
 
 def next_updating_time(reference):
