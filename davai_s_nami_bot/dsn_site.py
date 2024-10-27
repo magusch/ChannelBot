@@ -76,6 +76,7 @@ columns_for_posting_time = ["post_date", "title", "event_id"]
 
 def next_posting_time(reference):
     all_events = database.get_ready_to_post(table="events_events2post")
+    all_events["post_date"] = pd.to_datetime(all_events["post_date"]).dt.tz_convert(reference.tzinfo)
 
     events_to_post = all_events[all_events["post_date"] >= reference]
 
