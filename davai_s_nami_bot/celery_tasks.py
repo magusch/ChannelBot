@@ -4,8 +4,9 @@ from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 
-
 from datetime import datetime, timedelta
+
+from .pydantic_models import EventRequestParameters
 
 from . import crud
 from . import clients
@@ -280,14 +281,15 @@ def update_parameters(parameters={}):
 
 
 @celery_app.task
-def get_posted_events(parameters={}):
-    start_date = parameters.get('date_from', datetime.utcnow())
-    end_date = parameters.get('date_to', start_date)
-    category = parameters.get('category', None)
-    fields = parameters.get('fields', [])
+def get_posted_events(parameters: dict):
+    params = EventRequestParameters(**parameters).with_defaults()
 
-    events = crud.get_events_by_date_and_category(start_date, end_date, category, fields)
-    return events
+    events = crud.get_events_by_date_and_category(params)
+    result = {
+        'request': parameters,
+        'events': events
+    }
+    return result
 
 
 @celery_app.task

@@ -8,24 +8,17 @@ from .database.database_orm import db_session
 
 
 @db_session
-def get_events_by_date_and_category(db, start_date, end_date, category: str = None, fields: list = []):
-    if isinstance(start_date, str):
-        start_date = datetime.strptime(start_date, '%Y-%m-%d')
-    if isinstance(end_date, str):
-        end_date = datetime.strptime(end_date, '%Y-%m-%d')
-
-
+def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts)\
         .filter(Events2Posts.status == 'Posted') \
-        .filter(
-                func.date(Events2Posts.from_date) >= start_date.date(),
-                func.date(Events2Posts.to_date) <= end_date.date()
+        .filter(func.date(Events2Posts.from_date) >= params.date_from.date(),
+              func.date(Events2Posts.to_date) <= params.date_to.date()
             )
-    # if category:
-    #     query = query.filter(Events2Posts.category == category)
+    if params.category:
+       query = query.filter(Events2Posts.main_category_id.in_(params.category))
     events = query.all()
     result = [
-        {field: getattr(event, field) for field in (fields or event.__table__.columns.keys())}
+        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
         for event in events
     ]
     return result

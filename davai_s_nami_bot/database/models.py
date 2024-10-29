@@ -19,6 +19,7 @@ class Events2Posts(Base):
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)
     category = Column(String, nullable=True)
+    main_category_id = Column(Integer, nullable=True)
 
 
 class Exhibitions(Base):

@@ -2,7 +2,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from davai_s_nami_bot.pydantic_models import EventRequestParameters
 
 from davai_s_nami_bot.celery_app import celery_app
 from celery.result import AsyncResult
@@ -10,11 +10,6 @@ from datetime import datetime
 
 app = FastAPI()
 security = HTTPBearer()
-
-class UpdatePostingRequest(BaseModel):
-    event_id: int
-    scheduled_time: datetime
-
 
 API_TOKEN = os.environ.get('API_TOKEN', 'your-secure-api-token')
 
@@ -103,7 +98,11 @@ async def new_event_from_sites(request: Request, token: str = Depends(verify_tok
 
 
 @app.post('/api/get_valid_events/')
-async def get_valid_events(request: Request, token: str = Depends(verify_token)):
+async def get_valid_events(
+        request: Request,
+        #params: EventRequestParameters,
+        token: str = Depends(verify_token),
+    ):
     data = await request.json()
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.get_posted_events',
