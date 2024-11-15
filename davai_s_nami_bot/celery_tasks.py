@@ -264,13 +264,20 @@ def update_parameters(parameters={}):
     response_parameters = dsn_site_session.parameter_for_dsn_channel(parameters)
     dsn_parameters = {}
     for param in response_parameters.json():
+
+        value = param["value"]
+
+        full_value = str(param.get("full_value", "") or "").strip()
+        if full_value:
+            value += f"\n{full_value}"
+
         if param["site"] not in dsn_parameters.keys():
             dsn_parameters[param["site"]] = {
-                param["parameter_name"] : [param["value"]]
+                param["parameter_name"]: [value]
             }
         elif param['parameter_name'] not in dsn_parameters[param["site"]].keys():
             dsn_parameters[param["site"]][param['parameter_name']] = [
-                param["value"]
+                value
             ]
         else:
             dsn_parameters[param["site"]][param['parameter_name']].append(param["value"])
