@@ -16,6 +16,14 @@ def get_events_by_date_and_category(db, params):
             )
     if params.category:
        query = query.filter(Events2Posts.main_category_id.in_(params.category))
+
+    query = query.order_by(Events2Posts.from_date.asc())
+
+    if params.limit:
+        query = query.limit(params.limit)
+        if params.page:
+            query = query.offset(params.page * params.limit)
+
     events = query.all()
     result = [
         {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}

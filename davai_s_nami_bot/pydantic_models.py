@@ -8,6 +8,8 @@ class EventRequestParameters(BaseModel):
     date_to: Optional[datetime] = None
     category: Optional[List[int]] = None
     fields: Optional[List[str]] = None
+    limit: Optional[int] = None
+    page: Optional[int] = None
 
     def with_defaults(self):
         if self.date_to is None:
@@ -20,6 +22,8 @@ class EventRequestParameters(BaseModel):
             'date_to': self.date_to,
             'category': self.category,
             'fields': self.fields,
+            'limit': self.limit,
+            'page': self.page,
         }
 
 class UpdatePostingRequest(BaseModel):
