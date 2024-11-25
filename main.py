@@ -3,12 +3,27 @@ import os
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from davai_s_nami_bot.pydantic_models import EventRequestParameters
+from fastapi.middleware.cors import CORSMiddleware
 
 from davai_s_nami_bot.celery_app import celery_app
 from celery.result import AsyncResult
 from datetime import datetime
 
 app = FastAPI()
+
+origins = [
+    "http://example.com",
+    "http://localhost:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Разрешенные источники
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешенные методы (GET, POST и т. д.)
+    allow_headers=["*"],  # Разрешенные заголовки
+)
+
 security = HTTPBearer()
 
 API_TOKEN = os.environ.get('API_TOKEN', 'your-secure-api-token')
