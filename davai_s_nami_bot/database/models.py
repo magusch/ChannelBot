@@ -17,7 +17,7 @@ class Events2Posts(Base):
     post_url = Column(String, nullable=False)
     url = Column(String, nullable=False)
     place_id = Column(Integer, nullable=True)
-    is_ready = Column(Boolean, nullable=True)
+    # is_ready = Column(Boolean, nullable=True)
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)
