@@ -10,19 +10,24 @@ from .database.database_orm import db_session
 @db_session
 def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts)\
-        .filter(Events2Posts.status == 'Posted') \
-        .filter(func.date(Events2Posts.from_date) >= params.date_from.date(),
+        .filter(Events2Posts.status == 'Posted')
+
+    if params.ids:
+        query = query.filter(Events2Posts.id.in_(params.ids))
+    else:
+        query = query.filter(func.date(Events2Posts.from_date) >= params.date_from.date(),
               func.date(Events2Posts.to_date) <= params.date_to.date()
             )
-    if params.category:
-       query = query.filter(Events2Posts.main_category_id.in_(params.category))
 
-    query = query.order_by(Events2Posts.from_date.asc())
+        if params.category:
+           query = query.filter(Events2Posts.main_category_id.in_(params.category))
 
-    if params.limit:
-        query = query.limit(params.limit)
-        if params.page:
-            query = query.offset(params.page * params.limit)
+        query = query.order_by(Events2Posts.from_date.asc())
+
+        if params.limit:
+            query = query.limit(params.limit)
+            if params.page:
+                query = query.offset(params.page * params.limit)
 
     events = query.all()
     result = [
