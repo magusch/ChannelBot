@@ -4,11 +4,11 @@ from functools import lru_cache
 from typing import Any, Dict, Union
 
 import requests
-from markdown import markdown
+
 from telebot import TeleBot
 
-from . import database
 from . import events
+from . import crud
 
 from .helper.dsn_parameters import DSNParameters
 
@@ -89,14 +89,13 @@ class Telegram(BaseClient):
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
-        database.add_event_for_dsn_bot(event, message.message_id)
+        crud.add_posted_event_to_dsn_bot(event, message.message_id)
 
         if self.channel_link is None:
             self.channel_link = self.param.site_parameters('channel_link', last=1)
 
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
-        database.set_post_url(event.event_id, post_url)
-        #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
+        crud.set_post_url(event.event_id, post_url)
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(

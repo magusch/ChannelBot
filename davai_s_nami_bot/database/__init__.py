@@ -13,9 +13,3 @@ from .database import (
     set_post_url,
     get_event_to_post_now
 )
-
-from .database_dsn_bot import (
-    add_event_for_dsn_bot,
-    remove_event_from_dsn_bot,
-    select_dsn_bot
-)

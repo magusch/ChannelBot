@@ -83,7 +83,7 @@ def update_events():
     msk_today = get_msk_today()
     log.info("Remove old events")
     dsn_site_session.remove_old()
-    database.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
+    crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
 
     log.info("Getting events from approved organizations for next 7 days")
     approved_events = events.from_approved_organizations(days=7)
@@ -232,7 +232,7 @@ def ai_update_event(event={}, is_new=0):
     if is_new == 1:
         ai_event['event_id'] = 'AI-' + str(datetime.today().timestamp())[0:10]
         new_event_tuple = events.Event.from_dict(ai_event)
-        inserted_ids = database.add_events([new_event_tuple], explored_date=msk_today, table="events_events2post")
+        inserted_ids = crud.add_events_to_post([new_event_tuple], explored_date=msk_today)
         if inserted_ids is not None:
             dsn_site_session.make_post_text(inserted_ids)
     return ai_event

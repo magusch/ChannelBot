@@ -7,6 +7,7 @@ import pandas as pd
 from .events import Event
 from .logger import catch_exceptions, get_logger
 from . import database
+from . import crud
 
 
 DEFAULT_UPDATING_STRFTIME = "00:00"
@@ -33,8 +34,8 @@ def next_event_to_channel():
             event = Event.from_database(
                 filtered_events.iloc[0, :]
             )
-            database.set_status(
-                table="events_events2post", event_id=event.event_id, status="Posted"
+            crud.set_status(
+                event_id=event.event_id, status="Posted"
             )
         else:
             event = None
@@ -76,6 +77,9 @@ columns_for_posting_time = ["post_date", "title", "event_id"]
 
 def next_posting_time(reference):
     all_events = database.get_ready_to_post(table="events_events2post")
+    if len(all_events) == 0:
+        return None
+
     all_events["post_date"] = pd.to_datetime(all_events["post_date"]).dt.tz_convert(reference.tzinfo)
 
     events_to_post = all_events[all_events["post_date"] >= reference]

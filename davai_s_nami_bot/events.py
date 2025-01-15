@@ -7,92 +7,19 @@ from typing import Any, Callable, Dict, List, NamedTuple
 import escraper
 from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture
 
-from .parameters_for_channel import *
 from . import utils
 from .logger import catch_exceptions
 
 from .dsn_site_session import place_address
 
+from .helper.dsn_parameters import dsn_parameters
 
 
-BAD_KEYWORDS = parameters_list_ids('timepad', 'bad_keywords')
-
-APPROVED_ORGANIZATIONS = parameters_list_ids('timepad', 'approved_organization')
-BORING_ORGANIZATIONS = parameters_list_ids('timepad', 'boring_organization')
-
-CATEGORY_IDS_EXCLUDE = parameters_list_ids('timepad', 'exclude_categories')
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
-FINISH_LINK = parameters_list_ids('dsn_site', 'finish_link')[0]
 
-cities = parameters_list_ids('dsn_site', 'city')
-if cities:
-    CITY = cities[0]
-else:
-    CITY = 'spb'
-
-timepad_city = "Санкт-Петербург"
-RADARIO_CITY = 'spb'
-QT_CITY = 'spb'
-VK_CITY_ID = '2'
-VK_CITY = 'Санкт-Петербург'
-MTS_CITY = 'sankt-peterburg'
-CULTURE_CITY = 'sankt-peterburg'
-
-if CITY != 'spb':
-    timepad_cities = parameters_list_ids('timepad', 'city')
-    if timepad_cities:
-        timepad_city = timepad_cities[0]
-
-    radario_cities = parameters_list_ids('radario', 'city')
-    if radario_cities:
-        RADARIO_CITY = radario_cities[0]
-
-    qt_cities = parameters_list_ids('qtickets', 'city')
-    if qt_cities:
-        QT_CITY = qt_cities[0]
-
-    vk_cities_id = parameters_list_ids('vk', 'city_id')
-    if vk_cities_id:
-        VK_CITY_ID = vk_cities_id[0]
-
-    vk_cities = parameters_list_ids('vk', 'city')
-    if vk_cities:
-        VK_CITY = vk_cities[0]
-    else:
-        VK_CITY = ''
-
-    mts_cities = parameters_list_ids('mts', 'city')
-    if mts_cities:
-        MTS_CITY = mts_cities[0]
-
-    culture_cities = parameters_list_ids('culture', 'city')
-    if culture_cities:
-        CULTURE_CITY = culture_cities[0]
-
-
-
-TIMEPAD_APPROVED_PARAMS = dict(
-    limit=100,
-    cities=timepad_city,
-    moderation_statuses="featured, shown",
-    organization_ids=", ".join(APPROVED_ORGANIZATIONS),
-)
-TIMEPAD_OTHERS_PARAMS = dict(
-    limit=100,
-    cities=timepad_city,
-    moderation_statuses="featured, shown",
-    organization_ids_exclude=(
-        ", ".join(APPROVED_ORGANIZATIONS+BORING_ORGANIZATIONS)
-    ),
-    price_max=parameters_list_ids('timepad', 'price_max')[0],
-    category_ids_exclude=", ".join(CATEGORY_IDS_EXCLUDE),
-    keywords_exclude=", ".join(BAD_KEYWORDS),
-)
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
-
-TICKETSCLOUD_ORG_IDS = parameters_list_ids('ticketscloud', 'org_id')
 
 ## PARSERS
 timepad_parser = Timepad()
@@ -110,10 +37,19 @@ PARSER_URLS = {
     'culture.ru': culture_parser
 }
 
+
+def get_city_param():
+    cities = dsn_parameters.site_parameters('city')
+
+    if cities:
+        return cities[0]
+    else:
+        return 'spb'
+
+
 ## ESCRAPER EVENTS PARSERS
 def _title(event: NamedTuple):
     return event.title.replace("`", r"\`").replace("_", r"\_").replace("*", r"\*")
-
 
 def _full_text(event: NamedTuple):
     return event.full_text
@@ -243,7 +179,7 @@ def address_line_to_post(event):
             address_line = address_dict["address_for_post"]
 
     if not address_line:
-        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/{CITY}/search/{event.adress})"
+        address_line = f"[{event.place_name}, {event.adress}](https://2gis.ru/{get_city_param()}/search/{event.adress})"
 
     return address_line
 
@@ -403,7 +339,7 @@ def from_approved_organizations(days: int) -> List[Event]:
 def timepad_approved_organizations(days: int) -> List[Event]:
     return get_timepad_events(
         days,
-        TIMEPAD_APPROVED_PARAMS.copy(),
+        timepad_request_params(approved=1),
     )
 
 
@@ -449,11 +385,41 @@ def from_not_approved_organizations(days: int) -> List[Event]:
 
 
 def timepad_others_organizations(days: int) -> List[Event]:
+    timepad_others_params = timepad_request_params()
     return get_timepad_events(
         days,
-        TIMEPAD_OTHERS_PARAMS.copy(),
+        timepad_others_params,
         events_filter=not_approved_organization_filter,
     )
+
+
+def timepad_request_params(approved: bool = False) -> Dict:
+    timepad_params = dsn_parameters.read_param('timepad')
+
+    timepad_others_params = dict(
+        limit=300,
+        cities="Санкт-Петербург",
+        moderation_statuses="featured, shown",
+    )
+
+    if timepad_params:
+        if not approved:
+            timepad_others_params['price_max'] = 5000
+            if dsn_parameters.read_param('timepad')['city']:
+                timepad_others_params["cities"] = dsn_parameters.read_param('timepad')['city'][0]
+            if dsn_parameters.read_param('timepad')['price_max']:
+                timepad_others_params["price_max"] = dsn_parameters.read_param('timepad')['price_max'][0]
+
+            timepad_others_params["organization_ids_exclude"] = (
+                    ", ".join(
+                        timepad_params['approved_organization'] + timepad_params['boring_organization'])
+                )
+            timepad_others_params["category_ids_exclude"] = ", ".join(timepad_params['exclude_categories'])
+            timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
+        else:
+            timepad_others_params['organization_ids'] = timepad_params['approved_organization']
+
+    return timepad_others_params
 
 
 def radario_others_organizations(days: int) -> List[Event]:
@@ -497,7 +463,7 @@ def get_timepad_events(
     today = date.today()
 
     if request_params is None:
-        request_params = TIMEPAD_OTHERS_PARAMS.copy()
+        request_params = timepad_request_params()
 
     request_params["starts_at_min"] = STARTS_AT_MIN.format(
         year_month_day=today.strftime("%Y-%m-%d")
@@ -553,11 +519,17 @@ def get_radario_events(
     date_from = today.strftime(Radario.DATETIME_STRF)
     date_to = (today + timedelta(days=days)).strftime(Radario.DATETIME_STRF)
 
+    radario_city = 'spb'
+
+    radario_cities = dsn_parameters.read_param('radario').get('city_id')
+    if radario_cities:
+        radario_city = radario_cities[0]
+
     request_params = {
         "from": date_from,
         "to": date_to,
         "category": category,
-        "city": RADARIO_CITY,
+        "city": radario_city,
     }
 
     new_events = _get_events(radario_parser, request_params=request_params)
@@ -570,8 +542,8 @@ def get_radario_events(
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-
-    new_events = _get_events(ticketscloud_parser, org_ids=TICKETSCLOUD_ORG_IDS, city=CITY, tags=ALL_EVENT_TAGS)
+    tc_org_ids = dsn_parameters.read_param('ticketscloud')['org_id']
+    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=get_city_param(), tags=ALL_EVENT_TAGS)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -583,11 +555,21 @@ def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
+    vk_city_id = '2'
+    vk_city = 'Санкт-Петербург'
+
+    vk_param = dsn_parameters.read_param('vk')
+    if vk_param:
+        if vk_param.get('city_id'):
+            vk_city_id = vk_param.get('city_id')[0]
+
+        if vk_param.get('city'):
+            vk_city = vk_param.get('city')[0]
 
     request_params = {
         'days': days * 2,
-        'city_id': VK_CITY_ID,
-        'city': VK_CITY
+        'city_id': vk_city_id,
+        'city': vk_city
     }
 
     new_events = _get_events(vk_parser, request_params=request_params)
@@ -600,9 +582,15 @@ def get_qtickets_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
+    qt_city = 'spb'
+
+    qt_cities = dsn_parameters.read_param('qtickets')['city_id']
+    if qt_cities:
+        qt_city = qt_cities[0]
+
     request_params = {
         "days": days,
-        "city": QT_CITY
+        "city": qt_city
     }
 
     new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
@@ -614,10 +602,15 @@ def get_qtickets_events(
 def get_mts_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
+    mts_city = 'sankt-peterburg'
+
+    mts_cities = dsn_parameters.read_param('mts').get('city')
+    if mts_cities:
+        mts_city = mts_cities[0]
 
     categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
     request_params = {
-            "city": MTS_CITY,
+            "city": mts_city,
             "categories": categories,
             "days": days
     }
@@ -633,9 +626,15 @@ def get_culture_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
+    culture_city = 'sankt-peterburg'
+
+    culture_cities = dsn_parameters.read_param('culture').get('city')
+    if culture_cities:
+        culture_city = culture_cities[0]
+
     #categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
     request_params = {
-            "city": CULTURE_CITY,
+            "city": culture_city,
             "days": days
     }
 

@@ -31,3 +31,13 @@ class Exhibitions(Base):
     post_id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     date_before = Column(DateTime, nullable=True)
+
+
+class DsnBotEvents(Base):
+    __tablename__ = 'bot_events'
+    id = Column(String, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    post_id = Column(Integer, nullable=True)
+    date_from = Column(DateTime, nullable=True)
+    date_to = Column(DateTime, nullable=True)
+    price = Column(String, nullable=True)
