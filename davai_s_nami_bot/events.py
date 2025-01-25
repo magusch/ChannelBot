@@ -584,7 +584,7 @@ def get_qtickets_events(
 
     qt_city = 'spb'
 
-    qt_cities = dsn_parameters.read_param('qtickets')['city_id']
+    qt_cities = dsn_parameters.read_param('qtickets').get('city_id')
     if qt_cities:
         qt_city = qt_cities[0]
 
