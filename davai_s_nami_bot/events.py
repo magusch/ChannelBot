@@ -397,7 +397,7 @@ def timepad_request_params(approved: bool = False) -> Dict:
     timepad_params = dsn_parameters.read_param('timepad')
 
     timepad_others_params = dict(
-        limit=300,
+        limit=100,
         cities="Санкт-Петербург",
         moderation_statuses="featured, shown",
     )
@@ -418,6 +418,9 @@ def timepad_request_params(approved: bool = False) -> Dict:
             timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
         else:
             timepad_others_params['organization_ids'] = timepad_params['approved_organization']
+
+    if timepad_others_params['limit']>100:
+        timepad_others_params['limit'] = 100
 
     return timepad_others_params
 
@@ -450,7 +453,7 @@ def get_timepad_events(
     days: int,
     request_params: Dict[str, Any] = None,
     events_filter: Callable[[List[Event]], List[Event]] = None,
-    with_online: bool = True,
+    with_online: bool = False,
 ) -> List[Event]:
     """
     Getting events.
@@ -460,7 +463,7 @@ def get_timepad_events(
             f"Too much days for getting events: {days}."
             f"Maximum is {MAX_NEXT_DAYS} days."
         )
-    today = date.today()
+    today = date.today() + timedelta(days=1)
 
     if request_params is None:
         request_params = timepad_request_params()
