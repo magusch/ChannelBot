@@ -205,7 +205,7 @@ def events_from_url(event_url=None):
     if list(event_to_parse['event_id']):
         database.remove_by_event_id(list(event_to_parse['event_id']))
 
-    inserted_ids = database.add_events(events_from_urls, explored_date=msk_today, table="events_events2post")
+    inserted_ids = crud.add_events_to_post(events_from_urls, explored_date=msk_today)
 
     if inserted_ids is not None:
         dsn_site_session.make_post_text(inserted_ids)

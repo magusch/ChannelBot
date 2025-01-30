@@ -1,11 +1,11 @@
-import os
+import os, json
+import hashlib
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from davai_s_nami_bot.pydantic_models import EventRequestParameters
 from fastapi.middleware.cors import CORSMiddleware
 
-from davai_s_nami_bot.celery_app import celery_app
+from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
 from datetime import datetime
 
@@ -35,6 +35,19 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         return API_TOKEN
     else:
         raise HTTPException(status_code=403, detail="Invalid token")
+
+
+def get_cache_key(params: dict):
+    key = json.dumps(params, sort_keys=True)
+    return hashlib.md5(key.encode()).hexdigest()
+
+
+def serialize_datetime(obj):
+    """Функция для сериализации datetime в строку"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 
 @app.post('/api/schedule-update-events/')
 async def update_events(token: str = Depends(verify_token)):
@@ -69,8 +82,11 @@ async def event_from_url(request: Request, token: str = Depends(verify_token)):
 
 @app.get("/api/status/{task_id}")
 async def get_status(task_id: str, token: str = Depends(verify_token)):
+    params = redis_client.get(task_id)
     result = AsyncResult(task_id, app=celery_app)
     if result.state == 'SUCCESS':
+        if params:
+            redis_client.setex(params, 60 * 60, json.dumps(result.result, default=serialize_datetime))
         return {"status": "success", "result": result.result}
     elif result.state == 'FAILURE':
         return {"status": "failure", "error": str(result.info)}
@@ -111,6 +127,26 @@ async def new_event_from_sites(request: Request, token: str = Depends(verify_tok
     )
     return {'message': 'Task for escrape new event from sites added to queue', 'task_id': task.id}
 
+@app.post("/api/get_valid_event/{event_id}")
+async def get_valid_event_by_id(
+        request: Request,
+        event_id: int,
+        token: str = Depends(verify_token),
+    ):
+
+    cached_data = redis_client.get(f"event_{event_id}")
+    if cached_data:
+        return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
+
+    data = {"ids": [event_id]}
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.get_posted_events',
+        args=[data],
+    )
+    redis_client.setex(task.id, 60 * 10, f"event_{event_id}")
+    return {'message': 'GET EVENT by ID added to queue', 'task_id': task.id}
+
 
 @app.post('/api/get_valid_events/')
 async def get_valid_events(
@@ -119,10 +155,16 @@ async def get_valid_events(
         token: str = Depends(verify_token),
     ):
     data = await request.json()
+    cache_key = get_cache_key(data)
+    cached_data = redis_client.get(cache_key)
+    if cached_data:
+        return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
+
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.get_posted_events',
         args=[data],
     )
+    redis_client.setex(task.id, 60 * 10, cache_key)
     return {'message': 'GET EVENTS', 'task_id': task.id}
 
 
