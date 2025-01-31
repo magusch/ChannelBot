@@ -418,6 +418,8 @@ def timepad_request_params(approved: bool = False) -> Dict:
             timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
         else:
             timepad_others_params['organization_ids'] = timepad_params['approved_organization']
+    elif approved:
+        timepad_others_params['organization_ids'] = []
 
     if timepad_others_params['limit']>100:
         timepad_others_params['limit'] = 100
