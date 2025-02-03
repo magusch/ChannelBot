@@ -6,7 +6,7 @@ pillow==9.0.0
 psycopg2-binary==2.8.5
 pyTelegramBotAPI==3.7.2
 requests<=2.25.1, >=2.24.0
-escraper@git+https://git@github.com/ArtemErmulin/escraper.git@develop
+escraper@git+https://git@github.com/magusch/escraper.git@develop
 celery==5.4.0
 redis==5.0.6
 fastapi==0.111.0
