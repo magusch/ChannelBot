@@ -101,7 +101,7 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 
 
 @db_session
-def set_status(db, event_id: str, status: str) -> None:
+def set_status(db: object, event_id: str, status: str) -> None:
     """
     Обновить статус записи в таблице Event2Post по идентификатору события.
 
@@ -124,8 +124,9 @@ def set_status(db, event_id: str, status: str) -> None:
 
 
 @db_session
-def set_post_url(db, event_id: str, post_url: str) -> None:
-    db.query(Events2Posts).filter(event_id=event_id).update(post_url=post_url)
+def set_post_url(db: object, event_id: str, post_url: str) -> None:
+    db.query(Events2Posts).filter_by(event_id=event_id).update({"post_url":post_url})
+    db.commit()
 
 @db_session
 def get_last_queue_value(db) -> int:
