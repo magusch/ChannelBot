@@ -131,10 +131,8 @@ async def new_event_from_sites(request: Request, token: str = Depends(verify_tok
 
 
 @app.post('/api/get_valid_events/')
-async def get_valid_events(
-        request: Request,
-        token: str = Depends(verify_token),
-    ):
+async def get_valid_events(request: Request, token: str = Depends(verify_token)):
+
     data = await request.json()
     cache_key = get_cache_key(data)
     cached_data = redis_client.get(cache_key)
@@ -151,7 +149,6 @@ async def get_valid_events(
 
 @app.post("/api/get_valid_event/{event_id}")
 async def get_valid_event_by_id(
-        request: Request,
         event_id: int,
         token: str = Depends(verify_token),
     ):

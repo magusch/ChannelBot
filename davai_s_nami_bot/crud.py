@@ -59,6 +59,9 @@ def get_events_by_date_and_category(db, params):
         if params.category:
            query = query.filter(Events2Posts.main_category_id.in_(params.category))
 
+        if params.category:
+           query = query.filter(Events2Posts.place_id.in_(params.place_id))
+
         query = query.order_by(Events2Posts.from_date.asc())
 
         if params.limit:
