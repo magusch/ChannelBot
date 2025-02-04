@@ -41,3 +41,14 @@ class DsnBotEvents(Base):
     date_from = Column(DateTime, nullable=True)
     date_to = Column(DateTime, nullable=True)
     price = Column(String, nullable=True)
+
+
+class Place(Base):
+    __tablename__ = 'place_place'
+    id = Column(String, primary_key=True, index=True)
+    place_name = Column(String)
+    place_address = Column(String, nullable=False)
+    place_url = Column(String, nullable=False)
+    place_metro = Column(String, nullable=False)
+    place_image = Column(String, nullable=False)
+

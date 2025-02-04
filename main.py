@@ -1,5 +1,6 @@
 import os, json
 import hashlib
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -7,7 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
-from datetime import datetime
+
+from davai_s_nami_bot import crud
 
 app = FastAPI()
 
@@ -174,6 +176,17 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
         'davai_s_nami_bot.celery_tasks.get_exhibitions_celery',
     )
     return {'message': 'GET Exhibitions', 'task_id': task.id}
+
+
+@app.get("/api/search/")
+def search(query: str, limit: int = 10, token: str = Depends(verify_token)):
+    print(limit)
+    events = crud.search_events_by_title(query, limit)
+    if not events:
+        places = crud.search_places_by_name(query, limit)
+    else:
+        places = []
+    return {"events": events, "places": places}
 
 
 if __name__ == '__main__':

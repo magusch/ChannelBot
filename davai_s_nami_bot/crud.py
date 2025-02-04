@@ -1,6 +1,6 @@
 from sqlalchemy import func
 
-from .database.models import Events2Posts, Exhibitions, DsnBotEvents
+from .database.models import Events2Posts, Exhibitions, DsnBotEvents, Place
 from .database.database_orm import db_session
 
 from datetime import datetime
@@ -134,7 +134,8 @@ def get_last_queue_value(db) -> int:
     return result if result is not None else 0
 
 
-### DSN BOT ––––––Start–––––– ######
+######## DSN BOT ########
+####––––––START––––––####
 
 @db_session
 def add_posted_event_to_dsn_bot(db, event, post_id):
@@ -153,3 +154,30 @@ def add_posted_event_to_dsn_bot(db, event, post_id):
 @db_session
 def remove_event_from_dsn_bot(db, date):
    db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
+
+####––––––FINISH––––––####
+
+
+### Searching functions ###
+######–----START----–######
+
+
+@db_session
+def search_events_by_title(db, title: str, limit: int):
+    columns = [Events2Posts.id, Events2Posts.title]
+    events = db.query(*columns)\
+        .filter(Events2Posts.title.ilike(f"%{title}%")).limit(limit).all()
+    result = [dict(zip([column.name for column in columns], event)) for event in events]
+    return result
+
+
+@db_session
+def search_places_by_name(db, name: str, limit: int):
+    columns = Place.id, Place.place_name, Place.place_metro
+    places = db.query(*columns)\
+        .filter(Place.place_name.ilike(f"%{name}%")).limit(limit).all()
+    result = [dict(zip([column.name for column in columns], place)) for place in places]
+    return result
+
+
+####––––––FINISH––––––####
