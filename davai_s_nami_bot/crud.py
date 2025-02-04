@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, asc, desc
 
 from .database.models import Events2Posts, Exhibitions, DsnBotEvents, Place
 from .database.database_orm import db_session
@@ -9,10 +9,45 @@ from typing import List
 from .events import Event
 
 
+def order_maping(model, order_by):
+    if model == Place:
+        order_mapping = {
+            'tt': Place.place_name,
+            'mt': Place.place_metro,
+            'id': Place.id
+        }
+        try:
+            field, direction = order_by.split('-')
+            column = order_mapping.get(field, Place.id)
+            sort_order = asc(column) if direction == 'asc' else desc(column)
+        except ValueError:
+            sort_order = asc(Place.id)
+    elif model == Events2Posts:
+        order_mapping = {
+            'tt': Events2Posts.title,
+            'dt': Events2Posts.from_date,
+            'pr': Events2Posts.price,
+            'ad': Events2Posts.price,
+            'id': Events2Posts.id
+        }
+        try:
+            field, direction = order_by.split('-')
+            column = order_mapping.get(field, Place.id)
+            sort_order = asc(column) if direction == 'asc' else desc(column)
+        except ValueError:
+            sort_order = asc(Events2Posts.id)
+    else:
+        sort_order = asc(model.id)
+
+    return sort_order
+
+
+
+
 @db_session
 def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts)\
-        .filter(Events2Posts.status == 'Posted')
+        .filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
 
     if params.ids:
         query = query.filter(Events2Posts.id.in_(params.ids))
@@ -35,6 +70,30 @@ def get_events_by_date_and_category(db, params):
     result = [
         {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
         for event in events
+    ]
+    return result
+
+
+@db_session
+def get_places(db, params):
+    sort_order = order_maping(Place, params.order_by)
+    query = db.query(Place).order_by(sort_order)
+
+    if params.ids:
+        query = query.filter(Place.id.in_(params.ids))
+    else:
+        if params.metro:
+            query = query.filter(Place.place_metro == params.metro)
+
+        if params.limit:
+            query = query.limit(params.limit)
+            if params.page:
+                query = query.offset(params.page * params.limit)
+
+    places = query.all()
+    result = [
+        {field: getattr(place, field) for field in (params.fields or place.__table__.columns.keys())}
+        for place in places
     ]
     return result
 

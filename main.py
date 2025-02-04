@@ -129,6 +129,26 @@ async def new_event_from_sites(request: Request, token: str = Depends(verify_tok
     )
     return {'message': 'Task for escrape new event from sites added to queue', 'task_id': task.id}
 
+
+@app.post('/api/get_valid_events/')
+async def get_valid_events(
+        request: Request,
+        token: str = Depends(verify_token),
+    ):
+    data = await request.json()
+    cache_key = get_cache_key(data)
+    cached_data = redis_client.get(cache_key)
+    if cached_data:
+        return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.get_posted_events',
+        args=[data],
+    )
+    redis_client.setex(task.id, 60 * 10, cache_key)
+    return {'message': 'GET EVENTS', 'task_id': task.id}
+
+
 @app.post("/api/get_valid_event/{event_id}")
 async def get_valid_event_by_id(
         request: Request,
@@ -150,10 +170,9 @@ async def get_valid_event_by_id(
     return {'message': 'GET EVENT by ID added to queue', 'task_id': task.id}
 
 
-@app.post('/api/get_valid_events/')
-async def get_valid_events(
+@app.post('/api/get_places/')
+async def get_places(
         request: Request,
-        #params: EventRequestParameters,
         token: str = Depends(verify_token),
     ):
     data = await request.json()
@@ -163,11 +182,31 @@ async def get_valid_events(
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
     task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.get_posted_events',
+        'davai_s_nami_bot.celery_tasks.get_places',
         args=[data],
     )
     redis_client.setex(task.id, 60 * 10, cache_key)
-    return {'message': 'GET EVENTS', 'task_id': task.id}
+    return {'message': 'GET PLACES task added to queue', 'task_id': task.id}
+
+
+@app.post("/api/get_place/{place_id}")
+async def get_valid_event_by_id(
+        place_id: int,
+        token: str = Depends(verify_token),
+    ):
+
+    cached_data = redis_client.get(f"place_{place_id}")
+    if cached_data:
+        return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
+
+    data = {"ids": [place_id]}
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.get_places',
+        args=[data],
+    )
+    redis_client.setex(task.id, 60 * 10, f"place_{place_id}")
+    return {'message': 'GET PLACE by ID added to queue', 'task_id': task.id}
 
 
 @app.post('/api/get_exhibitions/')
@@ -180,7 +219,6 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
 
 @app.get("/api/search/")
 def search(query: str, limit: int = 10, token: str = Depends(verify_token)):
-    print(limit)
     events = crud.search_events_by_title(query, limit)
     if not events:
         places = crud.search_places_by_name(query, limit)

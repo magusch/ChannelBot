@@ -8,7 +8,7 @@ class EventRequestParameters(BaseModel):
     date_to: Optional[datetime] = None
     category: Optional[List[int]] = None
     fields: Optional[List[str]] = None
-    limit: Optional[int] = None
+    limit: Optional[int] = 20
     page: Optional[int] = None
     ids: Optional[List[int]] = None
 
@@ -27,6 +27,15 @@ class EventRequestParameters(BaseModel):
             'page': self.page,
             'ids':  self.ids,
         }
+
+
+class PlaceRequestParameters(BaseModel):
+    metro: Optional[str] = None
+    fields: Optional[List[str]] = None
+    limit: Optional[int] = 20
+    page: Optional[int] = None
+    order_by: Optional[str] = 'tt-asc'
+    ids: Optional[List[int]] = None
 
 
 class UpdatePostingRequest(BaseModel):

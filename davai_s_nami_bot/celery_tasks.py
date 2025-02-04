@@ -6,7 +6,7 @@ from davai_s_nami_bot.celery_app import celery_app, redis_client
 
 from datetime import datetime, timedelta
 
-from .pydantic_models import EventRequestParameters
+from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
 from . import crud
 from . import clients
@@ -295,6 +295,18 @@ def get_posted_events(parameters: dict):
     result = {
         'request': parameters,
         'events': events
+    }
+    return result
+
+
+@celery_app.task
+def get_places(parameters: dict):
+    params = PlaceRequestParameters(**parameters)
+
+    places = crud.get_places(params)
+    result = {
+        'request': parameters,
+        'places': places
     }
     return result
 

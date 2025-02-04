@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -17,7 +17,7 @@ class Events2Posts(Base):
     post_url = Column(String, nullable=False)
     url = Column(String, nullable=False)
     place_id = Column(Integer, nullable=True)
-    # is_ready = Column(Boolean, nullable=True)
+    is_ready = Column(Boolean, nullable=True)
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)
@@ -52,3 +52,13 @@ class Place(Base):
     place_metro = Column(String, nullable=False)
     place_image = Column(String, nullable=False)
 
+
+# class PlaceSchedule(Base):
+#     __tablename__ = 'place_placeschedule'
+#     id = Column(String, primary_key=True, index=True)
+#     schedule_type = Column(String)
+#     weekday = Column(Integer, nullable=True)
+#     date = Column(Date, nullable=True)
+#     open_time = Column(Time, nullable=True)
+#     close_time = Column(Time, nullable=True)
+#     place_id = Column(ForeignKey(Place))
