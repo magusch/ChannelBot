@@ -119,6 +119,24 @@ async def new_event_from_data(request: Request, token: str = Depends(verify_toke
     return {'message': 'Task NEW EVENT added to queue', 'task_id': task.id}
 
 
+@app.post('/api/ai_moderate_events/')
+async def moderate_events(request: Request, token: str = Depends(verify_token), ):
+    data = await request.json()
+    args = []
+    if 'events' in data.keys:
+        args.push(data['events'])
+        if 'examples' in data.keys:
+            args.push(data['examples'])
+
+        task = celery_app.send_task(
+            'davai_s_nami_bot.celery_tasks.ai_moderate_events',
+            args=args,
+        )
+        return {'message': 'Task moderation of events added to queue', 'task_id': task.id}
+    else:
+        return {'message': 'There are not events for Task moderation of events'}
+
+
 @app.post('/api/new_event_from_sites/')
 async def new_event_from_sites(request: Request, token: str = Depends(verify_token)):
     data = await request.json()

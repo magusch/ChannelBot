@@ -19,6 +19,7 @@ from .datetime_utils import get_msk_today, STRFTIME
 from .logger import get_logger, LOG_FILE, log_task
 
 from .helper.open_ai_helper import OpenAIHelper
+from .helper.open_ai_event_moderator import OpenAIEventModerator
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -236,6 +237,16 @@ def ai_update_event(event={}, is_new=0):
         if inserted_ids is not None:
             dsn_site_session.make_post_text(inserted_ids)
     return ai_event
+
+
+@celery_app.task
+def ai_moderate_events(events_for_moderation=[], example_of_good_events=[]):
+    log.info(f"Start AI moderation process for {len(events_for_moderation)} events.")
+
+    moderator = OpenAIEventModerator()
+    approved_ids = moderator.moderate_events(events_for_moderation, example_of_good_events)
+
+    return approved_ids
 
 
 @log_task
