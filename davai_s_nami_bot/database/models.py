@@ -25,6 +25,25 @@ class Events2Posts(Base):
     main_category_id = Column(Integer, nullable=True)
 
 
+class EventsNotApproved(Base):
+    __tablename__ = 'events_eventsnotapprovednew'
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String)
+    approved = Column(Boolean, nullable=True)
+    title = Column(String, nullable=False)
+    post = Column(String, nullable=True)
+    full_text = Column(String, nullable=True)
+    image = Column(String, nullable=True)
+    url = Column(String, nullable=False)
+    price = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    explored_date = Column(DateTime, nullable=True)
+    from_date = Column(DateTime, nullable=True)
+    to_date = Column(DateTime, nullable=True)
+    category = Column(String, nullable=True)
+
+
 class Exhibitions(Base):
     __tablename__ = 'exhibitions'
 

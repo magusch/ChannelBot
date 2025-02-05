@@ -137,6 +137,17 @@ async def moderate_events(request: Request, token: str = Depends(verify_token), 
         return {'message': 'There are not events for Task moderation of events'}
 
 
+@app.post('/api/ai_moderate_not_approved_events/')
+async def moderate_not_approved_events(request: Request, token: str = Depends(verify_token), ):
+    data = await request.json()
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.ai_moderate_not_approved_events',
+        args=[data],
+    )
+    return {'message': 'Task moderate not approved events added to queue', 'task_id': task.id}
+
+
 @app.post('/api/new_event_from_sites/')
 async def new_event_from_sites(request: Request, token: str = Depends(verify_token)):
     data = await request.json()

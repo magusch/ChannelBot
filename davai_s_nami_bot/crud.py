@@ -1,6 +1,6 @@
 from sqlalchemy import func, asc, desc
 
-from .database.models import Events2Posts, Exhibitions, DsnBotEvents, Place
+from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place
 from .database.database_orm import db_session
 
 from datetime import datetime
@@ -109,6 +109,40 @@ def get_all_events(db):
         for event in events
     ]
     return result
+
+
+@db_session
+def get_not_approved_events(db, params):
+    query = db.query(EventsNotApproved)
+
+    if params.ids:
+        query = query.filter(EventsNotApproved.id.in_(params.ids))
+    else:
+        if params.date_from:
+            query = query.filter(func.date(EventsNotApproved.explored_date) <= params.date_from.date())
+        if params.date_to:
+            query = query.filter(func.date(EventsNotApproved.explored_date) <= params.date_to.date())
+
+        if params.limit:
+            query = query.limit(params.limit)
+            if params.page:
+                query = query.offset(params.page * params.limit)
+
+    events = query.all()
+    result = [
+        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
+        for event in events
+    ]
+
+    return result
+
+
+@db_session
+def update_not_approved_events_set_approved(db, event_ids=[]):
+    db.query(EventsNotApproved)\
+        .filter(EventsNotApproved.id.in_(event_ids))\
+        .update({'approved': 1})
+    db.commit()
 
 
 @db_session

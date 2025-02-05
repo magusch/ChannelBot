@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
+from celery import chain
 
 from datetime import datetime, timedelta
 
@@ -248,6 +249,28 @@ def ai_moderate_events(events_for_moderation=[], example_of_good_events=[]):
 
     return approved_ids
 
+
+@celery_app.task
+def ai_moderate_not_approved_events(parameters: dict):
+    params = EventRequestParameters(**parameters)
+    not_approved_events = crud.get_not_approved_events(params)
+    if not not_approved_events:
+        return {"message": "No events to moderate."}
+
+    task = chain(
+        ai_moderate_events.s(not_approved_events, []),
+        update_approved_events.s()
+    ).apply_async()
+
+    return {"message": "AI moderation started.", "task_id": task.id}
+
+
+@celery_app.task
+def update_approved_events(event_ids):
+    if event_ids:
+        crud.update_not_approved_events_set_approved(event_ids)
+        return {"message": f"Approved {len(event_ids)} events.", "event_ids": event_ids}
+    return {"message": "No events were approved."}
 
 @log_task
 @celery_app.task
