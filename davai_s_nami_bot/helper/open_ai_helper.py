@@ -101,7 +101,7 @@ class OpenAIHelper:
         return event_data
 
     def new_event_data(self, event):
-        replace_phrases = {'текст': 'full_text', 'text': 'full_text',
+        replace_phrases = {'текст': 'prepared_text', 'text': 'prepared_text',
                            'заголовок': 'title',
                            'категория': 'category', 'дата': 'from_date',
                            'адрес': 'address', 'стоимость': 'price',
