@@ -11,6 +11,8 @@ from celery.result import AsyncResult
 
 from davai_s_nami_bot import crud
 
+from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
+
 app = FastAPI()
 
 origins = [
@@ -168,12 +170,21 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.get_posted_events',
-        args=[data],
-    )
-    redis_client.setex(task.id, 60 * 10, cache_key)
-    return {'message': 'GET EVENTS', 'task_id': task.id}
+    # task = celery_app.send_task(
+    #     'davai_s_nami_bot.celery_tasks.get_posted_events',
+    #     args=[data],
+    # )
+    # redis_client.setex(task.id, 60 * 10, cache_key)
+    # return {'message': 'GET EVENTS', 'task_id': task.id}
+    params = EventRequestParameters(**data).with_defaults()
+
+    events = crud.get_events_by_date_and_category(params)
+    redis_client.setex(cache_key, 60 * 10, json.dumps(events, default=serialize_datetime))
+    result = {
+        'request': data,
+        'events': events
+    }
+    return result
 
 
 @app.post("/api/get_valid_event/{event_id}")
@@ -188,12 +199,20 @@ async def get_valid_event_by_id(
 
     data = {"ids": [event_id]}
 
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.get_posted_events',
-        args=[data],
-    )
-    redis_client.setex(task.id, 60 * 10, f"event_{event_id}")
-    return {'message': 'GET EVENT by ID added to queue', 'task_id': task.id}
+    # task = celery_app.send_task(
+    #     'davai_s_nami_bot.celery_tasks.get_posted_events',
+    #     args=[data],
+    # )
+    # redis_client.setex(task.id, 60 * 10, f"event_{event_id}")
+    # return {'message': 'GET EVENT by ID added to queue', 'task_id': task.id}
+    params = EventRequestParameters(**data).with_defaults()
+    events = crud.get_events_by_date_and_category(params)
+    redis_client.setex(f"event_{event_id}", 60 * 10, json.dumps(events, default=serialize_datetime))
+    result = {
+        'request': data,
+        'events': events
+    }
+    return result
 
 
 @app.post('/api/get_places/')
@@ -207,16 +226,24 @@ async def get_places(
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.get_places',
-        args=[data],
-    )
-    redis_client.setex(task.id, 60 * 10, cache_key)
-    return {'message': 'GET PLACES task added to queue', 'task_id': task.id}
+    # task = celery_app.send_task(
+    #     'davai_s_nami_bot.celery_tasks.get_places',
+    #     args=[data],
+    # )
+
+    # return {'message': 'GET PLACES task added to queue', 'task_id': task.id}
+    params = PlaceRequestParameters(**data)
+    places = crud.get_places(params)
+    redis_client.setex(cache_key, 60 * 10, json.dumps(places, default=serialize_datetime))
+    result = {
+        'request': data,
+        'places': places
+    }
+    return result
 
 
 @app.post("/api/get_place/{place_id}")
-async def get_valid_event_by_id(
+async def get_place_by_id(
         place_id: int,
         token: str = Depends(verify_token),
     ):
@@ -227,12 +254,21 @@ async def get_valid_event_by_id(
 
     data = {"ids": [place_id]}
 
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.get_places',
-        args=[data],
-    )
-    redis_client.setex(task.id, 60 * 10, f"place_{place_id}")
-    return {'message': 'GET PLACE by ID added to queue', 'task_id': task.id}
+    # task = celery_app.send_task(
+    #     'davai_s_nami_bot.celery_tasks.get_places',
+    #     args=[data],
+    # )
+    # redis_client.setex(task.id, 60 * 10, f"place_{place_id}")
+    # return {'message': 'GET PLACE by ID added to queue', 'task_id': task.id}
+
+    params = PlaceRequestParameters(**data)
+    places = crud.get_places(params)
+    redis_client.setex(f"place_{place_id}", 60 * 10, json.dumps(places, default=serialize_datetime))
+    result = {
+        'request': data,
+        'places': places
+    }
+    return result
 
 
 @app.post('/api/get_exhibitions/')
