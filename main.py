@@ -181,8 +181,11 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
     events = crud.get_events_by_date_and_category(params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(events, default=serialize_datetime))
     result = {
-        'request': data,
-        'events': events
+        "status": "success",
+        "result": {
+            'request': data,
+            'events': events
+        }
     }
     return result
 
@@ -209,8 +212,11 @@ async def get_valid_event_by_id(
     events = crud.get_events_by_date_and_category(params)
     redis_client.setex(f"event_{event_id}", 60 * 10, json.dumps(events, default=serialize_datetime))
     result = {
-        'request': data,
-        'events': events
+        "status": "success",
+        "result": {
+            'request': data,
+            'events': events
+        }
     }
     return result
 
@@ -236,8 +242,11 @@ async def get_places(
     places = crud.get_places(params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(places, default=serialize_datetime))
     result = {
-        'request': data,
-        'places': places
+        "status": "success",
+        "result": {
+            'request': data,
+            'places': places
+        }
     }
     return result
 
@@ -265,8 +274,11 @@ async def get_place_by_id(
     places = crud.get_places(params)
     redis_client.setex(f"place_{place_id}", 60 * 10, json.dumps(places, default=serialize_datetime))
     result = {
-        'request': data,
-        'places': places
+        "status": "success",
+        "result": {
+            'request': data,
+            'places': places
+        }
     }
     return result
 
