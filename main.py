@@ -293,6 +293,7 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
 
 @app.get("/api/search/")
 def search(query: str, limit: int = 10, type: str = 'event', token: str = Depends(verify_token)):
+    events, places = [], []
     if type == 'event':
         events = crud.search_events_by_title(query, limit)
     elif type == 'place':
