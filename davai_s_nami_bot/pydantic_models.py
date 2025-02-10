@@ -14,8 +14,6 @@ class EventRequestParameters(BaseModel):
     ids: Optional[List[int]] = None
 
     def with_defaults(self):
-        if self.date_to is None:
-            self.date_to = self.date_from
         return self
 
     def to_crud_dict(self):

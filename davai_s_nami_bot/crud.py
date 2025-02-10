@@ -52,15 +52,16 @@ def get_events_by_date_and_category(db, params):
     if params.ids:
         query = query.filter(Events2Posts.id.in_(params.ids))
     else:
-        query = query.filter(func.date(Events2Posts.from_date) >= params.date_from.date(),
-              func.date(Events2Posts.to_date) <= params.date_to.date()
-            )
+        query = query.filter(func.date(Events2Posts.from_date) >= params.date_from.date())
+
+        if params.date_to:
+            query = query.filter(func.date(Events2Posts.to_date) <= params.date_to.date())
 
         if params.category:
-           query = query.filter(Events2Posts.main_category_id.in_(params.category))
+            query = query.filter(Events2Posts.main_category_id.in_(params.category))
 
         if params.place:
-           query = query.filter(Events2Posts.place_id.in_(params.place))
+            query = query.filter(Events2Posts.place_id.in_(params.place))
 
         query = query.order_by(Events2Posts.from_date.asc())
 
