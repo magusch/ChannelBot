@@ -11,6 +11,8 @@ class Events2Posts(Base):
     event_id = Column(String)
     title = Column(String, nullable=False)
     full_text = Column(String, nullable=True)
+    prepared_text = Column(String, nullable=True)
+    post = Column(String, nullable=True)
     image = Column(String, nullable=True)
     price = Column(String, nullable=True)
     status = Column(String, nullable=False)

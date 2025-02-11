@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
-from celery import chain
+from celery import chain, group
 
 from datetime import datetime, timedelta
 
@@ -272,6 +272,7 @@ def update_approved_events(event_ids):
         return {"message": f"Approved {len(event_ids)} events.", "event_ids": event_ids}
     return {"message": "No events were approved."}
 
+
 @log_task
 @celery_app.task
 def full_update():
@@ -319,6 +320,49 @@ def update_parameters(parameters={}):
 
     for site, params in dsn_parameters.items():
         redis_client.setex(f'parameters:{site}', 36000, json.dumps(params))
+
+
+@celery_app.task
+def prepare_events(parameters: dict):
+    params = EventRequestParameters(**parameters)
+    events = crud.get_approved_events(params)
+
+    if not events:
+        return {"message": "No events to remake posts."}
+
+    update_tasks = group(
+        chain(
+            ai_update_event.s(event),
+            update_event.s(event['id']),
+            remake_event.s(event)
+        ) for event in events
+    )
+
+    task_group = update_tasks.apply_async()
+    return {"message": "AI update started.", "task_id": task_group.id}
+
+
+@celery_app.task
+def update_event(new_event_data, event_id):
+    if new_event_data is not None:
+        new_event_data = {k: v for k, v in new_event_data.items() if v}
+        if new_event_data.get('prepared_text'):
+            new_event_data['is_ready'] = True
+            if crud.update_approved_event(event_id, new_event_data):
+                return {**new_event_data, "event_id": event_id}
+
+    return {"message": f"Skipping event {event_id}, no update data"}
+
+
+@celery_app.task
+def remake_event(*event):
+    full_event = {}
+    for e in event:
+        if isinstance(e, dict):
+            full_event.update(e)
+
+    if 'id' in full_event.keys():
+        dsn_site_session.make_post_text([full_event['id']])
 
 
 @celery_app.task

@@ -1,4 +1,4 @@
-from sqlalchemy import func, asc, desc
+from sqlalchemy import func, asc, desc, exc
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place
 from .database.database_orm import db_session
@@ -110,6 +110,45 @@ def get_all_events(db):
         for event in events
     ]
     return result
+
+
+@db_session
+def get_approved_events(db, params):
+    query = db.query(Events2Posts)
+
+    if params.ids:
+        query = query.filter(Events2Posts.id.in_(params.ids))
+    else:
+        if params.date_from:
+            query = query.filter(func.date(Events2Posts.from_date) <= params.date_from.date())
+        if params.date_to:
+            query = query.filter(func.date(Events2Posts.to_date) <= params.date_to.date())
+
+        if params.limit:
+            query = query.limit(params.limit)
+            if params.page:
+                query = query.offset(params.page * params.limit)
+
+    events = query.all()
+    result = [
+        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
+        for event in events
+    ]
+
+    return result
+
+
+@db_session
+def update_approved_event(db, event_id: int, new_event_data: dict):
+    try:
+        event = db.query(Events2Posts).filter(Events2Posts.id == event_id).one()
+        for key, value in new_event_data.items():
+            if hasattr(event, key) and 'date' not in key:
+                setattr(event, key, value)
+        db.commit()
+        return True
+    except exc.NoResultFound:
+        return None
 
 
 @db_session

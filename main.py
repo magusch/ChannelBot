@@ -150,6 +150,17 @@ async def moderate_not_approved_events(request: Request, token: str = Depends(ve
     return {'message': 'Task moderate not approved events added to queue', 'task_id': task.id}
 
 
+@app.post('/api/prepare_events/')
+async def prepare_events(request: Request, token: str = Depends(verify_token), ):
+    data = await request.json()
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.prepare_events',
+        args=[data],
+    )
+    return {'message': 'Task prepare events added to queue', 'task_id': task.id}
+
+
 @app.post('/api/new_event_from_sites/')
 async def new_event_from_sites(request: Request, token: str = Depends(verify_token)):
     data = await request.json()
