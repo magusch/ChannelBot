@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
-from celery import chain, group
+from celery import chain, chord
 
 from datetime import datetime, timedelta
 
@@ -330,12 +330,12 @@ def prepare_events(parameters: dict):
     if not events:
         return {"message": "No events to remake posts."}
 
-    update_tasks = group(
-        chain(
+    update_tasks = chord(
+        (chain(
             ai_update_event.s(event),
-            update_event.s(event['id']),
-            remake_event.s(event)
-        ) for event in events
+            update_event.s(event['id'])
+        ) for event in events),
+        remake_events.s()
     )
 
     task_group = update_tasks.apply_async()
@@ -363,6 +363,19 @@ def remake_event(*event):
 
     if 'id' in full_event.keys():
         dsn_site_session.make_post_text([full_event['id']])
+
+
+@celery_app.task
+def remake_events(events):
+    event_ids = []
+    for event in events:
+        if event.get('id'):
+            event_ids.append(event['id'])
+        elif event.get('event_id'):
+            event_ids.append(event['event_id'])
+
+    if event_ids:
+        dsn_site_session.make_post_text(event_ids)
 
 
 @celery_app.task
