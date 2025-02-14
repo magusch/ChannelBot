@@ -281,11 +281,11 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
 def search(query: str, limit: int = 10, type: str = 'event', token: str = Depends(verify_token)):
     events, places = [], []
     if type == 'event':
-        events = crud.search_events_by_title(query, limit)
+        events = crud.search_events_by_string(query, limit)
     elif type == 'place':
         places = crud.search_places_by_name(query, limit)
     else:
-        events = crud.search_events_by_title(query, limit)
+        events = crud.search_events_by_string(query, limit)
         places = crud.search_places_by_name(query, limit)
 
     return {"events": events, "places": places}

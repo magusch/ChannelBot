@@ -311,10 +311,11 @@ def remove_event_from_dsn_bot(db, date):
 
 
 @db_session
-def search_events_by_title(db, title: str, limit: int):
-    columns = [Events2Posts.id, Events2Posts.title]
+def search_events_by_string(db, string: str, limit: int):
+    columns = [Events2Posts.id, Events2Posts.title, Events2Posts.image]
     events = db.query(*columns)\
-        .filter(Events2Posts.title.ilike(f"%{title}%")).limit(limit).all()
+        .filter((Events2Posts.title.ilike(f"%{string}%")) | (Events2Posts.category.ilike(f"%{string}%")))\
+        .limit(limit).all()
     result = [dict(zip([column.name for column in columns], event)) for event in events]
     return result
 
