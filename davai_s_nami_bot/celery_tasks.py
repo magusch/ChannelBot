@@ -367,12 +367,7 @@ def remake_event(*event):
 
 @celery_app.task
 def remake_events(events):
-    event_ids = []
-    for event in events:
-        if event.get('id'):
-            event_ids.append(event['id'])
-        elif event.get('event_id'):
-            event_ids.append(event['event_id'])
+    event_ids = [event.get('id') or event.get('event_id') for event in events if event.get('id') or event.get('event_id')]
 
     if event_ids:
         dsn_site_session.make_post_text(event_ids)

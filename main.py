@@ -181,24 +181,11 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
-    # task = celery_app.send_task(
-    #     'davai_s_nami_bot.celery_tasks.get_posted_events',
-    #     args=[data],
-    # )
-    # redis_client.setex(task.id, 60 * 10, cache_key)
-    # return {'message': 'GET EVENTS', 'task_id': task.id}
     params = EventRequestParameters(**data).with_defaults()
 
-    events = crud.get_events_by_date_and_category(params)
-    redis_client.setex(cache_key, 60 * 10, json.dumps(events, default=serialize_datetime))
-    result = {
-        "status": "success",
-        "result": {
-            'request': data,
-            'events': events
-        }
-    }
-    return result
+    result = crud.get_events_by_date_and_category(params)
+    redis_client.setex(cache_key, 60 * 10, json.dumps(result, default=serialize_datetime))
+    return {"status": "success", "result": result}
 
 
 @app.post("/api/get_valid_event/{event_id}")
@@ -213,23 +200,11 @@ async def get_valid_event_by_id(
 
     data = {"ids": [event_id]}
 
-    # task = celery_app.send_task(
-    #     'davai_s_nami_bot.celery_tasks.get_posted_events',
-    #     args=[data],
-    # )
-    # redis_client.setex(task.id, 60 * 10, f"event_{event_id}")
-    # return {'message': 'GET EVENT by ID added to queue', 'task_id': task.id}
     params = EventRequestParameters(**data).with_defaults()
-    events = crud.get_events_by_date_and_category(params)
-    redis_client.setex(f"event_{event_id}", 60 * 10, json.dumps(events, default=serialize_datetime))
-    result = {
-        "status": "success",
-        "result": {
-            'request': data,
-            'events': events
-        }
-    }
-    return result
+    result = crud.get_events_by_date_and_category(params)
+    redis_client.setex(f"event_{event_id}", 60 * 10, json.dumps(result, default=serialize_datetime))
+
+    return {"status": "success", "result": result}
 
 
 @app.post('/api/get_places/')

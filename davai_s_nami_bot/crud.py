@@ -48,34 +48,46 @@ def order_maping(model, order_by):
 def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts)\
         .filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
-
+    dict_requests = {}
     if params.ids:
         query = query.filter(Events2Posts.id.in_(params.ids))
+        dict_requests['ids'] = params.ids
     else:
         query = query.filter(func.date(Events2Posts.from_date) >= params.date_from.date())
+        dict_requests['date_from'] = params.date_from
 
         if params.date_to:
             query = query.filter(func.date(Events2Posts.to_date) <= params.date_to.date())
+            dict_requests['date_to'] = params.date_to
 
         if params.category:
             query = query.filter(Events2Posts.main_category_id.in_(params.category))
+            dict_requests['category'] = params.category
 
         if params.place:
             query = query.filter(Events2Posts.place_id.in_(params.place))
+            dict_requests['place'] = params.place
 
         query = query.order_by(Events2Posts.from_date.asc())
 
-        if params.limit:
-            query = query.limit(params.limit)
-            if params.page:
-                query = query.offset(params.page * params.limit)
+    total_count = query.count()
+
+    if params.limit:
+        query = query.limit(params.limit)
+        dict_requests['limit'] = params.limit
+        if params.page:
+            query = query.offset(params.page * params.limit)
+            dict_requests['page'] = params.page
 
     events = query.all()
-    result = [
+    events = [
         {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
         for event in events
     ]
-    return result
+    if params.fields:
+        dict_requests['fields'] = params.fields
+
+    return {'events': events, 'total_count': total_count, 'request': dict_requests}
 
 
 @db_session
