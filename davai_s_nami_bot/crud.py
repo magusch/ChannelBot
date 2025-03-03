@@ -53,11 +53,11 @@ def get_events_by_date_and_category(db, params):
         query = query.filter(Events2Posts.id.in_(params.ids))
         dict_requests['ids'] = params.ids
     else:
-        query = query.filter(func.date(Events2Posts.from_date) >= params.date_from.date())
+        query = query.filter(func.date(Events2Posts.to_date) >= params.date_from.date())
         dict_requests['date_from'] = params.date_from
 
         if params.date_to:
-            query = query.filter(func.date(Events2Posts.to_date) <= params.date_to.date())
+            query = query.filter(func.date(Events2Posts.from_date) <= params.date_to.date())
             dict_requests['date_to'] = params.date_to
 
         if params.category:
