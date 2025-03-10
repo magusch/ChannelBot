@@ -18,6 +18,7 @@ app = FastAPI()
 origins = [
     "http://example.com",
     "http://localhost:3000",
+    "https://davai-s-nami.vercel.app",
 ]
 
 app.add_middleware(
