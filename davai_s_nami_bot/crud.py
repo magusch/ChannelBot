@@ -201,7 +201,7 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
 def get_exhibitions(db):
     today = datetime.today()
     exhibitions = db.query(Exhibitions).filter(
-        func.date(Exhibitions.date_before) <= today,
+        func.date(Exhibitions.date_before) >= today,
     )
 
     result = [
