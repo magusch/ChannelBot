@@ -20,6 +20,7 @@ from .datetime_utils import get_msk_today, STRFTIME
 from .logger import get_logger, LOG_FILE, log_task
 
 from .helper.open_ai_helper import OpenAIHelper
+from .helper.claude_helper import ClaudeHelper
 from .helper.open_ai_event_moderator import OpenAIEventModerator
 
 log = get_logger(__file__)
@@ -228,7 +229,7 @@ def ai_update_event(event={}, is_new=0):
     log.info("Start get post from url.")
 
     msk_today = get_msk_today()
-    ai_helper = OpenAIHelper()
+    ai_helper = ClaudeHelper()
 
     ai_event = ai_helper.new_event_data(event)
     if is_new == 1:
