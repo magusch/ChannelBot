@@ -9,6 +9,7 @@ class Events2Posts(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String)
+    queue = Column(Integer)
     title = Column(String, nullable=False)
     full_text = Column(String, nullable=True)
     prepared_text = Column(String, nullable=True)
@@ -20,6 +21,7 @@ class Events2Posts(Base):
     url = Column(String, nullable=False)
     place_id = Column(Integer, nullable=True)
     is_ready = Column(Boolean, nullable=True)
+    explored_date = Column(DateTime, nullable=True)
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)

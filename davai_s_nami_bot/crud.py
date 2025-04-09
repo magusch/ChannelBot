@@ -230,18 +230,17 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
             value += queue_increase
             yield value
 
-    queue_value = func()
-
-    params = dict(status="ReadyToPost")
+    queue_value_gen = func()
 
     list_inserted_ids = []
     for event in events:
-        event.update({
+        event_dict = event._asdict()
+        event_dict.update({
             'status': 'ReadyToPost',
-            'queue': queue_value,
-            'explored_date' : explored_date
+            'queue': next(queue_value_gen),
+            'explored_date': explored_date
         })
-        id_list = create_event(event)
+        id_list = create_event(event_dict)
         if type(id_list) == list:
             list_inserted_ids.append(id_list[0][0])
 
@@ -278,8 +277,9 @@ def set_post_url(db: object, event_id: str, post_url: str) -> None:
 
 @db_session
 def get_last_queue_value(db) -> int:
-    result = db.query(Events2Posts).filter(status='ReadyToPost').order_by(Events2Posts.queue.desc()).scalar
-    return result if result is not None else 0
+    result = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
+    last_queue_value = result[0] if result and result[0] is not None else 0
+    return last_queue_value
 
 
 ######## DSN BOT ########
