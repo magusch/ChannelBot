@@ -21,7 +21,8 @@ from .logger import get_logger, LOG_FILE, log_task
 
 from .helper.open_ai_helper import OpenAIHelper
 from .helper.claude_helper import ClaudeHelper
-from .helper.open_ai_event_moderator import OpenAIEventModerator
+# from .helper.open_ai_event_moderator import OpenAIEventModerator
+from .helper.claude_event_moderator import ClaudeEventModerator
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -245,7 +246,7 @@ def ai_update_event(event={}, is_new=0):
 def ai_moderate_events(events_for_moderation=[], example_of_good_events=[]):
     log.info(f"Start AI moderation process for {len(events_for_moderation)} events.")
 
-    moderator = OpenAIEventModerator()
+    moderator = ClaudeEventModerator()
     approved_ids = moderator.moderate_events(events_for_moderation, example_of_good_events)
 
     return approved_ids
