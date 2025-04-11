@@ -13,7 +13,7 @@ class ClaudeHelper:
         param = DSNParameters()
         self.system_message = param.site_parameters('openai_system_message', last=1)
         self.user_message = param.site_parameters('openai_user_message', last=1)
-        self.openai_model = param.site_parameters('claude_model', last=1) or "claude-3-7-sonnet-20250219"
+        self.claude_model = param.site_parameters('claude_model', last=1) or "claude-3-7-sonnet-20250219"
 
     def refactor_post(self, event):
         if self.system_message is not None:
@@ -34,7 +34,7 @@ class ClaudeHelper:
             event_info += f"{key} => {value}; \n"
 
         message = self.client.messages.create(
-            model=self.openai_model,
+            model=self.claude_model,
             max_tokens=1000,
             temperature=1,
             system=system_message,
@@ -69,7 +69,7 @@ class ClaudeHelper:
                                  - Если мероприятие бесплатно – просто напиши "Бесплатно".
                                  - Важно: если информация о цене расплывчата или отсутствует, не включай её в ответ.
                                 5) Адрес:
-                                 - Должен содержать только название места, адрес, и станцию метро (если указано).
+                                 - Должен содержать только название места, адрес, и станцию метро (если указано или ты сможешь её найти).
                                  - Исключи упоминания населённого пункта и района.
                                 6) Дата:
                                  - Укажи дату в формате '%Y-%m-%dT%h:%m' без дополнительной информации.

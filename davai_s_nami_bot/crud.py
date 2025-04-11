@@ -298,6 +298,13 @@ def add_posted_event_to_dsn_bot(db, event, post_id):
     db.refresh(event)
     return event
 
+@db_session
+def add_exhibition_to_dsn_bot(db, event, post_id):
+    event_data = {
+        "title": event.title, "post_id": post_id, "date_before": event.to_date, "price": event.price,
+    }
+    db.add(Exhibitions(**event_data))
+    db.commit()
 
 @db_session
 def remove_event_from_dsn_bot(db, date):

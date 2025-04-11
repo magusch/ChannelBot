@@ -71,7 +71,7 @@ class ClaudeEventModerator:
         #     messages=ai_messages
         # )
         message = self.client.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             temperature=1,
             system=system_message,
