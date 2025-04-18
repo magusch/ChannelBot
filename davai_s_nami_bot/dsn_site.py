@@ -31,7 +31,7 @@ def next_event_to_channel():
         event = None
     else:
         # Events are already filtered by status and sorted by queue in the database query
-        event = Event.from_database(events[0])
+        event = events[0]
         crud.set_status(
             event_id=event.event_id, status="Posted"
         )
