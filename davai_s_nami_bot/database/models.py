@@ -4,6 +4,17 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 
+class Place(Base):
+    __tablename__ = 'place_place'
+    id = Column(Integer, primary_key=True, index=True)
+    place_name = Column(String)
+    place_address = Column(String, nullable=False)
+    place_url = Column(String, nullable=False)
+    place_metro = Column(String, nullable=False)
+    place_image = Column(String, nullable=False)
+    # events = relationship("Events2Posts", back_populates="place")
+
+
 class Events2Posts(Base):
     __tablename__ = 'events_events2post'
 
