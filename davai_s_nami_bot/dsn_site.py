@@ -2,6 +2,7 @@ import datetime
 from typing import Any, List
 
 import pandas as pd
+import pytz
 
 
 from .events import Event
@@ -23,76 +24,80 @@ def next_event_to_channel():
     - Field `status` has `ReadyToPost` value
     - Datetime now is similar to `post_date`
     """
-    events = database.get_event_to_post_now(table="events_events2post")
+    #events = database.get_event_to_post_now(table="events_events2post")
+    events = crud.get_event_to_post_now()
 
-    if events is None or events.empty:
+    if events is None or len(events) == 0:
         event = None
     else:
-        filtered_events = events[events["status"] == "ReadyToPost"].sort_values("queue")
-
-        if not filtered_events.empty:
-            event = Event.from_database(
-                filtered_events.iloc[0, :]
-            )
-            crud.set_status(
-                event_id=event.event_id, status="Posted"
-            )
-        else:
-            event = None
+        # Events are already filtered by status and sorted by queue in the database query
+        event = Event.from_database(events[0])
+        crud.set_status(
+            event_id=event.event_id, status="Posted"
+        )
 
     return event
 
 
 def get_new_events(events: List[Event]) -> List[Event]:
-    all_events = database.get_from_all_tables()
+    #all_events = database.get_from_all_tables()
+    all_events = crud.get_events_from_all_tables()
+    
+    # Получаем множество event_id из всех событий
+    existing_ids = set(event.event_id for event in all_events)
+    
+    # Фильтруем события, оставляя только те, которых нет в базе
+    new_events = [event for event in events if event.event_id not in existing_ids]
 
-    new_ids = set([i.event_id for i in events]) - set(all_events["event_id"])
-
-    return [i for i in set(events) if i.event_id in new_ids]
+    return new_events
 
 
 def not_published_count():
-    events = database.get_all(table="events_events2post")
-
-    return len(events[events["status"] == "ReadyToPost"])
+    #events = database.get_all(table="events_events2post")
+    events = crud.get_ready_to_post_events()
+    
+    return len(events)
 
 
 def events_count():
-    count = 0
-
-    conn, cursor = get_db_connection()
-
-    for table in (1, 2, 3):
-        tablename = tables[table]
-        script = f"SELECT count(*) FROM {tablename}"
-        cursor.execute(script)
-        count += cursor.fetchone()[0]
-
-    cursor.close()
-    return count
+    # Get events from all tables using CRUD
+    all_events = crud.get_events_from_all_tables()
+    return len(all_events)
 
 
 columns_for_posting_time = ["post_date", "title", "event_id"]
 
 
 def next_posting_time(reference):
-    all_events = database.get_ready_to_post(table="events_events2post")
+    #all_events = database.get_ready_to_post(table="events_events2post")
+    all_events = crud.get_ready_to_post_events()
     if len(all_events) == 0:
         return None
 
-    all_events["post_date"] = pd.to_datetime(all_events["post_date"]).dt.tz_convert(reference.tzinfo)
-
-    events_to_post = all_events[all_events["post_date"] >= reference]
-
-
-    if pd.isnull(events_to_post["post_date"]).any():
-        log.warn("Some events have not posting datetime.")
-        events_to_post = events_to_post[~pd.isnull(events_to_post["post_date"])]
-
-    if len(events_to_post) == 0:
+    # Convert string dates to datetime objects and filter events
+    events_to_post = []
+    for event in all_events:
+        if hasattr(event, 'post_date') and event.post_date:
+            # Convert to datetime if it's a string
+            if isinstance(event.post_date, str):
+                post_date = datetime.datetime.fromisoformat(event.post_date.replace('Z', '+00:00'))
+            else:
+                post_date = event.post_date
+                
+            # Convert to the same timezone as reference
+            if post_date.tzinfo is None:
+                post_date = pytz.UTC.localize(post_date)
+            post_date = post_date.astimezone(reference.tzinfo)
+            
+            if post_date >= reference:
+                events_to_post.append((post_date, event))
+    
+    if not events_to_post:
         return None
-    #TODO: Not sure this is good logic, to sort by post_date and get post_time, but post first by queue
-    return events_to_post.sort_values("post_date")["post_date"].iloc[0]
+        
+    # Sort by post_date and return the earliest one
+    events_to_post.sort(key=lambda x: x[0])
+    return events_to_post[0][0]
 
 
 def next_updating_time(reference):

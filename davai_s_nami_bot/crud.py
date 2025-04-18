@@ -1,12 +1,21 @@
 from sqlalchemy import func, asc, desc, exc
 
-from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place
+from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog
 from .database.database_orm import db_session
 
 from datetime import datetime
 from typing import List
 
 from .events import Event
+
+
+MODEL_REGISTRY = {
+    "events_events2post": Events2Posts,
+    "events_eventsnotapprovednew": EventsNotApproved,
+    #"events_eventsnotapprovedproposed": EventsNotApprovedProposed,
+    "events_event": Event,
+    'exhibitions': Exhibitions,
+}
 
 
 def order_maping(model, order_by):
@@ -123,6 +132,23 @@ def get_all_events(db):
     ]
     return result
 
+@db_session
+def get_events_from_all_tables(db):
+    """
+    Get all events from all tables
+    
+    Returns:
+        List of Event objects
+    """
+    tables = [Events2Posts, EventsNotApproved]
+    events = []
+
+    for table in tables:
+        rows = db.query(table).all()
+        events.extend([Event.from_database(event) for event in rows])
+
+    return events
+
 
 @db_session
 def get_approved_events(db, params):
@@ -148,6 +174,54 @@ def get_approved_events(db, params):
     ]
 
     return result
+
+
+@db_session
+def get_ready_to_post_events(db):
+    """
+    Get all events with 'ReadyToPost' status
+    
+    Returns:
+        List of events with ReadyToPost status
+    """
+    events = db.query(Events2Posts).filter(Events2Posts.status == 'ReadyToPost').all()
+    
+    # Преобразуем объекты SQLAlchemy в объекты Event
+    result = [Event.from_database(event) for event in events]
+    
+    return result
+
+
+@db_session
+def get_event_to_post_now(db):
+    """
+    Get events that are ready to post and scheduled within 5 minutes of current time
+    
+    Returns:
+        List of events ready to post now
+    """
+    events = db.query(Events2Posts).filter(
+        Events2Posts.status == 'ReadyToPost',
+        Events2Posts.post_date.between(
+            func.now() - func.interval('5 minutes'),
+            func.now() + func.interval('5 minutes')
+        )
+    ).order_by(Events2Posts.queue).all()
+    
+    if not events:
+        return None
+    
+    # Преобразуем объекты SQLAlchemy в объекты Event
+    result = [Event.from_database(event) for event in events]
+    
+    return result
+
+@db_session
+def get_scrape_it_events(db) -> List[Event]:
+    events = db.query(Events2Posts).filter(Events2Posts.status == 'Scrape').all()
+    events = [Event.from_database(event) for event in events]
+
+    return events
 
 
 @db_session
@@ -213,8 +287,27 @@ def get_exhibitions(db):
 
 
 @db_session
-def create_event(db, event_data):
-    event = Events2Posts(**event_data)
+def create_event(db, event_data: dict, model):
+    """
+    Make new row in DB.
+    
+    Parameters
+    ----------
+    db : db
+        DB session of SQLAlchemy .
+        
+    event_data : dict
+        data for making row.
+        
+    model : class
+        model SQLAlchemy.
+        
+    Returns
+    -------
+    object
+        Maked object SQLAlchemy.
+    """
+    event = model(**event_data)
     db.add(event)
     db.commit()
     db.refresh(event)
@@ -222,7 +315,25 @@ def create_event(db, event_data):
 
 
 def add_events_to_post(events: List[Event], explored_date: datetime, queue_increase=2):
-
+    """
+    Make new rows in table Events2Posts for posting.
+    
+    Parameters
+    ----------
+    events : List[Event]
+        List of events for adding.
+        
+    explored_date : datetime
+        Date of exploration.
+        
+    queue_increase : int
+        Step of queue increase.
+        
+    Returns
+    -------
+    List[int]
+        List of added events IDs.
+    """
     value = int(get_last_queue_value())
 
     def func(value=value, queue_increase=queue_increase):
@@ -234,39 +345,84 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 
     list_inserted_ids = []
     for event in events:
-        event_dict = event._asdict()
+
+        event_dict = event.to_dict()
         event_dict.update({
             'status': 'ReadyToPost',
             'queue': next(queue_value_gen),
             'explored_date': explored_date
         })
-        id_list = create_event(event_dict)
-        if type(id_list) == list:
-            list_inserted_ids.append(id_list[0][0])
 
+        new_event = create_event(event_dict, Events2Posts)
+        if new_event and hasattr(new_event, 'id'):
+            list_inserted_ids.append(new_event.id)
+
+    return list_inserted_ids
+
+
+def add_events(events: List[Event], explored_date: datetime, table: str = "events_eventsnotapprovednew"):
+    """
+    Add events to specified table.
+    
+    Parameters
+    ----------
+    events : List[Event]
+        List of events for adding.
+        
+    explored_date : datetime
+        Date of exploration.
+        
+    table : str
+        Name of table for adding.
+        
+    Returns
+    -------
+    List[int]
+        List of added events IDs.
+    """
+    model = MODEL_REGISTRY.get(table)
+    if not model:
+        raise ValueError(f"Неизвестная таблица: {table}")
+        
+    list_inserted_ids = []
+    for event in events:
+        # Преобразуем Event в словарь
+        event_dict = event.to_dict()
+        
+        # Добавляем дополнительные поля
+        event_dict.update({
+            'approved': False,
+            'explored_date': explored_date,
+        })
+        
+        # Создаем новую запись в базе данных
+        new_event = create_event(event_dict, model)
+        if new_event and hasattr(new_event, 'id'):
+            list_inserted_ids.append(new_event.id)
+            
     return list_inserted_ids
 
 
 @db_session
 def set_status(db: object, event_id: str, status: str) -> None:
     """
-    Обновить статус записи в таблице Event2Post по идентификатору события.
+    Update status of row in table Event2Post by event ID.
 
     Parameters
     ----------
     db : db
-        Экземпляр SQLAlchemy сессии.
+        DB session of SQLAlchemy.
 
     event_id : str
-        Идентификатор события.
+        Event ID.
 
     status : str
-        Новый статус для обновления.
+        New status for updating.
     """
-    # Проверка существования таблицы не нужна, если используется ORM
-    # Найти запись по event_id и обновить статус
-    db.query(Events2Posts).filter_by(event_id=event_id).update({"status": status})
-    db.commit()
+    event = db.query(Events2Posts).filter_by(event_id=event_id).first()
+    if event:
+        event.status = status
+        db.commit()
 
 
 
@@ -280,6 +436,12 @@ def get_last_queue_value(db) -> int:
     result = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
     last_queue_value = result[0] if result and result[0] is not None else 0
     return last_queue_value
+
+@db_session
+def save_api_request_log(db, request_info: dict):
+    api_request_log = ApiRequestLog(**request_info)
+    db.add(api_request_log)
+    db.commit()
 
 
 ######## DSN BOT ########

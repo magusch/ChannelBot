@@ -238,8 +238,51 @@ class Event:
     )
     _tags = list(_escraper_event_parsers)
 
+    _additional_tags = [
+        'id', 'queue', 'prepared_text', 'status', 'post_url', 
+        'place_id', 'is_ready', 'explored_date', 'post_date', 
+        'main_category_id'
+    ]
+
+    _all_tags = _tags + _additional_tags
+
     def __new__(cls, **kwargs):
-        return namedtuple("event", cls._tags)(**kwargs)
+        # Создаем namedtuple с основными полями
+        base_fields = {k: v for k, v in kwargs.items() if k in cls._tags}
+        base_event = namedtuple("event", cls._tags)(**base_fields)
+        
+        # Создаем экземпляр класса
+        instance = super().__new__(cls)
+        instance._base = base_event
+        instance._additional = {}
+        
+        # Сохраняем дополнительные поля
+        for tag in cls._additional_tags:
+            if tag in kwargs:
+                instance._additional[tag] = kwargs[tag]
+                
+        return instance
+    
+    def __getattr__(self, name):
+        # Пробуем получить атрибут из базового namedtuple
+        try:
+            return getattr(self._base, name)
+        except AttributeError:
+            # Если атрибут не найден в базовом namedtuple, пробуем получить из дополнительных полей
+            if name in self._additional:
+                return self._additional[name]
+            raise
+    
+    def _asdict(self):
+        """Возвращает словарь с основными полями (для совместимости с namedtuple)"""
+        return self._base._asdict()
+    
+    def to_dict(self):
+        """Преобразует Event в словарь для сохранения в базу данных"""
+        result = self._asdict()
+        # Добавляем дополнительные поля
+        result.update(self._additional)
+        return result
 
     @classmethod
     def from_escraper(cls, event: NamedTuple):
@@ -251,14 +294,14 @@ class Event:
         )
 
     @classmethod
-    def from_database(cls, data: tuple, columns=_tags):
+    def from_database(cls, data, columns=None):
         """
         Создание объекта `Event` из записи базы данных.
 
         Parameters
         ----------
-        data : tuple
-            Строчка данных из базы данных
+        data : tuple or dict or SQLAlchemy model
+            Строчка данных из базы данных, словарь с данными или объект SQLAlchemy
 
         columns : iterable
             Список из параметров мероприятия
@@ -267,21 +310,123 @@ class Event:
         -------
         Event : Объект Event
         """
-        # FIXME отладить работу
+        # Если columns не указан, используем все теги
+        if columns is None:
+            columns = cls._all_tags
+            
         event_dict = {}
-        for i, tag in enumerate(columns):
-            event_dict[tag] = data[tag]
+        
+        # Обработка SQLAlchemy объекта
+        if hasattr(data, '__table__'):
+            for column in data.__table__.columns:
+                value = getattr(data, column.name)
+                # Преобразуем типы данных, если необходимо
+                if column.name in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
+                    if isinstance(value, str):
+                        try:
+                            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        except ValueError:
+                            value = datetime.today()
+                event_dict[column.name] = value
+                
+        # Обработка словаря
+        elif isinstance(data, dict):
+            for tag in columns:
+                if tag in data:
+                    value = data[tag]
+                    # Преобразуем типы данных, если необходимо
+                    if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
+                        if isinstance(value, str):
+                            try:
+                                value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                            except ValueError:
+                                value = datetime.today()
+                    event_dict[tag] = value
+                else:
+                    # Устанавливаем значения по умолчанию
+                    if 'date' in tag:
+                        event_dict[tag] = datetime.today()
+                    elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
+                        event_dict[tag] = None
+                    elif tag in ['is_ready']:
+                        event_dict[tag] = False
+                    else:
+                        event_dict[tag] = ''
+                        
+        # Обработка кортежа или другой последовательности
+        else:
+            for i, tag in enumerate(columns):
+                if i < len(data):
+                    value = data[i]
+                    # Преобразуем типы данных, если необходимо
+                    if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
+                        if isinstance(value, str):
+                            try:
+                                value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                            except ValueError:
+                                value = datetime.today()
+                    event_dict[tag] = value
+                else:
+                    # Устанавливаем значения по умолчанию
+                    if 'date' in tag:
+                        event_dict[tag] = datetime.today()
+                    elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
+                        event_dict[tag] = None
+                    elif tag in ['is_ready']:
+                        event_dict[tag] = False
+                    else:
+                        event_dict[tag] = ''
+        
         return cls(**event_dict)
 
     @classmethod
-    def from_dict(cls, event_dict: dict, columns=_tags):
-        for i, tag in enumerate(columns):
-            if tag not in event_dict.keys():
+    def from_dict(cls, data, columns=None):
+        """
+        Создание объекта `Event` из словаря.
+
+        Parameters
+        ----------
+        data : dict
+            Словарь с данными
+
+        columns : iterable
+            Список из параметров мероприятия
+
+        Returns
+        -------
+        Event : Объект Event
+        """
+        # Если columns не указан, используем все теги
+        if columns is None:
+            columns = cls._all_tags
+            
+        event_dict = {}
+        
+        for tag in columns:
+            if tag in data:
+                # Преобразуем типы данных, если необходимо
+                value = data[tag]
+                
+                # Обработка специальных типов данных
+                if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
+                    if isinstance(value, str):
+                        try:
+                            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        except ValueError:
+                            value = datetime.today()
+                
+                event_dict[tag] = value
+            else:
+                # Устанавливаем значения по умолчанию
                 if 'date' in tag:
                     event_dict[tag] = datetime.today()
+                elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
+                    event_dict[tag] = None
+                elif tag in ['is_ready']:
+                    event_dict[tag] = False
                 else:
                     event_dict[tag] = ''
-        event_dict = {k: event_dict[k] for k in columns}
+        
         return cls(**event_dict)
 
 

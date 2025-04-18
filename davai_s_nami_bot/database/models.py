@@ -66,14 +66,17 @@ class DsnBotEvents(Base):
     price = Column(String, nullable=True)
 
 
-class Place(Base):
-    __tablename__ = 'place_place'
-    id = Column(String, primary_key=True, index=True)
-    place_name = Column(String)
-    place_address = Column(String, nullable=False)
-    place_url = Column(String, nullable=False)
-    place_metro = Column(String, nullable=False)
-    place_image = Column(String, nullable=False)
+class ApiRequestLog(Base):
+    __tablename__ = 'api_request_log'
+    id = Column(Integer, primary_key=True, index=True)
+    ip = Column(String, nullable=False)
+    endpoint = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    status_code = Column(Integer, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    user_agent = Column(String, nullable=True)
+    request_data = Column(JSON, nullable=True)
+
 
 
 # class PlaceSchedule(Base):

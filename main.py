@@ -54,8 +54,29 @@ def serialize_datetime(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
+async def log_api_request(request: Request, data=None):
+    """
+    Common function to log API requests
+    Args:
+        request: FastAPI request object
+        data: Request data (can be None for empty requests)
+    """
+    celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.log_api_request',
+        args=[{
+            'ip': request.client.host,
+            'endpoint': str(request.url),
+            'method': request.method,
+            'status_code': 200,
+            'timestamp': datetime.now().isoformat(),
+            'user_agent': request.headers.get('User-Agent'),
+            'request_data': json.dumps(data) if data is not None else None,
+        }]
+    )
+
+
 @app.post('/api/schedule-update-events/')
-async def update_events(token: str = Depends(verify_token)):
+async def update_events(request: Request, token: str = Depends(verify_token)):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_events',
     )
@@ -63,7 +84,7 @@ async def update_events(token: str = Depends(verify_token)):
 
 
 @app.post('/api/schedule-full-update/')
-async def update_events(token: str = Depends(verify_token)):
+async def update_events(request: Request, token: str = Depends(verify_token)):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.full_update',
     )
@@ -77,6 +98,8 @@ async def event_from_url(request: Request, token: str = Depends(verify_token)):
         event_url = data['event_url']
     else:
         event_url = None
+
+    await log_api_request(request, data)
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.events_from_url',
@@ -179,6 +202,9 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
     data = await request.json()
     cache_key = get_cache_key(data)
     cached_data = redis_client.get(cache_key)
+
+    await log_api_request(request, data)
+
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
@@ -192,8 +218,10 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
 @app.post("/api/get_valid_event/{event_id}")
 async def get_valid_event_by_id(
         event_id: int,
+        request: Request,
         token: str = Depends(verify_token),
     ):
+    await log_api_request(request, {"ids": [event_id]})
 
     cached_data = redis_client.get(f"event_{event_id}")
     if cached_data:
@@ -214,17 +242,12 @@ async def get_places(
         token: str = Depends(verify_token),
     ):
     data = await request.json()
+    await log_api_request(request, data)
     cache_key = get_cache_key(data)
     cached_data = redis_client.get(cache_key)
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
-    # task = celery_app.send_task(
-    #     'davai_s_nami_bot.celery_tasks.get_places',
-    #     args=[data],
-    # )
-
-    # return {'message': 'GET PLACES task added to queue', 'task_id': task.id}
     params = PlaceRequestParameters(**data)
     places = crud.get_places(params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(places, default=serialize_datetime))
@@ -241,21 +264,16 @@ async def get_places(
 @app.post("/api/get_place/{place_id}")
 async def get_place_by_id(
         place_id: int,
+        request: Request,
         token: str = Depends(verify_token),
     ):
 
+    await log_api_request(request, {'place_id': place_id})
     cached_data = redis_client.get(f"place_{place_id}")
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
     data = {"ids": [place_id]}
-
-    # task = celery_app.send_task(
-    #     'davai_s_nami_bot.celery_tasks.get_places',
-    #     args=[data],
-    # )
-    # redis_client.setex(task.id, 60 * 10, f"place_{place_id}")
-    # return {'message': 'GET PLACE by ID added to queue', 'task_id': task.id}
 
     params = PlaceRequestParameters(**data)
     places = crud.get_places(params)
@@ -275,11 +293,13 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.get_exhibitions_celery',
     )
+    await log_api_request(request)
     return {'message': 'GET Exhibitions', 'task_id': task.id}
 
 
 @app.get("/api/search/")
-def search(query: str, limit: int = 10, type: str = 'event', token: str = Depends(verify_token)):
+async def search(query: str, limit: int = 10, type: str = 'event', 
+        request: Request = None, token: str = Depends(verify_token)):
     events, places = [], []
     if type == 'event':
         events = crud.search_events_by_string(query, limit)
@@ -288,7 +308,7 @@ def search(query: str, limit: int = 10, type: str = 'event', token: str = Depend
     else:
         events = crud.search_events_by_string(query, limit)
         places = crud.search_places_by_name(query, limit)
-
+    await log_api_request(request, {'query': query, 'limit': limit, 'type': type})
     return {"events": events, "places": places}
 
 

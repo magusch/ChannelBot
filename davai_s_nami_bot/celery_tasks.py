@@ -125,11 +125,15 @@ def _update_events(events, table, msk_today):
 
     if len(new_events) > 0:
         log.info("Updating database")
-        inserted_ids = database.add_events(new_events, explored_date=msk_today, table=table)
+        inserted_ids = []
 
-        log.info("Fill empty post time")
-        answer = dsn_site_session.fill_empty_post_time()
-        log.info(answer)
+        if table == "events_events2post":
+            inserted_ids = crud.add_events_to_post(new_events, explored_date=msk_today)
+            log.info("Fill empty post time")
+            answer = dsn_site_session.fill_empty_post_time()
+        else:
+            inserted_ids = crud.add_events(new_events, explored_date=msk_today, table=table)
+
         return inserted_ids
 
 @celery_app.task
@@ -404,4 +408,32 @@ def get_exhibitions_celery(parameters={}):
     exhibs = crud.get_exhibitions()
 
     return exhibs
+
+
+@celery_app.task
+def log_api_request(request_info: dict):
+    """
+    Log API request information to the database.
+    
+    Parameters
+    ----------
+    request_info : dict
+        Dictionary containing information about the API request:
+        - ip: str - IP address of the requester
+        - endpoint: str - API endpoint that was accessed
+        - method: str - HTTP method used (GET, POST, etc.)
+        - status_code: int - HTTP status code of the response
+        - timestamp: str - Time when the request was made
+        - user_agent: str - User agent of the requester (optional)
+        - request_data: dict - Request data/parameters (optional)
+    """
+    log.info(f"Logging API request from {request_info.get('ip')} to {request_info.get('endpoint')}")
+    
+    try:
+        # Save request info to database using CRUD operations
+        crud.save_api_request_log(request_info)
+        log.info("API request log saved successfully")
+    except Exception as e:
+        log.error(f"Error saving API request log: {e}")
+
 
