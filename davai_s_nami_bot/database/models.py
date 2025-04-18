@@ -75,7 +75,7 @@ class ApiRequestLog(Base):
     status_code = Column(Integer, nullable=False)
     timestamp = Column(DateTime, nullable=False)
     user_agent = Column(String, nullable=True)
-    request_data = Column(JSON, nullable=True)
+    request_data = Column(String, nullable=True)
 
 
 
