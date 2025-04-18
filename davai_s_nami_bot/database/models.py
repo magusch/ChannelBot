@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 
 Base = declarative_base()
 
@@ -12,7 +13,7 @@ class Place(Base):
     place_url = Column(String, nullable=False)
     place_metro = Column(String, nullable=False)
     place_image = Column(String, nullable=False)
-    # events = relationship("Events2Posts", back_populates="place")
+    events = relationship("Events2Posts", back_populates="place")
 
 
 class Events2Posts(Base):
@@ -30,9 +31,12 @@ class Events2Posts(Base):
     status = Column(String, nullable=False)
     post_url = Column(String, nullable=False)
     url = Column(String, nullable=False)
-    place_id = Column(Integer, nullable=True)
+    place_id = Column(Integer, ForeignKey(f"{Place.__tablename__}.id"), nullable=True)
+    place = relationship("Place", back_populates="events")
+
     is_ready = Column(Boolean, nullable=True)
     explored_date = Column(DateTime, nullable=True)
+    post_date = Column(DateTime, nullable=True)
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)

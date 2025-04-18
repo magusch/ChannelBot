@@ -3,7 +3,7 @@ from sqlalchemy import func, asc, desc, exc
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog
 from .database.database_orm import db_session
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 from .events import Event
@@ -188,7 +188,7 @@ def get_ready_to_post_events(db):
     
     # Преобразуем объекты SQLAlchemy в объекты Event
     result = [Event.from_database(event) for event in events]
-    
+
     return result
 
 
@@ -200,11 +200,12 @@ def get_event_to_post_now(db):
     Returns:
         List of events ready to post now
     """
+    now = datetime.utcnow()
     events = db.query(Events2Posts).filter(
         Events2Posts.status == 'ReadyToPost',
         Events2Posts.post_date.between(
-            func.now() - func.interval('5 minutes'),
-            func.now() + func.interval('5 minutes')
+            now - timedelta(minutes=5),
+            now + timedelta(minutes=5)
         )
     ).order_by(Events2Posts.queue).all()
     
