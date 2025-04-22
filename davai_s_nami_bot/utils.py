@@ -76,6 +76,10 @@ def read_constants():
 
                 missing_constants -= {tag}
 
+        for constant_name in missing_constants:
+            if constant_name in os.environ:
+                missing_constants -= {constant_name}
+
         if missing_constants:
             raise ValueError(
                 "Some constants in 'prod_constants' are missing: {}".format(
