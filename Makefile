@@ -1,6 +1,13 @@
+setup_python:
+	chmod +x update_environment.sh
+	./update_environment.sh
+
 install:
 	pip install --upgrade pip
-	pip install pytest autoflake black isort -e .
+	pip install --no-cache-dir -e .
+
+install_dev_tools:
+	pip install -r requirements-dev.txt
 
 lint_inplace:
 	isort --project davai_s_nami_bot .

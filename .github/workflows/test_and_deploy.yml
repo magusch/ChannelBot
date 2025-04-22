@@ -6,21 +6,24 @@ on:
   pull_request:
     branches: [ master ]
 
+defaults:
+  run: make setup_python
+
 jobs:
-  testing:
+  lint:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.7
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.7
-    - name: Install dependencies
+
+    - name: Lint
       run: |
-        make install
-    - name: Code style
-      run: |
+        make install_dev_tools
         make lint_check
+
+  test:
+    needs: lint
+    runs-on: self-hosted
+    steps:
     - name: Test with pytest
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
@@ -33,13 +36,16 @@ jobs:
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
       run: |
+        make install
+        make install_dev_tools
         make test
 
   deploy:
-    needs: testing
+    needs: test
     if: github.ref == 'refs/heads/master'
     runs-on: self-hosted
     steps:
     - name: Deploy
       run: |
+        make install
         make deploy
