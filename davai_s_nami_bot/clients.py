@@ -97,8 +97,10 @@ class Telegram(BaseClient):
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
         crud.set_post_url(event_id=event.event_id, post_url=post_url)
         try:
-            if event._additional['main_category_id'] == 11:
+            if event.main_category_id == 11:
                 crud.add_exhibition_to_dsn_bot(event, message.message_id)
+            else:
+                print(f"Event is not exhibition: event.main_category_id: '{event.main_category_id}'")
         except Exception as e:
             print("Error adding exhibition to DSN bot")
             print(e)

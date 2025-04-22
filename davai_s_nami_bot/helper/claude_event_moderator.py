@@ -15,6 +15,7 @@ class ClaudeEventModerator:
         param = DSNParameters()
         self.system_message = param.site_parameters('openai_ev_moder_sys_mes', last=1)
         self.user_message = param.site_parameters('openai_ev_moder_usr_mes', last=1)
+        self.claude_model = param.site_parameters('claude_model', last=1) or "claude-3-7-sonnet-20250219"
 
     def moderate_events(self, events_list=[], example_events=[]):
         """
@@ -71,7 +72,7 @@ class ClaudeEventModerator:
         #     messages=ai_messages
         # )
         message = self.client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model=self.claude_model,
             max_tokens=1000,
             temperature=1,
             system=system_message,
