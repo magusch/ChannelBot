@@ -312,7 +312,7 @@ def create_event(db, event_data: dict, model):
     db.add(event)
     db.commit()
     db.refresh(event)
-    return event
+    return {"id": event.id} # or make Event model
 
 
 def add_events_to_post(events: List[Event], explored_date: datetime, queue_increase=2):
@@ -355,8 +355,8 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
         })
 
         new_event = create_event(event_dict, Events2Posts)
-        if new_event and hasattr(new_event, 'id'):
-            list_inserted_ids.append(new_event.id)
+        if new_event and 'id' in new_event:
+            list_inserted_ids.append(new_event['id'])
 
     return list_inserted_ids
 
@@ -398,9 +398,9 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
         
         # Создаем новую запись в базе данных
         new_event = create_event(event_dict, model)
-        if new_event and hasattr(new_event, 'id'):
-            list_inserted_ids.append(new_event.id)
-            
+        if new_event and 'id' in new_event:
+            list_inserted_ids.append(new_event['id'])
+
     return list_inserted_ids
 
 
@@ -461,6 +461,7 @@ def add_posted_event_to_dsn_bot(db, event, post_id):
     db.refresh(event)
     return event
 
+
 @db_session
 def add_exhibition_to_dsn_bot(db, event, post_id):
     event_data = {
@@ -469,9 +470,11 @@ def add_exhibition_to_dsn_bot(db, event, post_id):
     db.add(Exhibitions(**event_data))
     db.commit()
 
+
 @db_session
 def remove_event_from_dsn_bot(db, date):
    db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
+
 
 ####––––––FINISH––––––####
 
