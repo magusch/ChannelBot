@@ -69,6 +69,7 @@ class Exhibitions(Base):
     post_id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     date_before = Column(DateTime, nullable=True)
+    price = Column(String, nullable=True)
 
 
 class DsnBotEvents(Base):
