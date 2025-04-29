@@ -232,7 +232,6 @@ def update_approved_event(db, event_id: int, new_event_data: dict):
         for key, value in new_event_data.items():
             if hasattr(event, key) and 'date' not in key:
                 setattr(event, key, value)
-        db.commit()
         return True
     except exc.NoResultFound:
         return None
@@ -269,7 +268,6 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
     db.query(EventsNotApproved)\
         .filter(EventsNotApproved.id.in_(event_ids))\
         .update({'approved': 1})
-    db.commit()
 
 
 @db_session
@@ -423,14 +421,12 @@ def set_status(db: object, event_id: str, status: str) -> None:
     event = db.query(Events2Posts).filter_by(event_id=event_id).first()
     if event:
         event.status = status
-        db.commit()
 
 
 
 @db_session
 def set_post_url(db: object, event_id: str, post_url: str) -> None:
-    db.query(Events2Posts).filter_by(event_id=event_id).update({"post_url":post_url})
-    db.commit()
+    db.query(Events2Posts).filter_by(event_id=event_id).update({"post_url": post_url})
 
 @db_session
 def get_last_queue_value(db) -> int:
@@ -442,7 +438,6 @@ def get_last_queue_value(db) -> int:
 def save_api_request_log(db, request_info: dict):
     api_request_log = ApiRequestLog(**request_info)
     db.add(api_request_log)
-    db.commit()
 
 
 ######## DSN BOT ########
@@ -468,7 +463,6 @@ def add_exhibition_to_dsn_bot(db, event, post_id):
         "title": event.title, "post_id": post_id, "date_before": event.to_date, "price": event.price,
     }
     db.add(Exhibitions(**event_data))
-    db.commit()
 
 
 @db_session
