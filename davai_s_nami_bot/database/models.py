@@ -29,7 +29,7 @@ class Events2Posts(Base):
     image = Column(String, nullable=True)
     price = Column(String, nullable=True)
     status = Column(String, nullable=False)
-    post_url = Column(String, nullable=False)
+    post_url = Column(String, nullable=True)
     url = Column(String, nullable=False)
     place_id = Column(Integer, ForeignKey(f"{Place.__tablename__}.id"), nullable=True)
     place = relationship("Place", back_populates="events")
