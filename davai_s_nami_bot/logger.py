@@ -25,6 +25,19 @@ def get_logger(name: str):
 
     return logger
 
+log = get_logger(__name__)
+
+
+def log_task(func):
+    def wrapper(*args, **kwargs):
+        task_name = func.__name__
+        log.info(f"Task {task_name}: Starting task")
+        result = func(*args, **kwargs)
+        log.info(f"Task {task_name}: Task completed")
+        return result
+    return wrapper
+
+
 
 log = get_logger("Exceptions")
 

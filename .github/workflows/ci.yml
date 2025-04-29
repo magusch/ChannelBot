@@ -1,27 +1,29 @@
-name: Test & deploy
+name: Basic CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
-  testing:
-    runs-on: self-hosted
+  test:
+    runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python 3.7
-      uses: actions/setup-python@v2
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        python-version: 3.7
+        python-version: '3.9'
+
     - name: Install dependencies
       run: |
-        make install
-    - name: Code style
-      run: |
-        make lint_check
-    - name: Test with pytest
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
       env:
         TIMEPAD_TOKEN: ${{ secrets.TIMEPAD_TOKEN }}
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -32,14 +34,6 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
-      run: |
-        make test
-
-  deploy:
-    needs: testing
-    if: github.ref == 'refs/heads/master'
-    runs-on: self-hosted
-    steps:
-    - name: Deploy
-      run: |
-        make deploy
+        
+    - name: Run tests with pytest
+      run: pytest

@@ -46,7 +46,10 @@ REQUIRED_CONSTANT_NAMES = [
     "DSN_PASSWORD",
     "DSN_DATABASE_URL",
     "VK_ID",
-    "BASE_URL"
+    "BASE_URL",
+    "API_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
 ]
 
 
@@ -72,6 +75,10 @@ def read_constants():
                 os.environ[tag] = value
 
                 missing_constants -= {tag}
+
+        for constant_name in missing_constants:
+            if constant_name in os.environ:
+                missing_constants -= {constant_name}
 
         if missing_constants:
             raise ValueError(

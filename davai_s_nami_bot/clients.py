@@ -4,12 +4,13 @@ from functools import lru_cache
 from typing import Any, Dict, Union
 
 import requests
-from markdown import markdown
+
 from telebot import TeleBot
 
-from . import database
 from . import events
-from .parameters_for_channel import parameter_value
+from . import crud
+
+from .helper.dsn_parameters import DSNParameters
 
 
 def format_text(text: str, style: str = None):
@@ -82,15 +83,28 @@ class Telegram(BaseClient):
             token=os.environ.get("BOT_TOKEN"),
             parse_mode="markdown",
         )
-        self.channel_link = parameter_value('dsn_site', 'channel_link')
+        self.param = DSNParameters()
+        self.channel_link = self.param.site_parameters('channel_link', last=1)
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
-        database.add_event_for_dsn_bot(event, message.message_id)
+        crud.add_posted_event_to_dsn_bot(event, message.message_id)
+
+        if self.channel_link is None:
+            self.channel_link = self.param.site_parameters('channel_link', last=1)
+
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
-        database.set_post_url(event.event_id, post_url)
-        #database.add(event, 'dev_events', message.message_id, explored_date) #TODO: post in special table (idk)
+        crud.set_post_url(event_id=event.event_id, post_url=post_url)
+        try:
+            if event.main_category_id == 11:
+                crud.add_exhibition_to_dsn_bot(event, message.message_id)
+            else:
+                print(f"Event is not exhibition: event.main_category_id: '{event.main_category_id}'")
+        except Exception as e:
+            print("Error adding exhibition to DSN bot")
+            print(e)
+
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(
