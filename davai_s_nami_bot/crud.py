@@ -136,7 +136,7 @@ def get_all_events(db):
 def get_events_from_all_tables(db):
     """
     Get all events from all tables
-    
+
     Returns:
         List of Event objects
     """
@@ -180,12 +180,12 @@ def get_approved_events(db, params):
 def get_ready_to_post_events(db):
     """
     Get all events with 'ReadyToPost' status
-    
+
     Returns:
         List of events with ReadyToPost status
     """
     events = db.query(Events2Posts).filter(Events2Posts.status == 'ReadyToPost').all()
-    
+
     # Преобразуем объекты SQLAlchemy в объекты Event
     result = [Event.from_database(event) for event in events]
 
@@ -196,7 +196,7 @@ def get_ready_to_post_events(db):
 def get_event_to_post_now(db):
     """
     Get events that are ready to post and scheduled within 5 minutes of current time
-    
+
     Returns:
         List of events ready to post now
     """
@@ -208,13 +208,13 @@ def get_event_to_post_now(db):
             now + timedelta(minutes=5)
         )
     ).order_by(Events2Posts.queue).all()
-    
+
     if not events:
         return None
-    
+
     # Преобразуем объекты SQLAlchemy в объекты Event
     result = [Event.from_database(event) for event in events]
-    
+
     return result
 
 @db_session
@@ -293,18 +293,18 @@ def get_exhibitions(db):
 def create_event(db, event_data: dict, model):
     """
     Make new row in DB.
-    
+
     Parameters
     ----------
     db : db
         DB session of SQLAlchemy .
-        
+
     event_data : dict
         data for making row.
-        
+
     model : class
         model SQLAlchemy.
-        
+
     Returns
     -------
     object
@@ -320,18 +320,18 @@ def create_event(db, event_data: dict, model):
 def add_events_to_post(events: List[Event], explored_date: datetime, queue_increase=2):
     """
     Make new rows in table Events2Posts for posting.
-    
+
     Parameters
     ----------
     events : List[Event]
         List of events for adding.
-        
+
     explored_date : datetime
         Date of exploration.
-        
+
     queue_increase : int
         Step of queue increase.
-        
+
     Returns
     -------
     List[int]
@@ -366,18 +366,18 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 def add_events(events: List[Event], explored_date: datetime, table: str = "events_eventsnotapprovednew"):
     """
     Add events to specified table.
-    
+
     Parameters
     ----------
     events : List[Event]
         List of events for adding.
-        
+
     explored_date : datetime
         Date of exploration.
-        
+
     table : str
         Name of table for adding.
-        
+
     Returns
     -------
     List[int]
@@ -386,18 +386,18 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
     model = MODEL_REGISTRY.get(table)
     if not model:
         raise ValueError(f"Неизвестная таблица: {table}")
-        
+
     list_inserted_ids = []
     for event in events:
         # Преобразуем Event в словарь
         event_dict = event.to_dict()
-        
+
         # Добавляем дополнительные поля
         event_dict.update({
             'approved': False,
             'explored_date': explored_date,
         })
-        
+
         # Создаем новую запись в базе данных
         new_event = create_event(event_dict, model)
         if new_event and 'id' in new_event:
