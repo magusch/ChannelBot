@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
 RUN pip cache purge
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir pytest
 
 FROM base AS dependencies
 
