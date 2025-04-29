@@ -1,13 +1,11 @@
 import datetime
 from typing import Any, List
 
-import pandas as pd
 import pytz
 
 
 from .events import Event
 from .logger import catch_exceptions, get_logger
-from . import database
 from . import crud
 
 
@@ -24,7 +22,6 @@ def next_event_to_channel():
     - Field `status` has `ReadyToPost` value
     - Datetime now is similar to `post_date`
     """
-    #events = database.get_event_to_post_now(table="events_events2post")
     events = crud.get_event_to_post_now()
 
     if events is None or len(events) == 0:
@@ -40,7 +37,6 @@ def next_event_to_channel():
 
 
 def get_new_events(events: List[Event]) -> List[Event]:
-    #all_events = database.get_from_all_tables()
     all_events = crud.get_events_from_all_tables()
     
     # Получаем множество event_id из всех событий
@@ -53,7 +49,6 @@ def get_new_events(events: List[Event]) -> List[Event]:
 
 
 def not_published_count():
-    #events = database.get_all(table="events_events2post")
     events = crud.get_ready_to_post_events()
     
     return len(events)
@@ -69,7 +64,6 @@ columns_for_posting_time = ["post_date", "title", "event_id"]
 
 
 def next_posting_time(reference):
-    #all_events = database.get_ready_to_post(table="events_events2post")
     all_events = crud.get_ready_to_post_events()
     if len(all_events) == 0:
         return None

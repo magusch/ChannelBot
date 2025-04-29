@@ -224,6 +224,10 @@ def get_scrape_it_events(db) -> List[Event]:
 
     return events
 
+@db_session
+def delete_events2post_by_event_id(db, event_ids: list[str]):
+    db.query(Events2Posts).filter(Events2Posts.event_id.in_(event_ids)).delete(synchronize_session=False)
+
 
 @db_session
 def update_approved_event(db, event_id: int, new_event_data: dict):

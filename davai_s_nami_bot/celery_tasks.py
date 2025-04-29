@@ -11,7 +11,6 @@ from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
 from . import crud
 from . import clients
-from . import database
 from . import events
 from . import utils
 from . import dsn_site
@@ -108,10 +107,7 @@ def update_events():
 
     _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
 
-    events_count = sum([
-        database.rows_number(table="events_eventsnotapprovednew"),
-        database.rows_number(table="events_events2post"),
-    ])
+    events_count = len(crud.get_events_from_all_tables())
 
     log.info(f"Events count in database: {events_count}")
 
@@ -151,10 +147,7 @@ def update_event_from_sites(sites=None, days=7):
 
             _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
 
-    events_count = sum([
-        database.rows_number(table="events_eventsnotapprovednew"),
-        database.rows_number(table="events_events2post"),
-    ])
+    events_count = len(crud.get_events_from_all_tables())
 
     log.info(f"Events count in database: {events_count}")
 
@@ -189,8 +182,8 @@ def events_from_url(event_url=None):
     log.info("Start get post from url.")
     msk_today = get_msk_today()
     events_from_urls = []
-    event_to_parse = database.get_scrape_it_events(table="events_events2post", )
-    list_event_to_parse = list(event_to_parse['url'])
+    events_to_parse = crud.get_scrape_it_events()
+    list_event_to_parse = [event.url for event in events_to_parse]
 
     if event_url is not None: list_event_to_parse.append(event_url)
 
@@ -210,11 +203,11 @@ def events_from_url(event_url=None):
         log.info("Nothing from url")
         return
 
-    if list(event_to_parse['event_id']):
-        database.remove_by_event_id(list(event_to_parse['event_id']))
+    list_event_id = [event.event_id for event in events_to_parse]
+    if list_event_id:
+        crud.delete_events2post_by_event_id(list_event_id)
 
     inserted_ids = crud.add_events_to_post(events_from_urls, explored_date=msk_today)
-
     if inserted_ids is not None:
         dsn_site_session.make_post_text(inserted_ids)
 
