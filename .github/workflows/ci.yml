@@ -34,6 +34,23 @@ jobs:
         VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
         VK_DEV_GROUP_ID: ${{ secrets.VK_DEV_GROUP_ID }}
         VK_USER_ID: ${{ secrets.VK_USER_ID }}
+
+
+    - name: Lint with flake8
+      run: |
+        echo "Running flake8..."
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+    - name: Check formatting with black
+      run: |
+        echo "Checking code format with black..."
+        black --check .
+
+    - name: Check import sorting with isort
+      run: |
+        echo "Checking import order with isort..."
+        isort . --check-only
         
     - name: Run tests with pytest
       run: pytest

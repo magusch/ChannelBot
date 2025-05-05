@@ -1,0 +1,15 @@
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+skip-string-normalization = true
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_third_party = ["fastapi", "celery", "sqlalchemy", "psycopg2", "redis", "requests"]
+known_first_party = ["davai_s_nami_bot"]
+combine_as_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+testpaths = ["test", "tests", "test/unit_tests"]
