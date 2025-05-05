@@ -482,38 +482,50 @@ def from_approved_organizations(days: int) -> List[Event]:
 
 
 def timepad_approved_organizations(days: int) -> List[Event]:
-    return get_timepad_events(
-        days,
-        timepad_request_params(approved=1),
-    )
+    weekday = date.today().weekday()
+    if weekday % 2 == 0:
+        return get_timepad_events(
+            days,
+            timepad_request_params(approved=1),
+
+        )
+    else:
+        return []
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
     events = []
 
-    function_list = [
+    function_list_even = [
         timepad_others_organizations,
         radario_others_organizations,
-        ticketscloud_others_organizations,
     ]
 
-    for func in function_list:
-        try:
-            events += func(days)
-        except Exception as e:
-            print(f"An error occurred in {func.__name__}: {e}")
+    function_list_odd = [
+        qtickets_others_organizations,
+        ticketscloud_others_organizations
+    ]
 
     weekday = date.today().weekday()
+
+    if weekday % 2 == 1:
+        for func in function_list_odd:
+            try:
+                events += func(days*2)
+            except Exception as e:
+                print(f"An error occurred in {func.__name__}: {e}")
+    else:
+        for func in function_list_even:
+            try:
+                events += func(days)
+            except Exception as e:
+                print(f"An error occurred in {func.__name__}: {e}")
+
     if weekday == 6:
         try:
             events += vk_others_organizations(days)
         except Exception as e:
             print(f"An error occurred in vk_others_organizations: {e}")
-    elif weekday % 2 == 1:
-        try:
-            events += qtickets_others_organizations(days*2)
-        except Exception as e:
-            print(f"An error occurred in qtickets_others_organizations: {e}")
 
     if weekday == 0 or weekday == 4:
         try:
