@@ -70,7 +70,7 @@ def read_constants():
                 tag, value = line.split()
 
                 if tag not in REQUIRED_CONSTANT_NAMES:
-                    raise ValueError(f"Unexpected constant: {tag}")
+                    print(f"Unexpected constant: {tag}")
 
                 os.environ[tag] = value
 
