@@ -70,17 +70,31 @@ def get_events_by_date_and_category(db, params):
             dict_requests['date_to'] = params.date_to
 
         if params.category:
-            query = query.filter(Events2Posts.main_category_id.in_(params.category))
+            positive_categories = [c for c in params.category if c > 0]
+            negative_categories = [abs(c) for c in params.category if c < 0]
+
+            if positive_categories:
+                query = query.filter(Events2Posts.main_category_id.in_(positive_categories))
+            elif negative_categories:
+                query = query.filter(~Events2Posts.main_category_id.in_(negative_categories))
+
             dict_requests['category'] = params.category
 
         if params.place:
-            query = query.filter(Events2Posts.place_id.in_(params.place))
+            print(params.place)
+            positive_places = [c for c in params.place if c > 0]
+            negative_places = [abs(c) for c in params.place if c < 0]
+
+            if positive_places:
+                query = query.filter(Events2Posts.place_id.in_(positive_places))
+            elif negative_places:
+                query = query.filter(~Events2Posts.place_id.in_(negative_places))
+
             dict_requests['place'] = params.place
 
         query = query.order_by(Events2Posts.from_date.asc())
 
     total_count = query.count()
-
     if params.limit:
         query = query.limit(params.limit)
         dict_requests['limit'] = params.limit

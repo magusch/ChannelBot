@@ -3,7 +3,7 @@ import datetime
 
 import pytest
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
@@ -192,5 +192,250 @@ def test_count_events(test_db, monkeypatch):
 
     assert events_count == 3
 
+
+def test_get_events_positive_categories(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+
+    test_events = [
+        Events2Posts(
+            id=10, title='Event Cat 1', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 6, 5),
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=11, title='Event Cat 2', status='Posted',
+            main_category_id=2, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),
+            post='post', full_text='text', url='url2'
+        ),
+        Events2Posts(
+            id=12, title='Event Cat 3', status='Posted',
+            main_category_id=3, place_id=1,
+            from_date=datetime.datetime(2025, 6, 3),
+            to_date=datetime.datetime(2025, 6, 7),
+            post='post', full_text='text', url='url3'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    params = Mock()
+    params.ids = None
+    params.category = [1, 2]
+    params.place = None
+    params.date_from = datetime.datetime(2025, 6, 1)
+    params.date_to = datetime.datetime(2025, 6, 10)
+    params.limit = None
+    params.page = None
+    params.fields = None
+
+    result = crud.get_events_by_date_and_category(params)
+
+    assert result['total_count'] == 2
+    assert len(result['events']) == 2
+    assert result['request']['category'] == [1, 2]
+
+
+def test_get_events_negative_categories(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+
+    test_events = [
+        Events2Posts(
+            id=20, title='Event Cat 1', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 6, 5),
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=21, title='Event Cat 2', status='Posted',
+            main_category_id=2, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),
+            post='post', full_text='text', url='url2'
+        ),
+        Events2Posts(
+            id=22, title='Event Cat 3', status='Posted',
+            main_category_id=3, place_id=1,
+            from_date=datetime.datetime(2025, 6, 3),
+            to_date=datetime.datetime(2025, 6, 7),
+            post='post', full_text='text', url='url3'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    params = Mock()
+    params.ids = None
+    params.category = [-1]
+    params.place = None
+    params.date_from = datetime.datetime(2025, 6, 1)
+    params.date_to = datetime.datetime(2025, 6, 10)
+    params.limit = None
+    params.page = None
+    params.fields = None
+
+    result = crud.get_events_by_date_and_category(params)
+
+    assert result['total_count'] == 2
+    assert len(result['events']) == 2
+    assert result['request']['category'] == [-1]
+
+
+def test_get_events_mixed_categories(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+
+    test_events = [
+        Events2Posts(
+            id=30, title='Event Cat 1', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 6, 5),
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=31, title='Event Cat 2', status='Posted',
+            main_category_id=2, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),
+            post='post', full_text='text', url='url2'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    params = Mock()
+    params.ids = None
+    params.category = [1, -2]
+    params.place = None
+    params.date_from = datetime.datetime(2025, 6, 1)
+    params.date_to = datetime.datetime(2025, 6, 10)
+    params.limit = None
+    params.page = None
+    params.fields = None
+
+    result = crud.get_events_by_date_and_category(params)
+
+    assert result['total_count'] == 1
+    assert len(result['events']) == 1
+    assert result['events'][0]['main_category_id'] == 1
+    assert result['request']['category'] == [1, -2]
+
+
+def test_get_events_no_categories(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+
+    test_events = [
+        Events2Posts(
+            id=40, title='Event Cat 1', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 6, 5),
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=41, title='Event Cat 2', status='Posted',
+            main_category_id=2, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),
+            post='post', full_text='text', url='url2'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    params = Mock()
+    params.ids = None
+    params.category = None
+    params.place = None
+    params.date_from = datetime.datetime(2025, 6, 1)
+    params.date_to = datetime.datetime(2025, 6, 10)
+    params.limit = None
+    params.page = None
+    params.fields = None
+
+    result = crud.get_events_by_date_and_category(params)
+
+    assert result['total_count'] == 2
+    assert len(result['events']) == 2
+    assert 'category' not in result['request']
+
+
+def test_get_events_with_pagination_and_fields(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+
+    test_events = [
+        Events2Posts(
+            id=50, title='Event 1', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 6, 5),
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=51, title='Event 2', status='Posted',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),
+            post='post', full_text='text', url='url2'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    params = Mock()
+    params.ids = None
+    params.category = [1]
+    params.place = None
+    params.date_from = datetime.datetime(2025, 6, 1)
+    params.date_to = datetime.datetime(2025, 6, 10)
+    params.limit = 1
+    params.page = 1
+    params.fields = ['id', 'title', 'main_category_id']
+
+    result = crud.get_events_by_date_and_category(params)
+
+    assert result['total_count'] == 2
+    assert len(result['events']) == 1
+    assert len(result['events'][0]) == 3
+    assert 'id' in result['events'][0]
+    assert 'title' in result['events'][0]
+    assert 'main_category_id' in result['events'][0]
+    assert result['request']['limit'] == 1
+    assert result['request']['page'] == 1
+    assert result['request']['fields'] == ['id', 'title', 'main_category_id']
 
 
