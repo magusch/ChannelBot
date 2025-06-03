@@ -80,13 +80,21 @@ def schedule_posting_tasks():
 
 
 @celery_app.task
+def work_with_expired_events():
+    log.info("Start working with expired events.")
+    msk_today = get_msk_today()
+    crud.update_expired_events(msk_today + timedelta(hours=1))
+    crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
+    log.info("Finished with expired events.")
+
+
+@celery_app.task
 def update_events():
     log.info("Start updating events.")
 
     msk_today = get_msk_today()
     log.info("Remove old events")
-    dsn_site_session.remove_old()
-    crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
+    work_with_expired_events.apply_async()
 
     log.info("Getting events from approved organizations for next 7 days")
     approved_events = events.from_approved_organizations(days=7)
@@ -176,6 +184,7 @@ def is_empty_check():
 
     if text:
         dev_channel.send_text(text)
+
 
 @celery_app.task
 def events_from_url(event_url=None):

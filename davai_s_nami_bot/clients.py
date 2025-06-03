@@ -99,12 +99,9 @@ class Telegram(BaseClient):
         try:
             if event.main_category_id == 11:
                 crud.add_exhibition_to_dsn_bot(event, message.message_id)
-            else:
-                print(f"Event is not exhibition: event.main_category_id: '{event.main_category_id}'")
         except Exception as e:
             print("Error adding exhibition to DSN bot")
             print(e)
-
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(

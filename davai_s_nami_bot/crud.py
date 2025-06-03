@@ -51,8 +51,6 @@ def order_maping(model, order_by):
     return sort_order
 
 
-
-
 @db_session
 def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts)\
@@ -146,6 +144,7 @@ def get_all_events(db):
     ]
     return result
 
+
 @db_session
 def get_events_from_all_tables(db):
     """
@@ -231,12 +230,14 @@ def get_event_to_post_now(db):
 
     return result
 
+
 @db_session
 def get_scrape_it_events(db) -> List[Event]:
     events = db.query(Events2Posts).filter(Events2Posts.status == 'Scrape').all()
     events = [Event.from_database(event) for event in events]
 
     return events
+
 
 @db_session
 def delete_events2post_by_event_id(db, event_ids: list[str]):
@@ -286,6 +287,16 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
     db.query(EventsNotApproved)\
         .filter(EventsNotApproved.id.in_(event_ids))\
         .update({'approved': 1})
+
+
+@db_session
+def update_expired_events(db, date):
+    db.query(Events2Posts)\
+        .filter(Events2Posts.is_ready is False, Events2Posts.to_date < date, Events2Posts.post_url is None)\
+        .delete(synchronize_session=False)
+    db.query(Events2Posts)\
+        .filter(Events2Posts.to_date < date, Events2Posts.post_url is None, Events2Posts.status == 'ReadyToPost')\
+        .update({'status': 'Posted', 'post_date': None})
 
 
 @db_session
@@ -441,16 +452,17 @@ def set_status(db: object, event_id: str, status: str) -> None:
         event.status = status
 
 
-
 @db_session
 def set_post_url(db: object, event_id: str, post_url: str) -> None:
     db.query(Events2Posts).filter_by(event_id=event_id).update({"post_url": post_url})
+
 
 @db_session
 def get_last_queue_value(db) -> int:
     result = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
     last_queue_value = result[0] if result and result[0] is not None else 0
     return last_queue_value
+
 
 @db_session
 def save_api_request_log(db, request_info: dict):
@@ -485,7 +497,8 @@ def add_exhibition_to_dsn_bot(db, event, post_id):
 
 @db_session
 def remove_event_from_dsn_bot(db, date):
-   db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
+    db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
+
 
 
 ####––––––FINISH––––––####
