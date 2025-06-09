@@ -1,4 +1,4 @@
-import datetime, json
+import datetime, json, os
 import requests
 from bs4 import BeautifulSoup
 
@@ -26,6 +26,7 @@ from .helper.claude_event_moderator import ClaudeEventModerator
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
 
+CHANNEL_LINK = os.getenv('CHANNEL_LINK')
 
 @celery_app.task
 def post_to_telegram():
@@ -437,5 +438,50 @@ def log_api_request(request_info: dict):
         log.info("API request log saved successfully")
     except Exception as e:
         log.error(f"Error saving API request log: {e}")
+
+@celery_app.task
+def send_message_to_telegram(message: str, chat_id: int):
+    """
+    Send a message to a specific Telegram chat.
+
+    Parameters
+    ----------
+    message : str
+        The message to be sent.
+    chat_id : int
+        The ID of the Telegram chat where the message will be sent.
+    """
+    try:
+        clients.Telegram().send_text(text=message, destination_id=chat_id)
+        log.info(f"Message sent to chat {chat_id}: {message}")
+    except Exception as e:
+        log.error(f"Failed to send message to chat {chat_id}: {e}")
+
+
+@celery_app.task
+def event_reminder():
+    reminders = crud.event_reminder()
+    for reminder in reminders:
+        post_url = reminder['post_url']
+        text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
+        remind_datetime = reminder['remind_datetime']
+
+        send_message_to_telegram.apply_async(args=[text_message, reminder['telegram_id']], eta=remind_datetime)
+
+
+@celery_app.task
+def process_reminders():
+    reminders = crud.get_pending_reminders()
+    print(reminders)
+    for reminder in reminders:
+        print(reminder)
+        #try:
+        post_url = reminder['post_url']
+        text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
+        send_message_to_telegram.delay(text_message, reminder['telegram_id'])
+        crud.mark_reminder_sent(reminder['id'])
+        # except Exception as e:
+        #     crud.increment_reminder_attempts(reminder['id'])
+        #     log.error(f"Failed to send reminder {reminder['id']}: {e}")
 
 

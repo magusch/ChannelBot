@@ -1,6 +1,8 @@
 from sqlalchemy import func, asc, desc, exc
+from sqlalchemy.orm import joinedload
 
-from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog
+from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog,\
+    DsnBotUserEvents
 from .database.database_orm import db_session
 
 from datetime import datetime, timedelta
@@ -499,6 +501,70 @@ def add_exhibition_to_dsn_bot(db, event, post_id):
 def remove_event_from_dsn_bot(db, date):
     db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
 
+
+@db_session
+def event_reminder(db):
+    now = datetime.now()
+
+    future_reminds = (
+        db.query(DsnBotUserEvents).options(
+            joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event)
+                                           ).filter(
+            DsnBotUserEvents.is_remind == True, DsnBotUserEvents.remind_datetime > now
+        ).all()
+    )
+
+    result = []
+    for event in future_reminds:
+        result.append({
+            'telegram_id': event.user.telegram_id if event.user else None,
+            'post_url': event.event.post_url if event.event else None,
+            'title': event.event.title if event.event else None,
+            'price': event.event.price if event.event else None,
+            'remind_datetime': event.remind_datetime
+        })
+    return result
+
+
+@db_session
+def get_pending_reminders(db):
+    now = datetime.utcnow()
+
+    query = (
+        db.query(DsnBotUserEvents)
+            .options(
+            joinedload(DsnBotUserEvents.user),
+            joinedload(DsnBotUserEvents.event)
+        )
+            .filter(
+            DsnBotUserEvents.remind_datetime != None,
+            DsnBotUserEvents.remind_datetime <= now,
+            DsnBotUserEvents.remind_datetime >= now - timedelta(minutes=60),
+            DsnBotUserEvents.remind_sent == False,
+            # DsnBotUserEvents.remind_attempts < max_attempts,
+        )
+    )
+
+    reminders = []
+    for remind_event in query.all():
+        reminders.append({
+            'id':              remind_event.id,
+            'telegram_id':     remind_event.user.telegram_id if remind_event.user else None,
+            'post_url':        remind_event.event.post_url if remind_event.event else None,
+            'title':           remind_event.event.title if remind_event.event else None,
+            'price':           remind_event.event.price if remind_event.event else None,
+            'remind_datetime': remind_event.remind_datetime,
+        })
+
+    return reminders
+
+
+@db_session
+def mark_reminder_sent(db, event_id: int):
+    remind_event = db.query(DsnBotUserEvents).get(event_id)
+    if remind_event:
+        remind_event.remind_sent = True
+        db.commit()
 
 
 ####––––––FINISH––––––####

@@ -26,6 +26,10 @@ def create_celery_app():
                 'task': 'davai_s_nami_bot.celery_tasks.full_update',
                 'schedule': crontab(hour=0, minute=0),
             },
+            'process-reminders': {
+                'task': 'davai_s_nami_bot.celery_tasks.process_reminders',
+                'schedule': crontab(hour='8-23', minute='*/30'),
+            }
         },
         include=['davai_s_nami_bot.celery_tasks']
     )

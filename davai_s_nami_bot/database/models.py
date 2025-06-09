@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -43,6 +43,8 @@ class Events2Posts(Base):
     category = Column(String, nullable=True)
     main_category_id = Column(Integer, nullable=True)
 
+    bot_user_events = relationship("DsnBotUserEvents", back_populates="event", cascade="all, delete-orphan")
+
 
 class EventsNotApproved(Base):
     __tablename__ = 'events_eventsnotapprovednew'
@@ -80,6 +82,26 @@ class DsnBotEvents(Base):
     date_from = Column(DateTime, nullable=True)
     date_to = Column(DateTime, nullable=True)
     price = Column(String, nullable=True)
+
+
+class DsnBotUserEvents(Base):
+    __tablename__ = 'bot_user_events'
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('bot_user.id'))
+    event_id = Column(Integer, ForeignKey('events_events2post.id'))
+    remind_datetime = Column(DateTime, nullable=True)
+    remind_sent = Column(Boolean, nullable=True)
+
+    user = relationship("DsnBotUser", back_populates="bot_user_events")
+    event = relationship("Events2Posts", back_populates="bot_user_events")
+
+
+class DsnBotUser(Base):
+    __tablename__ = 'bot_user'
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(BigInteger)
+
+    bot_user_events = relationship("DsnBotUserEvents", back_populates="user")
 
 
 class ApiRequestLog(Base):
