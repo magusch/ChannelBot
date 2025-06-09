@@ -14,6 +14,7 @@ import davai_s_nami_bot.crud as crud_module
 from davai_s_nami_bot.crud import get_ready_to_post_events, get_scrape_it_events, add_events_to_post
 from davai_s_nami_bot import crud
 from davai_s_nami_bot.database.models import Events2Posts, Base
+from davai_s_nami_bot.database import models as m
 from davai_s_nami_bot.events import Event
 
 DSN_DATABASE_URL = os.getenv('DSN_DATABASE_URL')
@@ -51,7 +52,7 @@ def test_db():
             from_date=datetime.datetime(2025, 7, 1),
             to_date=datetime.datetime(2025, 7, 10),
             image='image1.jpg', event_id='EVENT_111', price='300₽',
-            category='Лекция', address='address 1'
+            category='Лекция', address='address 1', main_category_id=1
         ),
         Events2Posts(
             id=2, title='Test Event Two',status='ReadyToPost',
@@ -60,7 +61,7 @@ def test_db():
             from_date=datetime.datetime(2025,8,3),
             to_date=datetime.datetime(2025,8,4),
             image='image2.jpg', event_id='EVENT_222',
-            price='500₽',category='Концерт', address='address 2'
+            price='500₽',category='Концерт', address='address 2', main_category_id=2
         ),
         Events2Posts(
             id=3, title='Test Event Three Draft', status='Spam',
@@ -69,7 +70,7 @@ def test_db():
             from_date=datetime.datetime(2030,9,14),
             to_date=datetime.datetime(2030,9,17),
             image='image3.jpg', event_id='EVENT_333',
-            price='Free',category='Выставка', address='address 3'
+            price='Free',category='Выставка', address='address 3', main_category_id=3
         )
     ]
 
