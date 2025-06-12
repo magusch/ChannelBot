@@ -28,7 +28,7 @@ def create_celery_app():
             },
             'process-reminders': {
                 'task': 'davai_s_nami_bot.celery_tasks.process_reminders',
-                'schedule': crontab(hour='8-23', minute='*/30'),
+                'schedule': crontab(minute='*/30'),
             }
         },
         include=['davai_s_nami_bot.celery_tasks']

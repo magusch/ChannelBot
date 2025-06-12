@@ -439,6 +439,7 @@ def log_api_request(request_info: dict):
     except Exception as e:
         log.error(f"Error saving API request log: {e}")
 
+
 @celery_app.task
 def send_message_to_telegram(message: str, chat_id: int):
     """
@@ -472,9 +473,7 @@ def event_reminder():
 @celery_app.task
 def process_reminders():
     reminders = crud.get_pending_reminders()
-    print(reminders)
     for reminder in reminders:
-        print(reminder)
         #try:
         post_url = reminder['post_url']
         text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
