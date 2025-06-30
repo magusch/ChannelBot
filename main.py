@@ -149,10 +149,10 @@ async def new_event_from_data(request: Request, token: str = Depends(verify_toke
 async def moderate_events(request: Request, token: str = Depends(verify_token), ):
     data = await request.json()
     args = []
-    if 'events' in data.keys:
-        args.push(data['events'])
-        if 'examples' in data.keys:
-            args.push(data['examples'])
+    if 'events' in data.keys():
+        args.append(data['events'])
+        if 'examples' in data.keys():
+            args.append(data['examples'])
 
         task = celery_app.send_task(
             'davai_s_nami_bot.celery_tasks.ai_moderate_events',
