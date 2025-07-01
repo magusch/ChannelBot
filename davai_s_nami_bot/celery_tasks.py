@@ -88,6 +88,7 @@ def work_with_expired_events():
     msk_today = get_msk_today()
     crud.update_expired_events(msk_today + timedelta(hours=1))
     crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
+    crud.remove_old_not_approved_events(msk_today + timedelta(hours=1))
     log.info("Finished with expired events.")
 
 

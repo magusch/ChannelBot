@@ -1,4 +1,4 @@
-from sqlalchemy import func, asc, desc, exc
+from sqlalchemy import func, asc, desc, exc, or_
 from sqlalchemy.orm import joinedload
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog,\
@@ -293,12 +293,23 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
 
 @db_session
 def update_expired_events(db, date):
-    db.query(Events2Posts)\
-        .filter(Events2Posts.is_ready is False, Events2Posts.to_date < date, Events2Posts.post_url is None)\
+    db.query(Events2Posts) \
+        .filter(Events2Posts.to_date < date, Events2Posts.is_ready == False) \
+        .filter(or_(Events2Posts.post_url.is_(None), Events2Posts.post_url == '')) \
         .delete(synchronize_session=False)
     db.query(Events2Posts)\
-        .filter(Events2Posts.to_date < date, Events2Posts.post_url is None, Events2Posts.status == 'ReadyToPost')\
+        .filter(Events2Posts.to_date < date, Events2Posts.status == 'ReadyToPost', Events2Posts.is_ready == True)\
         .update({'status': 'Posted', 'post_date': None})
+    db.query(Events2Posts) \
+        .filter(Events2Posts.status == 'Spam') \
+        .delete(synchronize_session=False)
+
+
+@db_session
+def remove_old_not_approved_events(db, date):
+    db.query(EventsNotApproved) \
+        .filter(EventsNotApproved.to_date < date) \
+        .delete(synchronize_session=False)
 
 
 @db_session
