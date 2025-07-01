@@ -55,7 +55,7 @@ def order_maping(model, order_by):
 
 @db_session
 def get_events_by_date_and_category(db, params):
-    query = db.query(Events2Posts)\
+    query = db.query(Events2Posts).options(joinedload(Events2Posts.place))\
         .filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
     dict_requests = {}
     if params.ids:
@@ -81,7 +81,6 @@ def get_events_by_date_and_category(db, params):
             dict_requests['category'] = params.category
 
         if params.place:
-            print(params.place)
             positive_places = [c for c in params.place if c > 0]
             negative_places = [abs(c) for c in params.place if c < 0]
 
@@ -103,14 +102,24 @@ def get_events_by_date_and_category(db, params):
             dict_requests['page'] = params.page
 
     events = query.all()
-    events = [
-        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
-        for event in events
-    ]
+
+    event_dict_list = []
+
+    for event in events:
+        event_data = {
+            field: getattr(event, field)
+            for field in (params.fields or event.__table__.columns.keys())
+        }
+
+        if event.place:
+            event_data['address'] = f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+
+        event_dict_list.append(event_data)
+
     if params.fields:
         dict_requests['fields'] = params.fields
 
-    return {'events': events, 'total_count': total_count, 'request': dict_requests}
+    return {'events': event_dict_list, 'total_count': total_count, 'request': dict_requests}
 
 
 @db_session
