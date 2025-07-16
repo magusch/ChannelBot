@@ -439,4 +439,143 @@ def test_get_events_with_pagination_and_fields(test_db, monkeypatch):
     assert result['request']['page'] == 1
     assert result['request']['fields'] == ['id', 'title', 'main_category_id']
 
+def test_update_expired_events(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
 
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+    # Create test events with status and date_to fields
+    test_events = [
+        Events2Posts(
+            id=40, title='Event Expired 1', status='ReadyToPost',
+            main_category_id=1, place_id=1,
+            from_date=datetime.datetime(2025, 6, 1),
+            to_date=datetime.datetime(2025, 5, 29),  # Expired date
+            post='post', full_text='text', url='url1'
+        ),
+        Events2Posts(
+            id=41, title='Event Not Expired', status='ReadyToPost',
+            main_category_id=2, place_id=1,
+            from_date=datetime.datetime(2025, 6, 2),
+            to_date=datetime.datetime(2025, 6, 6),  # Future date
+            post='post', full_text='text', url='url2'
+        )
+    ]
+
+    for event in test_events:
+        test_db.add(event)
+    test_db.commit()
+
+    # Set current date for the test
+    current_date = datetime.datetime(2025, 5, 30)
+
+    # Call the function to update expired events
+    crud.update_expired_events(current_date)
+
+    # Check results
+    # 1. Events with date_to < current_date and is_ready == 0 should be deleted
+    # 2. All events with date_to < current_date should have status 'Posted'
+    # (Note: Since your function appears to delete some and update others, but with overlapping filters,
+    # this may need adjustment if your logic is not as intended.)
+    # For this test, we'll assume you want to delete only those with is_ready == 0, and update the rest.
+
+    test_events[0].is_ready = 0  # Expired and is_ready == 0
+    test_events[1].is_ready = 1  # Not expired, but is_ready == 1 (for illustration)
+    test_db.commit()
+
+    # Call the function again (since we just set is_ready)
+    crud.update_expired_events(current_date)
+
+    # Check if the expired event with is_ready == 0 was deleted
+    expired_event = test_db.query(Events2Posts).filter_by(id=40).first()
+    assert expired_event is None, "Expired event with is_ready == 0 should be deleted"
+
+    # Check if the not-expired event is still there
+    not_expired_event = test_db.query(Events2Posts).filter_by(id=41).first()
+    assert not_expired_event is not None, "Not expired event should still exist"
+    assert not_expired_event.status == 'Pending', "Not expired event should not be updated (date_to is in future)"
+
+    # If you have another event with date_to < current_date and is_ready != 0, it should be updated to 'Posted'
+    # For this test, we don't have such an event, but you could add one:
+    test_event_ready_1_expired = Events2Posts(
+        id=42, title='Event Expired but Ready', status='ReadyToPost',
+        main_category_id=3, place_id=1,
+        from_date=datetime.datetime(2025, 6, 1),
+        to_date=datetime.datetime(2025, 5, 28),  # Expired date
+        post='post', full_text='text', url='url3',
+        is_ready=1
+    )
+    test_db.add(test_event_ready_1_expired)
+    test_db.commit()
+
+    crud.update_expired_events(current_date)
+
+    # Check if the status was updated to 'Posted'
+    updated_event = test_db.query(Events2Posts).filter_by(id=42).first()
+    assert updated_event.status == 'Posted', "Expired event with is_ready != 0 should have status 'Posted'"
+
+
+def test_get_pending_reminders(test_db, monkeypatch):
+    @contextmanager
+    def get_test_db():
+        yield test_db
+
+    monkeypatch.setattr(db_orm, 'get_db_session', get_test_db)
+    # Freeze time to 2025-06-03 12:00:00 UTC
+    #mock_now = datetime.datetime(2025, 6, 3, 12, 0, 0)
+    now = datetime.datetime.utcnow()
+    # Mock datetime.utcnow() to return our fixed time
+    # class MockDatetime:
+    #     @classmethod
+    #     def utcnow(cls):
+    #         return mock_now
+
+
+    # Create test user and event
+    user = m.DsnBotUser(telegram_id=987654321)
+    event = m.Events2Posts(
+        id=41, title="Test Event", status='ReadyToPost',
+        main_category_id=2, place_id=1, price='50',
+        post='post', full_text='text', url='url2',
+        post_url="https://example.com/event",
+        from_date=datetime.datetime(2025, 6, 4),
+        to_date=datetime.datetime(2025, 6, 5)
+    )
+    test_db.add_all([user, event])
+    test_db.commit()
+
+    # Create test reminders
+    reminders = [
+        m.DsnBotUserEvents(  # Valid reminder (within time window, not sent)
+            user=user,
+            event=event,
+            remind_datetime=now - datetime.timedelta(minutes=20),
+            remind_sent=False
+        ),
+        m.DsnBotUserEvents(  # Expired reminder (outside 60-minute window)
+            user=user,
+            event=event,
+            remind_datetime=now - datetime.timedelta(minutes=70),
+            remind_sent=False
+        ),
+        m.DsnBotUserEvents(  # Already sent reminder
+            user=user,
+            event=event,
+            remind_datetime=now - datetime.timedelta(minutes=10),
+            remind_sent=True
+        )
+    ]
+    test_db.add_all(reminders)
+    test_db.commit()
+
+    results = crud.get_pending_reminders()
+
+    assert len(results) == 1, "Only 1 valid reminder should be returned"
+
+    valid_reminder = results[0]
+    assert valid_reminder["telegram_id"] == 987654321
+    assert valid_reminder["post_url"] == "https://example.com/event"
+    assert valid_reminder["title"] == "Test Event"
+    assert valid_reminder["price"] == '50'
+    assert valid_reminder["remind_datetime"] == reminders[0].remind_datetime
