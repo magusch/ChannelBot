@@ -257,6 +257,14 @@ def ai_moderate_events(events_for_moderation=[], example_of_good_events=[]):
     log.info(f"Start AI moderation process for {len(events_for_moderation)} events.")
 
     moderator = EventModerator()
+    if not example_of_good_events:
+        params = {
+            'fields': ['title', 'url', 'price', 'address', 'place_id', 'prepared_text', 'category'],
+            'limit': 10, 'page': 1
+        }
+        parameters = EventRequestParameters(**params).with_defaults()
+        example_of_good_events = crud.get_events_by_date_and_category(parameters)
+
     approved_ids = moderator.moderate_events(events_for_moderation, example_of_good_events)
 
     return approved_ids
