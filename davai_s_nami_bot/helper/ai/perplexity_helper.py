@@ -2,17 +2,30 @@ import datetime
 import os
 import requests
 
-from .dsn_parameters import DSNParameters
-
 
 class PerplexityHelper:
-    def __init__(self):
-        param = DSNParameters()
+    def __init__(self, dsn_param):
         self.api_key = os.environ.get("PERPLEXITY_API")
-        self.system_message = param.site_parameters('openai_system_message', last=1)
-        self.user_message = param.site_parameters('openai_user_message', last=1)
-        self.model = param.site_parameters('perplexity_model', last=1) or "sonar-pro"
+        self.system_message = dsn_param.site_parameters('openai_system_message', last=1)
+        self.user_message = dsn_param.site_parameters('openai_user_message', last=1)
+        self.model = dsn_param.site_parameters('perplexity_model', last=1) or "sonar-pro"
         self.answer = None
+
+    def ai_balance(self):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        url = "https://api.perplexity.ai/dashboard/billing/credit_grants"
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return -1
+        data = response.json()
+        available = data.get("total_available", 0)
+        return available
+
+
+        
 
     def refactor_post(self, event):
         system_message = self.system_message or "Ты редактор-копирайтер для телеграм канала о мероприятиях в Санкт-Петербурге. " \

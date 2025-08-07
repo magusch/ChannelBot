@@ -1,0 +1,61 @@
+from .ai.perplexity_helper import PerplexityHelper
+from .ai.open_ai_helper import OpenAIHelper
+from .ai.claude_helper import ClaudeHelper 
+from .ai.gemini_helper import GeminiHelper
+
+from .dsn_parameters import DSNParameters
+
+
+class AIHelper:
+    def __init__(self, model_name: str = None):
+        dsn_param = DSNParameters()
+        self.perplexity_helper = PerplexityHelper(dsn_param)
+        self.openai_helper = OpenAIHelper(dsn_param)
+        self.claude_helper = ClaudeHelper(dsn_param)
+        self.gemini_helper = GeminiHelper(dsn_param)        
+        
+        # Model in priority 
+        self.models = [
+            ('gemini', self.gemini_helper),
+            ('openai', self.openai_helper),
+            ('claude', self.claude_helper),
+            ('perplexity', self.perplexity_helper),    
+        ]
+        
+        self.current_model_index = 0
+        self.current_model = self.models[self.current_model_index][1]
+
+        if model_name or dsn_param.site_parameters('ai_model', last=1):
+            self.set_model_by_name(model_name or dsn_param.site_parameters('ai_model', last=1))
+
+    def set_model_by_name(self, model_name: str):
+        """Set current model by name."""
+        model_name = model_name.lower()
+        for i, (name, model) in enumerate(self.models):
+            if name == model_name:
+                self.current_model_index = i
+                self.current_model = model
+                return
+        
+        self.current_model_index = 0
+        self.current_model = self.models[0][1]
+
+
+    def switch_to_next_model(self):
+        """Switch on next model in list"""
+        self.current_model_index = (self.current_model_index + 1) % len(self.models)
+        model_name, model = self.models[self.current_model_index]
+        self.current_model = model
+        print(f"Switched on model: {model_name}")
+
+    # def ai_balance(self):
+    #     return self.perplexity_helper.ai_balance() + self.openai_helper.ai_balance() + self.claude_helper.ai_balance() + self.gemini_helper.ai_balance()
+
+    def refactor_post(self, event):
+        return self.current_model.refactor_post(event)
+
+    def parse_ai_answer(self):
+        return self.current_model.parse_ai_answer()
+    
+    def new_event_data(self, event):
+        return self.current_model.new_event_data(event)

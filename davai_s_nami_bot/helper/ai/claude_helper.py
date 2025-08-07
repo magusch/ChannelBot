@@ -3,17 +3,17 @@ import datetime
 
 from anthropic import Anthropic
 
-from .dsn_parameters import DSNParameters
-
 
 class ClaudeHelper:
-    def __init__(self):
+    def __init__(self, dsn_param):
         self.client = Anthropic()
         self.answer = None
-        param = DSNParameters()
-        self.system_message = param.site_parameters('openai_system_message', last=1)
-        self.user_message = param.site_parameters('openai_user_message', last=1)
-        self.claude_model = param.site_parameters('claude_model', last=1) or "claude-3-7-sonnet-20250219"
+        self.system_message = dsn_param.site_parameters('openai_system_message', last=1)
+        self.user_message = dsn_param.site_parameters('openai_user_message', last=1)
+        self.claude_model = dsn_param.site_parameters('claude_model', last=1) or "claude-3-7-sonnet-20250219"
+    
+    def ai_balance(self):
+        self.client.billing.usage()
 
     def refactor_post(self, event):
         if self.system_message is not None:
@@ -97,7 +97,6 @@ class ClaudeHelper:
     def parse_gpt_answer(self):
         if self.answer is None:
             return {}
-        print(self.answer)
         self.answer = self.answer[0].text
         data = self.answer.split('\n')
         event_data = {}

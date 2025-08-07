@@ -3,17 +3,18 @@ import datetime
 
 from openai import OpenAI
 
-from .dsn_parameters import DSNParameters
-
 
 class OpenAIHelper:
-    def __init__(self):
+    def __init__(self, dsn_param):
         self.client = OpenAI()
         self.answer = None
-        param = DSNParameters()
-        self.system_message = param.site_parameters('openai_system_message', last=1)
-        self.user_message = param.site_parameters('openai_user_message', last=1)
-        self.openai_model = param.site_parameters('openai_model', last=1) or 'gpt-4o'
+        self.system_message = dsn_param.site_parameters('openai_system_message', last=1)
+        self.user_message = dsn_param.site_parameters('openai_user_message', last=1)
+        self.openai_model = dsn_param.site_parameters('openai_model', last=1) or 'gpt-4o'
+
+    def ai_balance(self):
+        return 1
+
 
     def refactor_post(self, event):
         if self.system_message is not None:
