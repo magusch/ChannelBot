@@ -495,3 +495,15 @@ def process_reminders():
         #     log.error(f"Failed to send reminder {reminder['id']}: {e}")
 
 
+@celery_app.task
+def content_generator_event_selection(filter_set_id: int):
+    generator_post = GeneratorPost()
+    event_selection = generator_post.event_selection(filter_set_id)
+    return event_selection
+
+@celery_app.task
+def content_generator_generate_post(post_template_id: int, event_selection_id: int, generated_by_id: int):
+    generator_post = GeneratorPost()
+    post = generator_post.generate_post_by_template(post_template_id, event_selection_id, generated_by_id)
+    return post
+
