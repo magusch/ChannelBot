@@ -683,7 +683,7 @@ def get_radario_events(
 
     radario_city = 'spb'
 
-    radario_cities = dsn_parameters.read_param('radario').get('city_id')
+    radario_cities = dsn_parameters.read_param('radario').get('city')
     if radario_cities:
         radario_city = radario_cities[0]
 
@@ -700,6 +700,7 @@ def get_radario_events(
         new_events = events_filter(new_events)
 
     return new_events
+
 
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
@@ -746,7 +747,7 @@ def get_qtickets_events(
 
     qt_city = 'spb'
 
-    qt_cities = dsn_parameters.read_param('qtickets').get('city_id')
+    qt_cities = dsn_parameters.read_param('qtickets').get('city')
     if qt_cities:
         qt_city = qt_cities[0]
 
