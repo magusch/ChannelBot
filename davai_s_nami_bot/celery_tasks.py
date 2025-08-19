@@ -23,6 +23,8 @@ from .helper.ai_helper import AIHelper
 # from .helper.claude_event_moderator import ClaudeEventModerator as EventModerator
 from .helper.ai.perplexity_event_moderator import PerplexityEventModerator as EventModerator
 
+from .content_generator.services import GeneratorPost
+
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
 

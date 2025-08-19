@@ -312,6 +312,29 @@ async def search(query: str, limit: int = 10, type: str = 'event',
     return {"events": events, "places": places}
 
 
+###--> Content generator START <--###
+@app.post('/api/content_generator_event_selection/')
+async def content_generator_event_selection(request: Request, token: str = Depends(verify_token)):
+    data = await request.json()
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.content_generator_event_selection',
+        args=[data['filter_set_id']],
+    )
+    return {'message': 'Task content generator event selection added to queue', 'task_id': task.id}
+
+
+@app.post('/api/content_generator_generate_post/')
+async def content_generator_generate_post(request: Request, token: str = Depends(verify_token)):
+    data = await request.json()
+    generated_by_id = data.get('generated_by_id') or None
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.content_generator_generate_post',
+        args=[data['event_selection_id'], data['post_template_id'], generated_by_id],
+    )
+    return {'message': 'Task content generator generate post added to queue', 'task_id': task.id}
+
+###--> Content generator END <--###
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)

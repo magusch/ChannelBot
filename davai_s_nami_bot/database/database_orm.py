@@ -29,3 +29,13 @@ def db_session(func):
         with get_db_session() as db:
             return func(db, *args, **kwargs)
     return wrapper
+
+
+def orm_to_dict(obj):
+    if isinstance(obj, list):
+        return [orm_to_dict(item) for item in obj]
+    else:        
+        return {
+            column.name: getattr(obj, column.name)
+            for column in obj.__table__.columns
+            }
