@@ -21,7 +21,7 @@ class EventRequestParameters(BaseModel):
             'date_from': self.date_from,
             'date_to': self.date_to,
             'category': self.category,
-            'place': self.place_id,
+            'place': self.place,
             'fields': self.fields,
             'limit': self.limit,
             'page': self.page,

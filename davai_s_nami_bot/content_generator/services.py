@@ -39,12 +39,18 @@ class GeneratorPost:
     def apply_filters(self, filter_set): # -> models.QuerySet:
         """Apply filter and return filtered events."""
         filter_params = filter_set['filter_params']
-        parameters = {}
+
         today = datetime.today()
         week_ahead = today + timedelta(days=7)
 
+        parameters = {
+            'date_from': today, 'date_to': week_ahead
+        }
+
         if 'main_category' in filter_params:
             parameters['category'] = filter_params['main_category']
+            if not isinstance(parameters['category'], list):
+                parameters['category'] = [parameters['category']]
 
         if 'date_from' in filter_params:
             parameters['date_from'] = filter_params['date_from']

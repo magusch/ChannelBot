@@ -8,6 +8,8 @@ from sqlalchemy import func
 @db_session
 def get_filter_set_by_id(db, filter_set_id: int) -> ContentGeneratorFilterSet:
     """Getting filter by ID"""
+    if isinstance(filter_set_id, list):
+        filter_set_id = filter_set_id[0]
     filter_set = db.query(ContentGeneratorFilterSet).filter_by(id=filter_set_id).first()
     if not filter_set:
         raise ValueError("Filter not found")
