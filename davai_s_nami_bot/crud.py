@@ -55,8 +55,11 @@ def order_maping(model, order_by):
 
 @db_session
 def get_events_by_date_and_category(db, params):
-    query = db.query(Events2Posts).options(joinedload(Events2Posts.place))\
-        .filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
+    query = db.query(Events2Posts).options(joinedload(Events2Posts.place))
+
+    if params.status != 'all':
+        query = query.filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
+
     dict_requests = {}
     if params.ids:
         query = query.filter(Events2Posts.id.in_(params.ids))
