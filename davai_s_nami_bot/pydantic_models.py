@@ -12,6 +12,7 @@ class EventRequestParameters(BaseModel):
     limit: Optional[int] = 20
     page: Optional[int] = None
     ids: Optional[List[int]] = None
+    status: Optional[str] = None
 
     def with_defaults(self):
         return self
@@ -26,6 +27,7 @@ class EventRequestParameters(BaseModel):
             'limit': self.limit,
             'page': self.page,
             'ids':  self.ids,
+            'status': self.status
         }
 
 
