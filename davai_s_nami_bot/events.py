@@ -1,3 +1,4 @@
+import re
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
@@ -718,7 +719,13 @@ def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
     tc_org_ids = dsn_parameters.read_param('ticketscloud')['org_id']
-    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=get_city_param(), tags=ALL_EVENT_TAGS)
+
+    ts_cities = dsn_parameters.read_param('ticketscloud').get('city')
+    if ts_cities:
+        ts_city = ts_cities[0]
+    else:
+        ts_city = 'Санкт-Петербург'
+    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS)
 
     if events_filter:
         new_events = events_filter(new_events)
