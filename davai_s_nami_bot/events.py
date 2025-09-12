@@ -218,6 +218,17 @@ def _price(event: NamedTuple):
     return event.price
 
 
+def _price_int(event: NamedTuple):
+    if 'бесплатно' in event.price.lower():
+        return 0
+    else:
+        prices = re.findall(r'\d+', event.price)
+        if len(prices) != 0:
+            return prices[0]
+        else:
+            return -1
+
+
 def _address(event: NamedTuple):
     return f"{event.place_name}, {event.adress}"
 
@@ -233,6 +244,7 @@ class Event:
         image=_image,
         event_id=_event_id,
         price=_price,
+        price_int=_price_int,
         category=_category,
         address=_address,
     )
