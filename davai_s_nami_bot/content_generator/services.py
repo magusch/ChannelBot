@@ -189,10 +189,7 @@ class GeneratorPost:
         for event in selected_events:
             # TODO: using vairables
             new_post += template_events_text.format(
-                title=event['title'],
-                price=event['price'],
-                prepared_text=event['prepared_text'],
-                address=event['address']
+                **event,
             ) + "\n\n"
         # TODO: using AI make post
         return new_post, headline
