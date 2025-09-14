@@ -14,6 +14,7 @@ from .logger import catch_exceptions
 from .dsn_site_session import place_address
 
 from .helper.dsn_parameters import dsn_parameters
+from .settings.settings_loader import settings
 
 
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
@@ -45,7 +46,7 @@ def get_city_param():
     if cities:
         return cities[0]
     else:
-        return 'spb'
+        return settings.city
 
 
 ## ESCRAPER EVENTS PARSERS
