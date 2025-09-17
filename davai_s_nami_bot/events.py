@@ -16,6 +16,8 @@ from .dsn_site_session import place_address
 from .helper.dsn_parameters import dsn_parameters
 from .settings.settings_loader import settings
 
+from . import crud
+
 
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
 STARTS_AT_MAX = "{year_month_day}T23:59:00"
@@ -390,7 +392,6 @@ class Event:
                         event_dict[tag] = False
                     else:
                         event_dict[tag] = ''
-        
         return cls(**event_dict)
 
     @classmethod
@@ -455,10 +456,10 @@ def not_approved_organization_filter(events: List[Event]):
     for event in events:
         if (
             event is None
-            or (
-                event.to_date is not None and event.to_date - event.from_date > two_days
-            )
-            or event.image is None
+            # or (
+            #     event.to_date is not None and event.to_date - event.from_date > two_days
+            # )
+            # or event.image is None
         ):
             continue
 
@@ -638,6 +639,7 @@ def get_timepad_events(
         )
     today = date.today() + timedelta(days=1)
 
+    existed_event_ids = crud.get_event_id_by_site('TIMEPAD')
     if request_params is None:
         request_params = timepad_request_params()
 
@@ -658,15 +660,14 @@ def get_timepad_events(
     new_count = 1
     while new_count > 0:
         request_params["skip"] = count
-
         _new = _get_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
+            existed_event_ids=existed_event_ids
         )
         new = [i for i in _new if i.event_id not in event_ids]
         event_ids.update([i.event_id for i in _new])
-
         new_count = len(new)
 
         new_events += new
@@ -676,7 +677,6 @@ def get_timepad_events(
 
     if events_filter:
         new_events = events_filter(new_events)
-
     return new_events
 
 
@@ -707,8 +707,8 @@ def get_radario_events(
         "category": category,
         "city": radario_city,
     }
-
-    new_events = _get_events(radario_parser, request_params=request_params)
+    existed_event_ids = crud.get_event_id_by_site('RADARIO')
+    new_events = _get_events(radario_parser, request_params=request_params, existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -726,8 +726,10 @@ def get_ticketscloud_events(
         ts_city = ts_cities[0]
     else:
         ts_city = 'Санкт-Петербург'
-    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS)
 
+    existed_event_ids = crud.get_event_id_by_site('TC')
+    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
 
@@ -754,8 +756,8 @@ def get_vk_events(
         'city_id': vk_city_id,
         'city': vk_city
     }
-
-    new_events = _get_events(vk_parser, request_params=request_params)
+    existed_event_ids = crud.get_event_id_by_site('VK')
+    new_events = _get_events(vk_parser, request_params=request_params, existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -775,8 +777,9 @@ def get_qtickets_events(
         "days": days,
         "city": qt_city
     }
-
-    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_site('QT')
+    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -785,20 +788,26 @@ def get_qtickets_events(
 def get_mts_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    mts_city = 'sankt-peterburg'
 
+    mts_city = 'sankt-peterburg'
     mts_cities = dsn_parameters.read_param('mts').get('city')
     if mts_cities:
         mts_city = mts_cities[0]
 
-    categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+    mts_categories = dsn_parameters.read_param('mts').get('category')
+    if not mts_categories:
+        mts_categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+
     request_params = {
             "city": mts_city,
-            "categories": categories,
+            "categories": mts_categories,
             "days": days
     }
 
-    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_site('MTS')
+
+    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -820,8 +829,9 @@ def get_culture_events(
             "city": culture_city,
             "days": days
     }
-
-    new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_site('CLTR')
+    new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)

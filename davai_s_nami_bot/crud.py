@@ -204,6 +204,25 @@ def get_approved_events(db, params):
 
 
 @db_session
+def get_event_id_by_prefix(db, site_prefix):
+    """
+    Get event ID by site name
+
+    Args:
+        site_prefix (str): The site prefix to search for event_id
+
+    Returns:
+        List[str] or None: The event ID if found, otherwise None
+    """
+
+    events_not_approved = db.query(EventsNotApproved).filter(EventsNotApproved.event_id.like(f'{site_prefix}-%')).all()
+    event_ids = [event.event_id for event in events_not_approved]
+    events_to_post = db.query(Events2Posts).filter(Events2Posts.event_id.like(f'{site_prefix}-%')).all()
+    event_ids.extend([event.event_id for event in events_to_post])
+    return event_ids
+
+
+@db_session
 def get_ready_to_post_events(db):
     """
     Get all events with 'ReadyToPost' status
