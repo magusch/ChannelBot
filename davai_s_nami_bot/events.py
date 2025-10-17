@@ -639,7 +639,7 @@ def get_timepad_events(
         )
     today = date.today() + timedelta(days=1)
 
-    existed_event_ids = crud.get_event_id_by_site('TIMEPAD')
+    existed_event_ids = crud.get_event_id_by_prefix('TIMEPAD')
     if request_params is None:
         request_params = timepad_request_params()
 
@@ -707,7 +707,7 @@ def get_radario_events(
         "category": category,
         "city": radario_city,
     }
-    existed_event_ids = crud.get_event_id_by_site('RADARIO')
+    existed_event_ids = crud.get_event_id_by_prefix('RADARIO')
     new_events = _get_events(radario_parser, request_params=request_params, existed_event_ids=existed_event_ids)
 
     if events_filter:
@@ -727,7 +727,7 @@ def get_ticketscloud_events(
     else:
         ts_city = 'Санкт-Петербург'
 
-    existed_event_ids = crud.get_event_id_by_site('TC')
+    existed_event_ids = crud.get_event_id_by_prefix('TC')
     new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
     if events_filter:
@@ -756,7 +756,7 @@ def get_vk_events(
         'city_id': vk_city_id,
         'city': vk_city
     }
-    existed_event_ids = crud.get_event_id_by_site('VK')
+    existed_event_ids = crud.get_event_id_by_prefix('VK')
     new_events = _get_events(vk_parser, request_params=request_params, existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
@@ -777,7 +777,7 @@ def get_qtickets_events(
         "days": days,
         "city": qt_city
     }
-    existed_event_ids = crud.get_event_id_by_site('QT')
+    existed_event_ids = crud.get_event_id_by_prefix('QT')
     new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
     if events_filter:
@@ -804,7 +804,7 @@ def get_mts_events(
             "days": days
     }
 
-    existed_event_ids = crud.get_event_id_by_site('MTS')
+    existed_event_ids = crud.get_event_id_by_prefix('MTS')
 
     new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
@@ -829,7 +829,7 @@ def get_culture_events(
             "city": culture_city,
             "days": days
     }
-    existed_event_ids = crud.get_event_id_by_site('CLTR')
+    existed_event_ids = crud.get_event_id_by_prefix('CLTR')
     new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
 
