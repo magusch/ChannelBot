@@ -15,6 +15,7 @@ CSRFTOKEN = None
 SESSION_ID = None
 
 def create_session():
+    if CSRFTOKEN is not None and SESSION_ID is not None: return
     global CSRFTOKEN
     global SESSION_ID
 
@@ -25,18 +26,21 @@ def create_session():
         next=BASE_URL,
     )
     session = requests.session()
-    session.get(login_url, headers=_headers())
 
-    CSRFTOKEN = session.cookies["csrftoken"]
-
+    response = session.get(login_url, headers=_headers())
+    CSRFTOKEN = response.cookies.get('csrftoken') or session.cookies.get('csrftoken')
     login_data["csrfmiddlewaretoken"] = CSRFTOKEN
     response = session.post(login_url, data=login_data, headers=_headers())
-    SESSION_ID = session.cookies["sessionid"]
+    SESSION_ID = response.cookies.get("sessionid") or session.cookies.get("sessionid")
     #assert response.ok
 
 
 def _headers():
-    return {"User-Agent": "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/22.0.1216.0 Safari/537.2'"} #UserAgent().random}
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/22.0.1216.0 Safari/537.2'",
+        "X-CSRFToken": CSRFTOKEN,
+        "Referer": BASE_URL,
+    }
 
 
 def _current_session_get(url):
@@ -45,7 +49,9 @@ def _current_session_get(url):
 
     session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
     session.cookies["sessionid"] = SESSION_ID
+    session.cookies["csrftoken"] = CSRFTOKEN
     return session.get(url, headers=_headers())
+
 
 def check_event_status():
     _current_session_get(url=CHECK_EVENT_STATUS_URL)

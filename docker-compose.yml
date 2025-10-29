@@ -12,6 +12,8 @@ services:
     environment:
       - SERVICE=fastapi_app
       - REDIS_HOST=redis
+    volumes:
+      - ./settings.json:/app/settings.json
     restart: always
     depends_on:
       - redis

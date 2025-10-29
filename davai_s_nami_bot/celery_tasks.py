@@ -125,8 +125,6 @@ def update_events():
 
 
 def _update_events(events, table, msk_today):
-    dsn_site_session.create_session()
-
     log.info("Checking for existing events")
     new_events = dsn_site.get_new_events(events)
     log.info(f"New events count = {len(new_events)}")
