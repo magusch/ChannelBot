@@ -15,9 +15,9 @@ CSRFTOKEN = None
 SESSION_ID = None
 
 def create_session():
-    if CSRFTOKEN is not None and SESSION_ID is not None: return
     global CSRFTOKEN
     global SESSION_ID
+    if CSRFTOKEN is not None and SESSION_ID is not None: return
 
     login_url = BASE_URL + "login/"
     login_data = dict(
