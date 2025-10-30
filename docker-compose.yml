@@ -14,6 +14,8 @@ services:
       - REDIS_HOST=redis
     volumes:
       - ./settings.json:/app/settings.json
+    networks:
+      - dsn_network
     restart: always
     depends_on:
       - redis
@@ -27,6 +29,8 @@ services:
     environment:
       - SERVICE=celery_worker
       - REDIS_HOST=redis
+    networks:
+      - dsn_network
     restart: always
     depends_on:
       - redis
@@ -40,6 +44,8 @@ services:
     environment:
       - SERVICE=celery_beat
       - REDIS_HOST=redis
+    networks:
+      - dsn_network
     restart: always
     depends_on:
       - redis
@@ -52,8 +58,14 @@ services:
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf
       - redis_data:/data
+    networks:
+      - dsn_network
     restart: always
     command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
 
 volumes:
   redis_data:
+
+networks:
+    common_app_network:
+        name: dsn_network
