@@ -67,5 +67,5 @@ volumes:
   redis_data:
 
 networks:
-    common_app_network:
+    dsn_network:
         name: dsn_network
