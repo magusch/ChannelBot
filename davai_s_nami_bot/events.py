@@ -192,6 +192,10 @@ def _url(event: NamedTuple):
     return event.url
 
 
+def _ticket_url(event: NamedTuple):
+    return event.ticket_url
+
+
 def _from_date(event: NamedTuple):
     return event.date_from
 
@@ -214,6 +218,7 @@ def _image(event: NamedTuple):
 def _category(event: NamedTuple):
     return event.category
 
+
 def _event_id(event: NamedTuple):
     return event.id
 
@@ -223,12 +228,15 @@ def _price(event: NamedTuple):
 
 
 def _price_int(event: NamedTuple):
-    if 'бесплатно' in event.price.lower():
+    if 'бесплатн' in event.price.lower():
         return 0
     else:
         prices = re.findall(r'\d+', event.price)
-        if len(prices) != 0:
+        if len(prices) == 1:
             return prices[0]
+        elif len(prices) > 1:
+            prices = [int(price) for price in prices if int(price) > 100 or int(price) == 0]
+            return min(prices)
         else:
             return -1
 
@@ -237,12 +245,17 @@ def _address(event: NamedTuple):
     return f"{event.place_name}, {event.adress}"
 
 
+def _source(event: NamedTuple):
+    return event.source
+
+
 class Event:
     _escraper_event_parsers = dict(
         title=_title,
         post=_post,
         full_text=_full_text,
         url=_url,
+        ticket_url=_ticket_url,
         from_date=_from_date,
         to_date=_to_date,
         image=_image,
@@ -251,6 +264,7 @@ class Event:
         price_int=_price_int,
         category=_category,
         address=_address,
+        source=_source
     )
     _tags = list(_escraper_event_parsers)
 
@@ -719,7 +733,7 @@ def get_radario_events(
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    tc_org_ids = dsn_parameters.read_param('ticketscloud')['org_id']
+    tc_org_ids = dsn_parameters.read_param('ticketscloud').get('org_id')
 
     ts_cities = dsn_parameters.read_param('ticketscloud').get('city')
     if ts_cities:
@@ -728,8 +742,11 @@ def get_ticketscloud_events(
         ts_city = 'Санкт-Петербург'
 
     existed_event_ids = crud.get_event_id_by_prefix('TC')
-    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS,
+    new_events = []
+    if tc_org_ids:
+        new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
+
     if events_filter:
         new_events = events_filter(new_events)
 
