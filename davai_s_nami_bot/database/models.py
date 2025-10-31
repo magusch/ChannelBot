@@ -32,6 +32,7 @@ class Events2Posts(Base):
     status = Column(String, nullable=False)
     post_url = Column(String, nullable=True)
     url = Column(String, nullable=False)
+    ticket_url = Column(String, nullable=False)
     place_id = Column(Integer, ForeignKey(f"{Place.__tablename__}.id"), nullable=True)
     place = relationship("Place", back_populates="events")
 
@@ -42,6 +43,7 @@ class Events2Posts(Base):
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)
     category = Column(String, nullable=True)
+    source = Column(String, nullable=False)
     main_category_id = Column(Integer, nullable=True)
 
     bot_user_events = relationship("DsnBotUserEvents", back_populates="event", cascade="all, delete-orphan")
@@ -58,6 +60,7 @@ class EventsNotApproved(Base):
     full_text = Column(String, nullable=True)
     image = Column(String, nullable=True)
     url = Column(String, nullable=False)
+    ticket_url = Column(String, nullable=False)
     price = Column(String, nullable=True)
     price_int = Column(Integer, nullable=True)
     address = Column(String, nullable=True)
@@ -65,6 +68,7 @@ class EventsNotApproved(Base):
     from_date = Column(DateTime, nullable=True)
     to_date = Column(DateTime, nullable=True)
     category = Column(String, nullable=True)
+    source = Column(String, nullable=False)
 
 
 class Exhibitions(Base):
