@@ -24,7 +24,6 @@ STARTS_AT_MAX = "{year_month_day}T23:59:00"
 
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
-
 ## PARSERS
 timepad_parser = Timepad()
 radario_parser = Radario()
@@ -588,20 +587,30 @@ def timepad_request_params(approved: bool = False) -> Dict:
         moderation_statuses="featured, shown",
     )
 
+    timepad_settings = settings.escraper_parameters.get('timepad', {})
+
     if timepad_params:
         if not approved:
             timepad_others_params['price_max'] = 5000
             if dsn_parameters.read_param('timepad')['city']:
                 timepad_others_params["cities"] = dsn_parameters.read_param('timepad')['city'][0]
+            elif timepad_settings:
+                timepad_others_params["cities"] = timepad_settings.get('city', 'Санкт-Петербург')
+
             if dsn_parameters.read_param('timepad')['price_max']:
                 timepad_others_params["price_max"] = dsn_parameters.read_param('timepad')['price_max'][0]
+            elif timepad_settings:
+                timepad_others_params["price_max"] = timepad_settings.get('price_max', 5000)
 
-            timepad_others_params["organization_ids_exclude"] = (
-                    ", ".join(
-                        timepad_params['approved_organization'] + timepad_params['boring_organization'])
-                )
-            timepad_others_params["category_ids_exclude"] = ", ".join(timepad_params['exclude_categories'])
-            timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
+            if timepad_params['approved_organization'] or timepad_params['boring_organization']:
+                timepad_others_params["organization_ids_exclude"] = (
+                        ", ".join(
+                            timepad_params['approved_organization'] + timepad_params['boring_organization'])
+                    )
+            if timepad_params['exclude_categories']:
+                timepad_others_params["category_ids_exclude"] = ", ".join(timepad_params['exclude_categories'])
+            if timepad_params['bad_keywords']:
+                timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
         else:
             timepad_others_params['organization_ids'] = timepad_params['approved_organization']
     elif approved:
@@ -646,6 +655,11 @@ def get_timepad_events(
     """
     Getting events.
     """
+    setting_days = settings.escraper_parameters.get('timepad').get('days')
+
+    if setting_days:
+        days = int(setting_days)
+
     if days > MAX_NEXT_DAYS:
         raise ValueError(
             f"Too much days for getting events: {days}."
@@ -678,7 +692,7 @@ def get_timepad_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
-            existed_event_ids=existed_event_ids
+            existed_event_ids=existed_event_ids[0:50]
         )
         new = [i for i in _new if i.event_id not in event_ids]
         event_ids.update([i.event_id for i in _new])
@@ -712,8 +726,11 @@ def get_radario_events(
     radario_city = 'spb'
 
     radario_cities = dsn_parameters.read_param('radario').get('city')
+    setting_city = settings.escraper_parameters.get('radario').get('city')
     if radario_cities:
         radario_city = radario_cities[0]
+    elif setting_city:
+        radario_city = setting_city
 
     request_params = {
         "from": date_from,
