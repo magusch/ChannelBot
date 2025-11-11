@@ -5,7 +5,7 @@ from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBo
     DsnBotUserEvents
 from .database.database_orm import db_session
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from .events import Event
@@ -570,7 +570,7 @@ def event_reminder(db):
 
 @db_session
 def get_pending_reminders(db):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     query = (
         db.query(DsnBotUserEvents)

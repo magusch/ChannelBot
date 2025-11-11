@@ -69,9 +69,6 @@ def read_constants():
             for line in file:
                 tag, value = line.split()
 
-                if tag not in REQUIRED_CONSTANT_NAMES:
-                    print(f"Unexpected constant: {tag}")
-
                 os.environ[tag] = value
 
                 missing_constants -= {tag}

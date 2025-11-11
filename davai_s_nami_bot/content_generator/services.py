@@ -13,7 +13,7 @@ CATEGORIES_NAME = ["Концерты", "Без категории", "Кино", 
 
 
 def category_name(cat_id):
-    return CATEGORIES_NAME[cat_id]
+    return CATEGORIES_NAME[cat_id-1]
 
 
 def month_name_genitive(m):
@@ -105,7 +105,7 @@ class GeneratorPost:
             start_week = today - timedelta(days=today.weekday())
             end_week = start_week + timedelta(days=7)
 
-            parameters['date_from'] = start_week
+            parameters['date_from'] = today
             parameters['date_to'] = end_week
 
         if 'weekend' in filter_params:
@@ -121,6 +121,12 @@ class GeneratorPost:
                 parameters['place'] = filter_params['location']
             else:
                 parameters['place'] = [filter_params['location']]
+
+        if 'max_price' in filter_params:
+            try:
+                parameters['price_int'] = int(filter_params['max_price'])
+            except (ValueError, TypeError):
+                pass
 
         # if 'keywords' in params:
         #     q_objects = Q()
