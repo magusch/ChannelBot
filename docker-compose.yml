@@ -29,11 +29,18 @@ services:
     environment:
       - SERVICE=celery_worker
       - REDIS_HOST=redis
+      - CELERY_MAX_MEMORY_PER_CHILD=500000
     networks:
       - dsn_network
     restart: always
     depends_on:
       - redis
+    healthcheck:
+      test: celery -A davai_s_nami_bot.celery_app inspect ping || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   celery_beat:
     build:

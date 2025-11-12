@@ -1,7 +1,7 @@
 {
   "celery": {
     "worker_enabled": true,
-    "beat_enabled": true,
+    "beat_enabled": true
   },
   "features": {
     "task_event_post":  true,
@@ -9,11 +9,16 @@
     "city": "spb",
     "timezone": "Europe/Moscow",
     "escraper_parameters": {
-      "timepad": {"city": "spb"},
+      "timepad": {
+        "city": "Санкт-Петербург",
+        "days": 7
+      },
       "radario": {"city": "spb"},
       "qtickets": {"city": "spb"},
+      "ticketscloud": {"city": "spb"},
       "culture": {"city": "spb"},
-      "mts": {"city": "spb"},
+      "mts": {"city": "spb", "days": 15},
+      "vk": {"city": "spb", "days": 15}
     }
   }
 }
