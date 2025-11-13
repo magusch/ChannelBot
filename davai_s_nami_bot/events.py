@@ -692,7 +692,7 @@ def get_timepad_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
-            existed_event_ids=existed_event_ids[0:50]
+            existed_event_ids=existed_event_ids[0:30]
         )
         new = [i for i in _new if i.event_id not in event_ids]
         event_ids.update([i.event_id for i in _new])

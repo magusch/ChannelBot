@@ -11,6 +11,11 @@ from davai_s_nami_bot.pydantic_models import EventRequestParameters
 
 CATEGORIES_NAME = ["Концерты", "Без категории", "Кино", "Лекции", "Культура", "Фестивали", "Театр", "Вечеринки", "Перфомансы", "Стэндап", "Выставки"]
 
+VIRTUAL_FIELD_DEPENDENCIES = {
+    'event_date': ['from_date', 'to_date'],
+    'place_name': ['address', 'place'],
+    'event_time': ['from_date'],
+}
 
 def category_name(cat_id):
     return CATEGORIES_NAME[cat_id-1]
@@ -21,6 +26,13 @@ def month_name_genitive(m):
         1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
         7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
     }.get(m, "")
+
+
+def weekday_name(dt):
+    return {
+        0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт",
+        4: "Пт", 5: "Сб", 6: "Вск"
+    }[dt.weekday()]
 
 
 def fmt_single_date(d):
@@ -34,9 +46,44 @@ def fmt_two_dates(d1, d2):
         if d1.month == d2.month:
             if d2.day - d1.day == 1:
                 return f"{d1.day} и {d2.day} {month_name_genitive(d1.month)}"
-            return f"{d1.day}–{d2.day} {month_name_genitive(d1.month)}"
+            elif d1.day != d2.day:
+                return f"{d1.day}–{d2.day} {month_name_genitive(d1.month)}"
+            else:
+                return f"{d1.day} {month_name_genitive(d1.month)}"
         return f"{d1.day} {month_name_genitive(d1.month)} – {d2.day} {month_name_genitive(d2.month)}"
     return f"{fmt_single_date(d1)} – {fmt_single_date(d2)}"
+
+
+def date_to_post(date_from, date_to=None):
+    s_weekday = weekday_name(date_from)
+    s_day = date_from.day
+    s_month = month_name_genitive(date_from.month)
+    s_hour = date_from.hour
+    s_minute = date_from.minute
+
+    if date_to is not None:
+        e_weekday = weekday_name(date_to)
+        e_day = date_to.day
+        e_month = month_name_genitive(date_to.month)
+        e_hour = date_to.hour
+        e_minute = date_to.minute
+
+        if s_day == e_day:
+            start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
+            end_format = f"{e_hour:02}:{e_minute:02}"
+
+        elif s_month != e_month:
+            start_format = f"{s_weekday}-{e_weekday}, {s_day} {s_month} - "
+            end_format = f"{e_day} {e_month} {s_hour:02}:{s_minute:02}–{e_hour:02}:{e_minute:02}"
+        else:
+            start_format = f"{s_weekday}-{e_weekday}, {s_day}–{e_day} {s_month} {s_hour:02}:{s_minute:02}-"
+            end_format = f"{e_hour:02}:{e_minute:02}"
+
+    else:
+        end_format = ""
+        start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}"
+
+    return start_format + end_format
 
 
 def join_list(items):
@@ -148,8 +195,17 @@ class GeneratorPost:
         selected_event_ids = crud.get_selected_events(event_selection['id'])
         if not selected_event_ids:
             raise ValueError("Selected Events not found for the event selection")
-        
-        parameters = {'ids': selected_event_ids, 'fields': post_template['variables']}
+
+        variables_to_db = []
+        for var in post_template['variables']:
+            if var in VIRTUAL_FIELD_DEPENDENCIES:
+                for v in VIRTUAL_FIELD_DEPENDENCIES[var]:
+                    if v not in variables_to_db:
+                        variables_to_db.append(v)
+            else:
+                variables_to_db.append(var)
+
+        parameters = {'ids': selected_event_ids, 'fields': variables_to_db}
         params = EventRequestParameters(**parameters)
         selected_events = dsn_crud.get_approved_events(params)
 
@@ -180,6 +236,8 @@ class GeneratorPost:
         """Generates a post based on the selected events and the post template."""
         divided_text = post_template['template_text'].split("---EVENTS---")
         new_post = ''
+        generation_settings['event_count'] = len(selected_events)
+
         if len(divided_text) == 2:
             new_post, headline = self.generate_introduction(divided_text[0], generation_settings)
             template_events_text = divided_text[1]
@@ -193,12 +251,34 @@ class GeneratorPost:
             template_events_text = post_template['template_text']
 
         for event in selected_events:
-            # TODO: using vairables
-            new_post += template_events_text.format(
-                **event,
-            ) + "\n\n"
+            new_post += self.generate_event_text(template_events_text, event, post_template['variables']) + "\n\n"
         # TODO: using AI make post
         return new_post, headline
+
+    def generate_event_text(self, template: str, event: dict, variables: list[str] = []):
+        if not variables:
+            variables = re.findall(r'\{(.*?)\}', template)
+
+        if 'event_date' in variables and event.get('from_date'):
+            event['event_date'] = date_to_post(event['from_date'], event.get('to_date'))
+        else:
+            event['event_date'] = ''
+
+        if 'event_time' in variables and event.get('from_date'):
+            event['event_time'] = event['from_date'].strftime('%H:%M')
+
+        if 'address' in variables and event.get('place'):
+            event['address'] = f"{event['place']['place_name']}, {event['place']['place_address']}"
+            if event['place'].get('place_metro'):
+                event['address'] += f", м.{event['place']['place_metro']}"
+
+        if 'place_name' in variables:
+            event['place_name'] = event['place']['place_name'] if event['place'] else event['address'].split(',')[0]
+
+        event_text = template.format(
+            **event,
+        )
+        return event_text
 
     def generate_introduction(self, template: str, generation_settings: dict):
         # introduction = ""
@@ -242,6 +322,14 @@ class GeneratorPost:
             if date_from and date_to:
                 dates_text = fmt_two_dates(date_from, date_to)
 
+        price_desc = ""
+
+        if params.get('max_price'):
+            if int(params.get('max_price')) == 0:
+                price_desc = " c бесплатным входом"
+            elif int(params.get('max_price')) <= 1500:
+                price_desc = f" с билетами до {params['max_price']}₽"
+
         # Emoji selection
         emoji_pool = ["✨", "🎉", "📅", "🎟️", "⭐", "🗓️", "🔥", "🧭", "🎭", "🎬", "🎵", "🖼️", "📚"]
         lowered = " ".join(categories).lower() if categories else ""
@@ -263,11 +351,12 @@ class GeneratorPost:
         ]
 
         DIGEST_VARIANTS = [
-            "Самые интересные {categories_nominative} в этот период.",
-            "Вся подборка мероприятий — смотрите ниже.",
-            "Главные события для вашей афиши.",
-            "Лучшие варианты для досуга — ниже.",
-            "Ваш гид по мероприятиям на {dates_desc}.",
+            "Подборка из {count_event} интересных {categories_nominative}{price_desc} на {dates_desc}",
+            "{event_count} отличных мероприятий{price_desc} на {dates_desc}, как провести время.",
+            "Вся подборка {categories_nominative}",
+            "Главные {categories_nominative}#{price_desc}.",
+            "Лучшие варианты{price_desc} для досуга на {dates_desc}.",
+            "Ваш гид по мероприятиям{price_desc} на {dates_desc}.",
         ]
 
         # Compose randomized parts
@@ -280,7 +369,9 @@ class GeneratorPost:
         digest = random.choice(DIGEST_VARIANTS).format(
             categories_title=categories_title.lower(),
             categories_nominative=categories_nominative,
-            dates_desc=dates_desc
+            dates_desc=dates_desc,
+            price_desc=price_desc,
+            event_count=params.get('event_count', 'множества')
         )
 
         composed_intro = "{emoji} {headline}\n\n{digest}".format(

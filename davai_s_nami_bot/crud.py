@@ -116,6 +116,11 @@ def get_events_by_date_and_category(db, params):
 
         if event.place:
             event_data['address'] = f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+            event_data["place"] = {
+                "id": event.place.id, "place_name": event.place.place_name,
+                "place_address": event.place.place_address,
+                "place_metro": event.place.place_metro
+            }
 
         event_dict_list.append(event_data)
 
@@ -195,12 +200,27 @@ def get_approved_events(db, params):
                 query = query.offset(params.page * params.limit)
 
     events = query.all()
-    result = [
-        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
-        for event in events
-    ]
 
-    return result
+    event_dict_list = []
+
+    for event in events:
+        event_data = {
+            field: getattr(event, field)
+            for field in (params.fields or event.__table__.columns.keys())
+        }
+
+        if event.place:
+            event_data['address'] = f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+            event_data["place"] = {
+                "id": event.place.id,
+                "place_name": event.place.place_name,
+                "place_address": event.place.place_address,
+                "place_metro": event.place.place_metro
+            }
+
+        event_dict_list.append(event_data)
+
+    return event_dict_list
 
 
 @db_session
