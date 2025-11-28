@@ -32,4 +32,54 @@ for p in patches:
 @pytest.fixture(scope="session")
 def mock_redis():
     """Fixture for fake redis"""
-    return fake_redis 
+    return fake_redis
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from fastapi.testclient import TestClient
+from main import app
+from davai_s_nami_bot.database.models import Base, DsnUser
+from davai_s_nami_bot.database import database_orm
+
+TEST_DATABASE_URL = "sqlite:///:memory:"
+
+test_engine = create_engine(
+    TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(scope="function")
+def db_session_fixture():
+    test_engine = create_engine(
+        TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+    )
+    connection = test_engine.connect()
+
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False)
+
+    db = TestingSessionLocal(bind=connection)
+    db.begin_nested()
+
+    Base.metadata.create_all(bind=connection)
+
+    original_session_local = database_orm.SessionLocal
+    database_orm.SessionLocal = lambda: db  # Подменяем на тестовую сессию
+
+    try:
+        yield db
+    finally:
+        db.rollback()
+        db.close()
+        connection.close()
+        database_orm.SessionLocal = original_session_local
+
+
+@pytest.fixture()
+def client(db_session_fixture):
+    """
+    Test client for FastAPI
+    """
+    with TestClient(app) as c:
+        yield c

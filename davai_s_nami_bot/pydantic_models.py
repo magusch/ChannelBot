@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import List, Optional
 
@@ -43,3 +43,26 @@ class PlaceRequestParameters(BaseModel):
 class UpdatePostingRequest(BaseModel):
     event_id: int
     scheduled_time: datetime
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+    first_name: Optional[str] = None
+    last_name:  Optional[str] = None
+    telegram_nickname: Optional[str] = None
+
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    telegram_nickname: Optional[str] = None
+    is_active: bool = False
+    # Добавьте поля, сгенерированные БД (если нужно)
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

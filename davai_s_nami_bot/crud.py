@@ -2,8 +2,11 @@ from sqlalchemy import func, asc, desc, exc, or_
 from sqlalchemy.orm import joinedload
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog,\
-    DsnBotUserEvents
+    DsnBotUserEvents, DsnUser
 from .database.database_orm import db_session
+
+from .pydantic_models import UserCreate
+from .core.security import get_password_hash
 
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -654,5 +657,31 @@ def search_places_by_name(db, name: str, limit: int):
     result = [dict(zip([column.name for column in columns], place)) for place in places]
     return result
 
-
 ####––––––FINISH––––––####
+
+### USER AUTH function ###
+######–----START----–######
+@db_session
+def register_user(db, user_data: UserCreate):
+    db_user = db.query(DsnUser).filter(DsnUser.email == user_data.email).first()
+    if db_user:
+        return None  # User already exists
+
+    hashed_password = get_password_hash(user_data.password)
+
+    new_user = DsnUser(
+        email=user_data.email,
+        hashed_password=hashed_password,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        telegram_nickname=user_data.telegram_nickname,
+        is_active=True
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    new_user_dict = new_user.__dict__
+    return new_user_dict
+
+####––––––FINISH––––––######

@@ -2,6 +2,8 @@ from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, F
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
+from datetime import datetime
+
 Base = declarative_base()
 
 
@@ -132,3 +134,21 @@ class ApiRequestLog(Base):
 #     open_time = Column(Time, nullable=True)
 #     close_time = Column(Time, nullable=True)
 #     place_id = Column(ForeignKey(Place))
+
+# AUTH models
+
+class DsnUser(Base):
+    __tablename__ = "dsn_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    telegram_nickname = Column(String, nullable=True)
+
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+
+    is_active = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
