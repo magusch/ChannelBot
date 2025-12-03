@@ -46,23 +46,38 @@ class UpdatePostingRequest(BaseModel):
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    nickname: str
     password: str = Field(..., min_length=8)
+    email: EmailStr
 
-    first_name: Optional[str] = None
-    last_name:  Optional[str] = None
+    full_name: Optional[str] = None
     telegram_nickname: Optional[str] = None
 
 
 class UserOut(BaseModel):
     id: int
     email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    nickname: str
+    full_name: Optional[str] = None
     telegram_nickname: Optional[str] = None
     is_active: bool = False
-    # Добавьте поля, сгенерированные БД (если нужно)
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class UserLogin(BaseModel):
+    nickname: str
+    password: str
+
+
+class UserUpdate(BaseModel):
+    #password: str = Field(..., min_length=8)
+    full_name: Optional[str] = None
+    telegram_nickname: Optional[str] = None
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

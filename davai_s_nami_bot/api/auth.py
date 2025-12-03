@@ -1,8 +1,9 @@
 from fastapi import APIRouter
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
 
-from ..pydantic_models import UserCreate, UserOut
+from ..core.security import create_access_token, oauth2_scheme, decode_access_token
+from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate
 from .. import crud
 
 router = APIRouter(
@@ -23,7 +24,67 @@ def register_user(
         )
     return new_user
 
-@router.post("/login")
-def login_user(credentials: dict):
-    # login logic goes here
-    ...
+
+@router.post("/login", response_model=Token)
+def login_user(user_data: UserLogin # <-- Принимаем JSON-тело через UserLogin
+):
+    user = crud.authenticate_user(
+        nickname=user_data.nickname,
+        password=user_data.password
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect nickname or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
+
+    access_token = create_access_token(
+        subject=user["nickname"]
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/me", response_model=UserOut)
+def read_users_me(token: str = Depends(oauth2_scheme)):
+    """Возвращает информацию о текущем авторизованном пользователе."""
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    nickname = decode_access_token(token)
+    if nickname is None:
+        raise credentials_exception
+
+    current_user = crud.get_user_by_nickname(nickname=nickname)
+    return current_user
+
+
+@router.put("/me", response_model=UserOut)
+def update_user(
+    user_update: UserUpdate,
+    token: str = Depends(oauth2_scheme)
+):
+    """Обновляет информацию о текущем авторизованном пользователе."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    nickname = decode_access_token(token)
+    if nickname is None:
+        raise credentials_exception
+    updated_user = crud.update_user(nickname=nickname, user_update=user_update)
+    return updated_user

@@ -5,8 +5,8 @@ from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBo
     DsnBotUserEvents, DsnUser
 from .database.database_orm import db_session
 
-from .pydantic_models import UserCreate
-from .core.security import get_password_hash
+from .pydantic_models import UserCreate, UserUpdate
+from .core.security import get_password_hash, verify_password
 
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -663,17 +663,17 @@ def search_places_by_name(db, name: str, limit: int):
 ######–----START----–######
 @db_session
 def register_user(db, user_data: UserCreate):
-    db_user = db.query(DsnUser).filter(DsnUser.email == user_data.email).first()
+    db_user = db.query(DsnUser).filter(or_(DsnUser.nickname == user_data.nickname, DsnUser.email == user_data.email)).first()
     if db_user:
         return None  # User already exists
 
     hashed_password = get_password_hash(user_data.password)
 
     new_user = DsnUser(
+        nickname=user_data.nickname,
         email=user_data.email,
         hashed_password=hashed_password,
-        first_name=user_data.first_name,
-        last_name=user_data.last_name,
+        full_name=user_data.full_name,
         telegram_nickname=user_data.telegram_nickname,
         is_active=True
     )
@@ -683,5 +683,38 @@ def register_user(db, user_data: UserCreate):
     db.refresh(new_user)
     new_user_dict = new_user.__dict__
     return new_user_dict
+
+
+@db_session
+def authenticate_user(db, nickname: str, password: str):
+    """Login user with email and password."""
+
+    db_user = db.query(DsnUser).filter(DsnUser.nickname == nickname).first()
+
+    if not db_user:
+        return None  # User not found
+
+    if not verify_password(password, db_user.hashed_password):
+        return None  # Wrong password
+    new_user_dict = db_user.__dict__
+    return new_user_dict
+
+
+@db_session
+def get_user_by_nickname(db, nickname: str) -> dict:
+    return db.query(DsnUser).filter(DsnUser.nickname == nickname).first().__dict__
+
+
+@db_session
+def update_user(db, nickname: str, user_update: UserUpdate) -> dict:
+    db_user = db.query(DsnUser).filter(DsnUser.nickname == nickname).first()
+    if not db_user:
+        return None
+    for key, value in user_update.dict(exclude_unset=True).items():
+        setattr(db_user, key, value)
+    db.commit()
+    db.refresh(db_user)
+    return db_user.__dict__
+
 
 ####––––––FINISH––––––######

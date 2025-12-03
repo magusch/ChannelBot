@@ -124,7 +124,6 @@ class ApiRequestLog(Base):
     request_data = Column(String, nullable=True)
 
 
-
 # class PlaceSchedule(Base):
 #     __tablename__ = 'place_placeschedule'
 #     id = Column(String, primary_key=True, index=True)
@@ -140,13 +139,13 @@ class ApiRequestLog(Base):
 class DsnUser(Base):
     __tablename__ = "dsn_users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
+    nickname = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     telegram_nickname = Column(String, nullable=True)
 
-    first_name = Column(String, nullable=True)
-    last_name = Column(String, nullable=True)
+    full_name = Column(String, nullable=True)
 
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
