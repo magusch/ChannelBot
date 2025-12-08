@@ -137,7 +137,7 @@ class ApiRequestLog(Base):
 # AUTH models
 
 class DsnUser(Base):
-    __tablename__ = "dsn_users"
+    __tablename__ = "dsn_user"
 
     id = Column(Integer, primary_key=True)
     nickname = Column(String, unique=True, index=True, nullable=False)
