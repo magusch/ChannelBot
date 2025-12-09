@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
 
-from davai_s_nami_bot.api import auth
+from davai_s_nami_bot.api import auth, users
 from davai_s_nami_bot import crud
 
 from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
@@ -17,6 +17,7 @@ from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceReques
 app = FastAPI()
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
 
 origins = [
     "http://example.com",

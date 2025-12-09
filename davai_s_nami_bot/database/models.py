@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -49,6 +49,7 @@ class Events2Posts(Base):
     main_category_id = Column(Integer, nullable=True)
 
     bot_user_events = relationship("DsnBotUserEvents", back_populates="event", cascade="all, delete-orphan")
+    dsn_user_events = relationship("DsnUserEvent", back_populates="event", cascade="all, delete-orphan")
 
 
 class EventsNotApproved(Base):
@@ -147,7 +148,25 @@ class DsnUser(Base):
 
     full_name = Column(String, nullable=True)
 
+    dsn_user_events = relationship("DsnUserEvent", back_populates="user")
+
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DsnUserEvent(Base):
+    __tablename__ = 'dsn_user_event'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('dsn_user.id'), index=True)
+    event_id = Column(Integer, ForeignKey('events_events2post.id'), index=True)
+    remind_datetime = Column(DateTime, nullable=True)
+    remind_sent = Column(Boolean, nullable=True)
+
+    user = relationship("DsnUser", back_populates="dsn_user_events")
+    event = relationship("Events2Posts", back_populates="dsn_user_events")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'event_id', name='uq_user_event'),
+    )

@@ -31,6 +31,24 @@ class EventRequestParameters(BaseModel):
         }
 
 
+class EventOut(BaseModel):
+    id: int
+    event_id: str
+    title: str
+    post: str
+    full_text: str
+    url: str
+    ticket_url: str
+    from_date: datetime
+    to_date: datetime
+    place_id: Optional[int] = None
+    image: str
+    price: str
+    price_int: int
+    category: Optional[str] = None
+    address: Optional[str] = None
+
+
 class PlaceRequestParameters(BaseModel):
     metro: Optional[str] = None
     fields: Optional[List[str]] = None
@@ -82,3 +100,13 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
     refresh_token: str
+
+
+class FavouriteOut(BaseModel):
+    type: str
+    id: int
+    detail: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

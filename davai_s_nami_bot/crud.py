@@ -2,7 +2,7 @@ from sqlalchemy import func, asc, desc, exc, or_
 from sqlalchemy.orm import joinedload
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog,\
-    DsnBotUserEvents, DsnUser
+    DsnBotUserEvents, DsnUser, DsnUserEvent
 from .database.database_orm import db_session
 
 from .pydantic_models import UserCreate, UserUpdate
@@ -718,3 +718,51 @@ def update_user(db, nickname: str, user_update: UserUpdate) -> dict:
 
 
 ####––––––FINISH––––––######
+
+
+###### USER Functions ######
+######–----START----–#######
+
+@db_session
+def add_event_to_user(db, user_id, event_id):
+    user_event = DsnUserEvent(
+        user_id=user_id,
+        event_id=event_id,
+        remind_datetime=None,
+        remind_sent=False
+    )
+    db.add(user_event)
+    db.commit()
+    db.refresh(user_event)
+    return user_event.__dict__
+
+
+@db_session
+def remove_event_from_user(db, user_id, event_id):
+    user_event = db.query(DsnUserEvent).filter(
+        DsnUserEvent.user_id == user_id,
+        DsnUserEvent.event_id == event_id
+    ).first()
+    if user_event:
+        db.delete(user_event)
+        db.commit()
+        return True
+    return False
+
+
+@db_session
+def get_user_favourite_events(db, user_id):
+    query = (
+        db.query(DsnUserEvent)
+            .options(joinedload(DsnUserEvent.event))
+            .filter(DsnUserEvent.user_id == user_id)
+    )
+
+    result = []
+    for user_event in query.all():
+        print(user_event.__dict__)
+        event = user_event.event
+        print(user_event.event)
+
+        result.append(event.__dict__)
+    return result
