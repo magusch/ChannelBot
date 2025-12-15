@@ -77,6 +77,7 @@ class UserOut(BaseModel):
     email: EmailStr
     nickname: str
     full_name: Optional[str] = None
+    telegram_id: Optional[int] = None
     telegram_nickname: Optional[str] = None
     is_active: bool = False
     created_at: Optional[datetime] = None
@@ -110,3 +111,7 @@ class FavouriteOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TelegramLoginData(BaseModel):
+    init_data: str = Field(..., description="Raw initData string from Telegram WebApp")

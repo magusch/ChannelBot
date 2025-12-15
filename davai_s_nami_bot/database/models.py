@@ -95,7 +95,7 @@ class DsnBotEvents(Base):
 
 class DsnBotUserEvents(Base):
     __tablename__ = 'bot_user_events'
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('bot_user.id'))
     event_id = Column(Integer, ForeignKey('events_events2post.id'))
     remind_datetime = Column(DateTime, nullable=True)
@@ -115,7 +115,7 @@ class DsnBotUser(Base):
 
 class ApiRequestLog(Base):
     __tablename__ = 'api_request_log'
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     ip = Column(String, nullable=False)
     endpoint = Column(String, nullable=False)
     method = Column(String, nullable=False)
@@ -144,7 +144,8 @@ class DsnUser(Base):
     nickname = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    telegram_nickname = Column(String, nullable=True)
+    telegram_nickname = Column(String, nullable=True) # TODO: delete it
+    telegram_id = Column(Integer, nullable=True, index=True)
 
     full_name = Column(String, nullable=True)
 

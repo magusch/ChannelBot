@@ -2,8 +2,9 @@ from fastapi import APIRouter
 
 from fastapi import HTTPException, status, Depends
 
-from ..core.security import create_access_token, create_refresh_token, oauth2_scheme, decode_access_token
-from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate
+from ..core.security import create_access_token, create_refresh_token, oauth2_scheme, decode_access_token,\
+    check_telegram_auth_data
+from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate, TelegramLoginData
 from .. import crud
 
 router = APIRouter(
@@ -115,3 +116,36 @@ def update_user(
         raise credentials_exception
     updated_user = crud.update_user(nickname=nickname, user_update=user_update)
     return updated_user
+
+
+@router.post("/telegram/login", response_model=Token)
+def telegram_login(
+        login_data: TelegramLoginData,
+):
+    """
+    Checks Telegram login data, creates or retrieves the user,
+    """
+
+    telegram_user_info = check_telegram_auth_data(login_data.init_data)
+    if not telegram_user_info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram data hash mismatch. Data integrity compromised."
+        )
+
+    telegram_id = telegram_user_info['id']
+    user = crud.get_or_create_user_by_telegram_id(telegram_id, telegram_user_info)
+
+    if not user["is_active"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
+
+    subject = user["nickname"] if user["nickname"] else str(user["telegram_id"])
+
+    access_token = create_access_token(subject=subject)
+    refresh_token = create_refresh_token(subject=subject)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "refresh_token": refresh_token
+    }

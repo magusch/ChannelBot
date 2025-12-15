@@ -717,6 +717,42 @@ def update_user(db, nickname: str, user_update: UserUpdate) -> dict:
     return db_user.__dict__
 
 
+@db_session
+def get_or_create_user_by_telegram_id(db, telegram_id: int, telegram_user_info: dict):
+    """Looking for user by Telegram_ID or making a new user."""
+
+    db_user = db.query(DsnUser).filter(DsnUser.telegram_id == telegram_id).first()
+
+    if db_user:
+        return db_user.__dict__
+
+    full_name = ''
+    if telegram_user_info.get('first_name', ''):
+        full_name += telegram_user_info.get('first_name', '')
+    if telegram_user_info.get('last_name', ''):
+        if full_name:
+            full_name += ' '
+        full_name += telegram_user_info.get('last_name', '')
+    nickname = 'tg_' + str(telegram_id)
+    if telegram_user_info.get('username'):
+        nickname = 'tg_' + telegram_user_info.get('username')
+
+    hashed_password = get_password_hash(nickname+full_name)
+
+    new_user = DsnUser(
+        telegram_id=telegram_id,
+        full_name=full_name,
+        nickname=nickname,
+        email=f"{telegram_id}@tg.me",
+        hashed_password=hashed_password,
+        is_active=True
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user.__dict__
+
+
 ####––––––FINISH––––––######
 
 
