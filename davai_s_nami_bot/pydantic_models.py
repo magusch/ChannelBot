@@ -38,13 +38,13 @@ class EventOut(BaseModel):
     post: str
     full_text: str
     url: str
-    ticket_url: str
+    ticket_url: Optional[str] = None
     from_date: datetime
     to_date: datetime
     place_id: Optional[int] = None
-    image: str
-    price: str
-    price_int: int
+    image: Optional[str] = None
+    price: Optional[str] = None
+    price_int: Optional[int] = None
     category: Optional[str] = None
     address: Optional[str] = None
 
