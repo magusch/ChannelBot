@@ -79,6 +79,8 @@ class UserOut(BaseModel):
     full_name: Optional[str] = None
     telegram_id: Optional[int] = None
     telegram_nickname: Optional[str] = None
+    balance: Optional[int] = None
+    weekend_guide: Optional[bool] = False
     is_active: bool = False
     created_at: Optional[datetime] = None
 
@@ -94,7 +96,7 @@ class UserLogin(BaseModel):
 class UserUpdate(BaseModel):
     #password: str = Field(..., min_length=8)
     full_name: Optional[str] = None
-    telegram_nickname: Optional[str] = None
+    weekend_guide: Optional[bool] = False
 
 
 class Token(BaseModel):

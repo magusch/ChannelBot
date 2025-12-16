@@ -146,6 +146,8 @@ class DsnUser(Base):
     hashed_password = Column(String, nullable=False)
     telegram_nickname = Column(String, nullable=True) # TODO: delete it
     telegram_id = Column(Integer, nullable=True, index=True)
+    balance = Column(Integer, default=100, nullable=True)
+    weekend_guide = Column(Boolean, default=False, nullable=True)
 
     full_name = Column(String, nullable=True)
 

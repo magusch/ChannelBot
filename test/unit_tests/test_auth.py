@@ -51,6 +51,11 @@ def test_register_user_success(register_user, user_payload):
     assert "password" not in register_user
 
 
+def test_register_user_success_with_balance(register_user):
+    assert "id" in register_user
+    assert register_user["balance"] == 100
+
+
 def test_register_user_success_without_full_info(client):
 
     user_data = {
