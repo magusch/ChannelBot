@@ -97,7 +97,7 @@ def get_events_by_date_and_category(db, params):
 
             dict_requests['place'] = params.place
 
-        query = query.order_by(Events2Posts.from_date.asc())
+        query = query.order_by(Events2Posts.to_date.asc())
 
     total_count = query.count()
     if params.limit:
@@ -269,7 +269,7 @@ def get_event_to_post_now(db):
     Returns:
         List of events ready to post now
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     events = db.query(Events2Posts).filter(
         Events2Posts.status == 'ReadyToPost',
         Events2Posts.post_date.between(
@@ -569,7 +569,7 @@ def remove_event_from_dsn_bot(db, date):
 
 @db_session
 def event_reminder(db):
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     future_reminds = (
         db.query(DsnBotUserEvents).options(
