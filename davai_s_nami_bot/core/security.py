@@ -29,11 +29,11 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(
-        subject: str, expires_delta: timedelta = None
+        subject: str, expires_delta: int = None
 ) -> str:
     """Generate a JWT token for the given subject (user identifier)."""
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.utcnow() + timedelta(minutes=expires_delta)
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -44,11 +44,21 @@ def create_access_token(
     return encoded_jwt
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token_cookie(subject: str) -> Dict:
     """Generate long-live Refresh Token."""
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode = {"exp": expire, "sub": str(subject)}
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    refresh_token = create_access_token(subject, REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60)
+
+    cookie_options = {
+        "key": "refresh_token",
+        "value": refresh_token,
+        "max_age": REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "expires": REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "httponly": True,
+        "secure": True,
+        "samesite": "Lax"
+    }
+    return cookie_options
+
 
 
 def decode_access_token(token: str) -> Any:

@@ -1,8 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, Cookie
 
 from fastapi import HTTPException, status, Depends
 
-from ..core.security import create_access_token, create_refresh_token, oauth2_scheme, decode_access_token,\
+from ..core.security import create_access_token, create_refresh_token_cookie, oauth2_scheme, decode_access_token,\
     check_telegram_auth_data
 from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate, TelegramLoginData
 from .. import crud
@@ -27,7 +27,7 @@ def register_user(
 
 
 @router.post("/login", response_model=Token)
-def login_user(user_data: UserLogin):
+def login_user(user_data: UserLogin, response: Response):
     user = crud.authenticate_user(
         nickname=user_data.nickname,
         password=user_data.password
@@ -47,18 +47,30 @@ def login_user(user_data: UserLogin):
         )
 
     access_token = create_access_token(subject=user["nickname"])
-    refresh_token = create_refresh_token(subject=user["nickname"])
+    refresh_token_cookie = create_refresh_token_cookie(subject=user["nickname"])
+
+    response.set_cookie(**refresh_token_cookie)
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "refresh_token": refresh_token
     }
 
 
 @router.post("/refresh", response_model=Token)
-def refresh_access_token(refresh_token: str = Depends(oauth2_scheme)):
+def refresh_access_token(
+        response: Response,
+        refresh_token: str = Cookie(None, alias="refresh_token"),
+):
     """Refreshes the access token using the provided refresh token."""
+
+    if not refresh_token:
+        # Это может быть 401, если пользователь не авторизован
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not found in cookies"
+        )
+
     try:
         nickname = decode_access_token(refresh_token)
     except HTTPException:
@@ -72,12 +84,12 @@ def refresh_access_token(refresh_token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     new_access_token = create_access_token(subject=user["nickname"])
-    # new_refresh_token = create_refresh_token(subject=user["nickname"]) # Optionally issue a new refresh token
+    refresh_token_cookie = create_refresh_token_cookie(subject=user["nickname"])
+    response.set_cookie(**refresh_token_cookie)
 
     return {
         "access_token": new_access_token,
         "token_type": "bearer",
-        "refresh_token": refresh_token
     }
 
 
@@ -120,7 +132,7 @@ def update_user(
 
 @router.post("/telegram/login", response_model=Token)
 def telegram_login(
-        login_data: TelegramLoginData,
+        login_data: TelegramLoginData, response: Response,
 ):
     """
     Checks Telegram login data, creates or retrieves the user,
@@ -142,10 +154,10 @@ def telegram_login(
     subject = user["nickname"] if user["nickname"] else str(user["telegram_id"])
 
     access_token = create_access_token(subject=subject)
-    refresh_token = create_refresh_token(subject=subject)
+    refresh_token_cookie = create_refresh_token_cookie(subject=subject)
+    response.set_cookie(**refresh_token_cookie)
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "refresh_token": refresh_token
     }
