@@ -55,7 +55,7 @@ def create_refresh_token_cookie(subject: str) -> Dict:
         "expires": REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         "httponly": True,
         "secure": True,
-        "samesite": "Lax"
+        "samesite": None # "Lax"
     }
     return cookie_options
 
