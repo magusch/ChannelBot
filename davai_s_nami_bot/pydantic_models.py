@@ -13,6 +13,8 @@ class EventRequestParameters(BaseModel):
     page: Optional[int] = None
     ids: Optional[List[int]] = None
     status: Optional[str] = None
+    price_max: Optional[int] = None
+    order_by: Optional[str] = 'dt-asc'
 
     def with_defaults(self):
         return self
@@ -69,7 +71,6 @@ class UserCreate(BaseModel):
     email: EmailStr
 
     full_name: Optional[str] = None
-    telegram_nickname: Optional[str] = None
 
 
 class UserOut(BaseModel):

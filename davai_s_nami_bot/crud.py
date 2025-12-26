@@ -39,8 +39,8 @@ def order_maping(model, order_by):
     elif model == Events2Posts:
         order_mapping = {
             'tt': Events2Posts.title,
-            'dt': Events2Posts.from_date,
-            'pr': Events2Posts.price,
+            'dt': Events2Posts.to_date,
+            'pr': Events2Posts.price_int,
             'ad': Events2Posts.price,
             'id': Events2Posts.id
         }
@@ -58,7 +58,8 @@ def order_maping(model, order_by):
 
 @db_session
 def get_events_by_date_and_category(db, params):
-    query = db.query(Events2Posts).options(joinedload(Events2Posts.place))
+    sort_order = order_maping(Events2Posts, params.order_by)
+    query = db.query(Events2Posts).options(joinedload(Events2Posts.place)).order_by(sort_order)
 
     if params.status != 'all':
         query = query.filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
@@ -97,7 +98,9 @@ def get_events_by_date_and_category(db, params):
 
             dict_requests['place'] = params.place
 
-        query = query.order_by(Events2Posts.to_date.asc())
+        if params.price_max:
+            query = query.filter(Events2Posts.price_int <= params.price_max)
+            dict_requests['price_max'] = params.price_max
 
     total_count = query.count()
     if params.limit:
@@ -674,7 +677,6 @@ def register_user(db, user_data: UserCreate):
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        telegram_nickname=user_data.telegram_nickname,
         is_active=True
     )
 

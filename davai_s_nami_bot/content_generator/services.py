@@ -171,7 +171,7 @@ class GeneratorPost:
 
         if 'max_price' in filter_params:
             try:
-                parameters['price_int'] = int(filter_params['max_price'])
+                parameters['price_max'] = int(filter_params['max_price'])
             except (ValueError, TypeError):
                 pass
 
@@ -221,9 +221,9 @@ class GeneratorPost:
             #'generated_by_id': generated_by_id or 1,
             'post_template_id': post_template['id'],
         }
-        
+
         new_post = crud.create_generated_post(new_post)
-       
+
         return {
             "id": new_post['id'],
             "title": new_post['title'],
