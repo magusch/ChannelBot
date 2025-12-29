@@ -14,7 +14,7 @@ class EventRequestParameters(BaseModel):
     ids: Optional[List[int]] = None
     status: Optional[str] = None
     price_max: Optional[int] = None
-    order_by: Optional[str] = 'dt-asc'
+    order_by: Optional[str] = 'date-asc'
 
     def with_defaults(self):
         return self

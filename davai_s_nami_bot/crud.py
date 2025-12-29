@@ -26,30 +26,31 @@ MODEL_REGISTRY = {
 def order_maping(model, order_by):
     if model == Place:
         order_mapping = {
-            'tt': Place.place_name,
-            'mt': Place.place_metro,
+            'title': Place.place_name,
+            'metro': Place.place_metro,
             'id': Place.id
         }
         try:
             field, direction = order_by.split('-')
-            column = order_mapping.get(field, Place.id)
+            column = order_mapping.get(field, model.id)
             sort_order = asc(column) if direction == 'asc' else desc(column)
         except ValueError:
-            sort_order = asc(Place.id)
+            sort_order = asc(model.id)
     elif model == Events2Posts:
         order_mapping = {
-            'tt': Events2Posts.title,
-            'dt': Events2Posts.to_date,
-            'pr': Events2Posts.price_int,
+            'title': Events2Posts.title,
+            'date': Events2Posts.to_date,
+            'price': Events2Posts.price_int,
             'ad': Events2Posts.price,
             'id': Events2Posts.id
         }
+
         try:
             field, direction = order_by.split('-')
-            column = order_mapping.get(field, Place.id)
+            column = order_mapping.get(field, model.to_date)
             sort_order = asc(column) if direction == 'asc' else desc(column)
         except ValueError:
-            sort_order = asc(Events2Posts.id)
+            sort_order = asc(model.id)
     else:
         sort_order = asc(model.id)
 
