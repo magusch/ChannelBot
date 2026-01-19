@@ -17,6 +17,8 @@ services:
     networks:
       - dsn_network
     restart: always
+    env_file:
+      - .env
     depends_on:
       - redis
 
@@ -33,6 +35,8 @@ services:
     networks:
       - dsn_network
     restart: always
+    env_file:
+      - .env
     depends_on:
       - redis
     healthcheck:

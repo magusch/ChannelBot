@@ -536,6 +536,35 @@ def get_last_queue_value(db) -> int:
 
 
 @db_session
+def get_events_missing_images(db, event_ids: list = [], limit: int = 50) -> List[dict]:
+    query = db.query(Events2Posts)
+
+    if event_ids:
+        query = query.filter(Events2Posts.id.in_(event_ids))
+    else:
+        query = query.filter(Events2Posts.status == 'ReadyToPost')
+
+    query = query.filter(
+        (Events2Posts.image_upload == None) | (Events2Posts.image_upload == ''),
+        (Events2Posts.image != None) | (Events2Posts.image != ''),
+    )
+
+    if not limit:
+        limit = 50
+
+    events = query.limit(limit)
+
+    events_wo_images = []
+    for event in events:
+        events_wo_images.append({'id': event.id, 'event_id': event.event_id, 'image': event.image})
+    return events_wo_images
+
+
+@db_session
+def update_image_events(db, event_id: str, image_url: str) -> None:
+    db.query(Events2Posts).filter_by(id=event_id).update({"image": image_url})
+
+@db_session
 def save_api_request_log(db, request_info: dict):
     api_request_log = ApiRequestLog(**request_info)
     db.add(api_request_log)

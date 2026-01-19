@@ -1,10 +1,24 @@
-import os
+import os, io
+import uuid
 import warnings
-from io import BytesIO
 
 import PIL
 import requests
 from PIL import Image
+
+import boto3
+
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL")
+
+s3_client = boto3.client("s3", region_name=AWS_REGION,
+                         aws_access_key_id=AWS_ACCESS_KEY_ID,
+                         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+                         aws_session_token=AWS_SECRET_ACCESS_KEY,
+                         endpoint_url=AWS_S3_ENDPOINT_URL
+                         )
 
 
 CONSTANTS_FILE_NAME = "prod_constants"
@@ -95,7 +109,7 @@ def prepare_image(image_url):
         image_path = None
 
     else:
-        with Image.open(BytesIO(requests.get(image_url).content)) as img:
+        with Image.open(io.BytesIO(requests.get(image_url).content)) as img:
             image_name = "img"
             img.thumbnail(IMG_MAXSIZE, PIL.Image.ANTIALIAS)
 
@@ -120,3 +134,78 @@ def prepare_image(image_url):
                     image_path = image_name + ".png"
 
     return image_path
+
+
+def download_image(url: str) -> bytes:
+    resp = requests.get(url, stream=True, timeout=10)
+    resp.raise_for_status()
+
+    content_type = resp.headers.get("Content-Type", "")
+    if not content_type.startswith("image/"):
+        raise ValueError(f"URL does not look like image, Content-Type={content_type}")
+
+    return resp.content
+
+def convert_to_jpg(image_bytes: bytes) -> tuple[bytes, str]:
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        raise ValueError(f"Cannot open image: {e}")
+
+
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGB")
+    elif img.mode == "RGBA":
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[-1])
+        img = background
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90,  optimize=True)
+    buf.seek(0)
+    return buf.read(), "jpg"
+
+
+def upload_bytes_to_s3(bytes, ext: str) -> dict:
+    """
+    Uploads bytes to s3 bucket and return url.
+    """
+    aws_s3_bucket = os.environ.get("AWS_STORAGE_BUCKET_NAME")
+    s3_public_url = os.environ.get("AWS_S3_PUBLIC_URL")
+
+    key = f"uploads/{uuid.uuid4().hex}.{ext}"
+
+    s3_client.put_object(
+        Bucket=aws_s3_bucket,
+        Key=key,
+        Body=bytes,
+        ContentType="image/jpeg",
+        ACL="public-read",
+    )
+
+    if s3_public_url:
+        url = f"https://{s3_public_url.rstrip('/')}/{key}"
+    else:
+        url = f"https://{aws_s3_bucket}.s3.{AWS_REGION}.amazonaws.com/{key}"
+    return {
+        "bucket": aws_s3_bucket,
+        "key": key,
+        "url": url,
+    }
+
+
+def process_image_from_url(image_url: str) -> dict:
+    """
+    1) Download image by url
+    2) Convert image to jpg
+    3) Upload image to S3
+    4) Return dict with image url
+    """
+    if not image_url.startswith("http://") and not image_url.startswith("https://"):
+        raise ValueError("image_url must be http(s) link")
+
+    original_bytes = download_image(image_url)
+    jpg_bytes, ext = convert_to_jpg(original_bytes)
+    result = upload_bytes_to_s3(jpg_bytes, ext)
+    result["source_url"] = image_url
+    return result

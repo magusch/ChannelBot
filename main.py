@@ -316,6 +316,32 @@ async def search(query: str, limit: int = 10, type: str = 'event',
     return {"events": events, "places": places}
 
 
+@app.post('/api/upload_image_to_s3/')
+async def upload_image_to_s3(request: Request = None, token: str = Depends(verify_token)):
+    data = await request.json()
+    img_url = None
+    if 'img_url' in data.keys():
+        img_url = data['img_url']
+
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.upload_image_to_s3',
+        args=[img_url],
+    )
+    return {'message': 'Task upload images to s3 to queue', 'task_id': task.id}
+
+
+@app.post('/api/upload_event_images_to_s3/')
+async def upload_event_images_to_s3(request: Request = None, token: str = Depends(verify_token)):
+    data = await request.json()
+
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.upload_event_images_to_s3',
+        args=[data['event_ids']],
+    )
+    return {'message': 'Task upload event images to s3 to queue', 'task_id': task.id}
+
+
 ###--> Content generator START <--###
 @app.post('/api/content_generator_event_selection/')
 async def content_generator_event_selection(request: Request, token: str = Depends(verify_token)):

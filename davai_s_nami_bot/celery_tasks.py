@@ -505,3 +505,22 @@ def content_generator_generate_post(post_template_id: int, event_selection_id: i
     post = generator_post.generate_post_by_template(post_template_id, event_selection_id, generated_by_id)
     return post
 
+
+@celery_app.task
+def upload_image_to_s3(file_path: str):
+    result = utils.process_image_from_url(image_url=file_path)
+    return result
+
+
+@celery_app.task
+def upload_event_images_to_s3(event_ids: list = []):
+    events = crud.get_events_missing_images(event_ids)
+
+    for event in events:
+        print(event)
+        image_url = event.get('image', None)
+        if not image_url: continue
+
+        result = utils.process_image_from_url(image_url=image_url)
+        print(result)
+        crud.update_image_events(event['id'], result['url'])
