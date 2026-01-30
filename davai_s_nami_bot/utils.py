@@ -2,10 +2,8 @@ import os, io
 import uuid
 import warnings
 
-import PIL
 import requests
 from PIL import Image
-
 import boto3
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -45,7 +43,10 @@ MONTHNAMES = {
     11: "ноября",
     12: "декабря",
 }
+
+THUMB_RESAMPLE = Image.LANCZOS
 IMG_MAXSIZE = (1920, 1080)
+
 REQUIRED_CONSTANT_NAMES = [
     "TIMEPAD_TOKEN",
     "BOT_TOKEN",
@@ -111,7 +112,7 @@ def prepare_image(image_url):
     else:
         with Image.open(io.BytesIO(requests.get(image_url).content)) as img:
             image_name = "img"
-            img.thumbnail(IMG_MAXSIZE, PIL.Image.ANTIALIAS)
+            img.thumbnail(IMG_MAXSIZE, THUMB_RESAMPLE)
 
             if img.mode != "RGB":
                 img = img.convert("RGB")
