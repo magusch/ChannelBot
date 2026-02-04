@@ -42,6 +42,7 @@ class Events2Posts(Base):
     explored_date = Column(DateTime, nullable=True)
     post_date = Column(DateTime, nullable=True)
     from_date = Column(DateTime, nullable=True)
+    image_upload = Column(String, nullable=True)
     to_date = Column(DateTime, nullable=True)
     address = Column(String, nullable=True)
     category = Column(String, nullable=True)

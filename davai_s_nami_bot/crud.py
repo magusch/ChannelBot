@@ -828,9 +828,7 @@ def get_user_favourite_events(db, user_id):
 
     result = []
     for user_event in query.all():
-        print(user_event.__dict__)
         event = user_event.event
-        print(user_event.event)
 
         result.append(event.__dict__)
     return result
