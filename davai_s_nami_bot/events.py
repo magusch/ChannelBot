@@ -656,10 +656,7 @@ def get_timepad_events(
     """
     Getting events.
     """
-    setting_days = settings.escraper_parameters.get('timepad').get('days')
-
-    if setting_days:
-        days = int(setting_days)
+    days = int(settings.escraper_parameters.get('timepad').get('days', days))
 
     if days > MAX_NEXT_DAYS:
         raise ValueError(
@@ -720,23 +717,24 @@ def get_radario_events(
         "kids",
         "show",
     ]
+
+    days = int(settings.escraper_parameters.get('radario').get('days', days))
     today = date.today()
-    date_from = today.strftime(Radario.DATETIME_STRF)
+    date_from = (today + timedelta(days=1)).strftime(Radario.DATETIME_STRF)
     date_to = (today + timedelta(days=days)).strftime(Radario.DATETIME_STRF)
 
-    radario_city = 'spb'
+    radario_city = settings.escraper_parameters.get('radario').get('city', 'spb')
 
     radario_cities = dsn_parameters.read_param('radario').get('city')
-    setting_city = settings.escraper_parameters.get('radario').get('city')
     if radario_cities:
         radario_city = radario_cities[0]
-    elif setting_city:
-        radario_city = setting_city
+
+    categories = int(settings.escraper_parameters.get('radario').get('categories', category))
 
     request_params = {
         "from": date_from,
         "to": date_to,
-        "category": category,
+        "category": categories,
         "city": radario_city,
     }
     existed_event_ids = crud.get_event_id_by_prefix('RADARIO')
@@ -751,18 +749,19 @@ def get_radario_events(
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    tc_org_ids = dsn_parameters.read_param('ticketscloud').get('org_id')
+    tc_org_ids = dsn_parameters.read_param('ticketscloud').get('org_id', [])
+    tc_org_ids += settings.escraper_parameters.get('ticketscloud').get('org_id', [])
 
     ts_cities = dsn_parameters.read_param('ticketscloud').get('city')
+    ts_city = settings.escraper_parameters.get('ticketscloud').get('city', 'Санкт-Петербург')
     if ts_cities:
         ts_city = ts_cities[0]
-    else:
-        ts_city = 'Санкт-Петербург'
+
 
     existed_event_ids = crud.get_event_id_by_prefix('TC')
     new_events = []
     if tc_org_ids:
-        new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=ts_city, tags=ALL_EVENT_TAGS,
+        new_events = _get_events(ticketscloud_parser, org_ids=list(set(tc_org_ids)), city=ts_city, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
 
     if events_filter:
@@ -774,9 +773,10 @@ def get_ticketscloud_events(
 def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
+    days = settings.escraper_parameters.get('vk').get('days', days * 2)
 
-    vk_city_id = '2'
-    vk_city = 'Санкт-Петербург'
+    vk_city_id = settings.escraper_parameters.get('vk').get('vk_city_id', '2')
+    vk_city = settings.escraper_parameters.get('vk').get('vk_city', 'Санкт-Петербург')
 
     vk_param = dsn_parameters.read_param('vk')
     if vk_param:
@@ -787,7 +787,7 @@ def get_vk_events(
             vk_city = vk_param.get('city')[0]
 
     request_params = {
-        'days': days * 2,
+        'days': days,
         'city_id': vk_city_id,
         'city': vk_city
     }
@@ -802,8 +802,9 @@ def get_qtickets_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    qt_city = 'spb'
+    days = settings.escraper_parameters.get('qtickets').get('days', days)
 
+    qt_city = settings.escraper_parameters.get('qtickets').get('city', 'spb')
     qt_cities = dsn_parameters.read_param('qtickets').get('city')
     if qt_cities:
         qt_city = qt_cities[0]
@@ -823,15 +824,17 @@ def get_qtickets_events(
 def get_mts_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
+    days = settings.escraper_parameters.get('mts').get('days', days)
 
-    mts_city = 'sankt-peterburg'
+    mts_city = settings.escraper_parameters.get('mts').get('city', 'sankt-peterburg')
     mts_cities = dsn_parameters.read_param('mts').get('city')
     if mts_cities:
         mts_city = mts_cities[0]
 
     mts_categories = dsn_parameters.read_param('mts').get('category')
     if not mts_categories:
-        mts_categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+        mts_categories = (settings.escraper_parameters.get('mts')
+                          .get('categories', ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]))
 
     request_params = {
             "city": mts_city,
@@ -853,8 +856,9 @@ def get_culture_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    culture_city = 'sankt-peterburg'
+    days = settings.escraper_parameters.get('cultire').get('days', days)
 
+    culture_city = settings.escraper_parameters.get('cultire').get('city', 'sankt-peterburg')
     culture_cities = dsn_parameters.read_param('culture').get('city')
     if culture_cities:
         culture_city = culture_cities[0]
