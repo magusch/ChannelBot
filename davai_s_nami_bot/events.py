@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture
+from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture, Telegram
 
 from . import utils
 from .logger import catch_exceptions
@@ -32,12 +32,13 @@ vk_parser = VK()
 qt_parser = QTickets()
 mts_parser = MTS()
 culture_parser = Culture()
+tg_parser = Telegram()
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
     'qtickets.events': qt_parser, 'live.mts.ru': mts_parser,
-    'culture.ru': culture_parser
+    'culture.ru': culture_parser, 't.me': culture_parser
 }
 
 
@@ -872,6 +873,29 @@ def get_culture_events(
     return new_events
 
 
+def get_tg_posts(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    days = int(settings.escraper_parameters.get('tg').get('days', days))
+    channels = settings.escraper_parameters.get('tg').get('channels', [])
+    existed_event_ids = crud.get_event_id_by_prefix('TG')
+
+    request_params = {
+        "channels": channels,
+        "days": days,
+    }
+    new_events = _get_events(
+        tg_parser,
+        request_params=request_params,
+        tags=ALL_EVENT_TAGS,
+        existed_event_ids=existed_event_ids
+    )
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
 escraper_sites = {
     'timepad':      get_timepad_events,
     'radario':      get_radario_events,
@@ -879,7 +903,8 @@ escraper_sites = {
     'vk':           get_vk_events,
     'qtickets':     get_qtickets_events,
     'mts':          get_mts_events,
-    'culture':      get_culture_events
+    'culture':      get_culture_events,
+    'tg':           get_tg_posts,
 }
 
 
