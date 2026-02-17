@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture, Telegram
+from escraper.parsers import (ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets,
+                              MTS, Culture, Telegram, ConfigScraper)
 
 from . import utils
 from .logger import catch_exceptions
@@ -33,6 +34,7 @@ qt_parser = QTickets()
 mts_parser = MTS()
 culture_parser = Culture()
 tg_parser = Telegram()
+cfg_parser = ConfigScraper()
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
@@ -900,6 +902,39 @@ def get_tg_posts(
     return new_events
 
 
+def get_cfg_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    days = int(settings.escraper_parameters.get('cfg').get('days', days))
+    sites = settings.escraper_parameters.get('cfg').get('sites', ['sevcable', 'newholland', 'levashovsky', 'alexandrinsky'])
+    existed_event_ids = crud.get_event_id_by_prefix('CFG')
+
+    new_events = []
+
+    for site in sites:
+        request_params = {
+            "site": site,
+            "days": days,
+        }
+        try:
+            new_events += _get_events(
+                cfg_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids
+            )
+        except Exception as e:
+            print(f"An error occurred while getting events from {site}: {e}")
+
+        time.sleep(1)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+
+    return new_events
+
+
 escraper_sites = {
     'timepad':      get_timepad_events,
     'radario':      get_radario_events,
@@ -909,6 +944,7 @@ escraper_sites = {
     'mts':          get_mts_events,
     'culture':      get_culture_events,
     'tg':           get_tg_posts,
+    'cfg':          get_cfg_events,
 }
 
 
