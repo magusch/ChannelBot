@@ -1,8 +1,8 @@
 from sqlalchemy import func, asc, desc, exc, or_
 from sqlalchemy.orm import joinedload
 
-from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, ApiRequestLog,\
-    DsnBotUserEvents, DsnUser, DsnUserEvent
+from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, PlaceKeyword, \
+    ApiRequestLog, DsnBotUserEvents, DsnUser, DsnUserEvent
 from .database.database_orm import db_session
 
 from .pydantic_models import UserCreate, UserUpdate
@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 
 from .events import Event
+from .scoring import calculate_score
+from .settings.settings_loader import settings
 
 
 MODEL_REGISTRY = {
@@ -346,7 +348,7 @@ def get_not_approved_events(db, params):
 def update_not_approved_events_set_approved(db, event_ids=[]):
     db.query(EventsNotApproved)\
         .filter(EventsNotApproved.id.in_(event_ids))\
-        .update({'approved': 1})
+        .update({'approved': 1, 'status': 'approved'})
 
 
 @db_session
@@ -442,6 +444,12 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 
     queue_value_gen = func()
 
+    # Load keywords once for the whole batch — avoids one DB query per event.
+    place_keywords = _load_place_keywords()
+    window = getattr(settings, "scoring", {}).get("repetition_window_days", 14)
+    recent_titles = get_recent_event_titles(days=window)
+    place_counts = get_place_post_counts()
+
     list_inserted_ids = []
     for event in events:
 
@@ -452,9 +460,16 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
             'explored_date': explored_date
         })
 
+        if not event_dict.get('place_id'):
+            search = " ".join(filter(None, [event_dict.get('address'), event_dict.get('title')]))
+            event_dict['place_id'] = _match_place(search, place_keywords)
+
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts)
+
         new_event = create_event(event_dict, Events2Posts)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
+            recent_titles.append(event_dict.get('title', ''))
 
     return list_inserted_ids
 
@@ -483,6 +498,11 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
     if not model:
         raise ValueError(f"Неизвестная таблица: {table}")
 
+    place_keywords = _load_place_keywords()
+    window = getattr(settings, "scoring", {}).get("repetition_window_days", 14)
+    recent_titles = get_recent_event_titles(days=window)
+    place_counts = get_place_post_counts()
+
     list_inserted_ids = []
     for event in events:
         # Преобразуем Event в словарь
@@ -494,10 +514,20 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
             'explored_date': explored_date,
         })
 
+        # Place matching for EventsNotApproved
+        if not event_dict.get('place_id'):
+            search = " ".join(
+                filter(None, [event_dict.get('address'), event_dict.get('title')])
+            )
+            event_dict['place_id'] = _match_place(search, place_keywords)
+
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts)
+
         # Создаем новую запись в базе данных
         new_event = create_event(event_dict, model)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
+            recent_titles.append(event_dict.get('title', ''))
 
     return list_inserted_ids
 
@@ -667,6 +697,235 @@ def mark_reminder_sent(db, event_id: int):
 
 ####––––––FINISH––––––####
 
+
+### Scoring helpers ###
+######–--START--–######
+
+
+@db_session
+def get_recent_event_titles(db, days: int = 14) -> List[str]:
+    """Return titles from both tables for the last N days (repetition check)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    titles_approved = (
+        db.query(Events2Posts.title)
+        .filter(Events2Posts.explored_date >= cutoff)
+        .all()
+    )
+    titles_not_approved = (
+        db.query(EventsNotApproved.title)
+        .filter(EventsNotApproved.explored_date >= cutoff)
+        .all()
+    )
+    return [t[0] for t in titles_approved + titles_not_approved if t[0]]
+
+
+@db_session
+def get_place_post_counts(db) -> dict:
+    """Return {place_id: count} of Posted events per place (for reputation)."""
+    rows = (
+        db.query(Events2Posts.place_id, func.count(Events2Posts.id))
+        .filter(
+            Events2Posts.place_id.isnot(None),
+            Events2Posts.status == "Posted",
+        )
+        .group_by(Events2Posts.place_id)
+        .all()
+    )
+    return {place_id: cnt for place_id, cnt in rows}
+
+
+def _apply_scoring(
+    event_dict: dict,
+    place_id,
+    recent_titles: List[str],
+    place_post_counts: dict,
+):
+    """Calculate score and write score/score_breakdown into event_dict."""
+    scoring_config = getattr(settings, "scoring", {})
+    breakdown = calculate_score(
+        event_data=event_dict,
+        existing_titles=recent_titles,
+        place_id=place_id,
+        scoring_config=scoring_config,
+        place_post_counts=place_post_counts,
+    )
+    event_dict["score"] = breakdown.total
+    event_dict["score_breakdown"] = breakdown.to_json()
+
+
+@db_session
+def recalculate_event_score(db, event_id: int, table: str = "events_events2post") -> dict:
+    """Recalculate score for a single event (after AI fills place/category).
+
+    Returns
+    -------
+    dict
+        {"score": int, "score_breakdown": str} or None.
+    """
+    model = MODEL_REGISTRY.get(table)
+    if not model:
+        return None
+
+    event = db.query(model).filter_by(id=event_id).first()
+    if not event:
+        return None
+
+    event_dict = {
+        col.name: getattr(event, col.name) for col in event.__table__.columns
+    }
+
+    scoring_config = getattr(settings, "scoring", {})
+    window = scoring_config.get("repetition_window_days", 14)
+    recent_titles = get_recent_event_titles(days=window)
+    place_counts = get_place_post_counts()
+
+    breakdown = calculate_score(
+        event_data=event_dict,
+        existing_titles=recent_titles,
+        place_id=event_dict.get("place_id"),
+        scoring_config=scoring_config,
+        place_post_counts=place_counts,
+    )
+
+    event.score = breakdown.total
+    event.score_breakdown = breakdown.to_json()
+    db.commit()
+
+    return {"score": breakdown.total, "score_breakdown": breakdown.to_json()}
+
+
+@db_session
+def recalculate_scores_bulk(
+    db,
+    table: str = "events_eventsnotapprovednew",
+    ids: list[int] = None,
+    only_null: bool = True,
+) -> dict:
+    """Resolve place_id (if missing) and recalculate score for a batch of events.
+
+    Parameters
+    ----------
+    table : str
+        "events_events2post" or "events_eventsnotapprovednew"
+    ids : list[int] | None
+        If given — process only these IDs; otherwise process all matching the filter.
+    only_null : bool
+        If True — skip events that already have a score (score IS NOT NULL).
+
+    Returns
+    -------
+    dict
+        {"updated": int, "skipped": int}
+    """
+    model = MODEL_REGISTRY.get(table)
+    if not model:
+        return {"error": f"Unknown table: {table}", "updated": 0, "skipped": 0}
+
+    query = db.query(model)
+    if ids:
+        query = query.filter(model.id.in_(ids))
+    if only_null:
+        query = query.filter(model.score.is_(None))
+
+    events = query.all()
+    if not events:
+        return {"updated": 0, "skipped": 0}
+
+    place_keywords = _load_place_keywords()
+    scoring_config = getattr(settings, "scoring", {})
+    window = scoring_config.get("repetition_window_days", 14)
+    recent_titles = get_recent_event_titles(days=window)
+    place_counts = get_place_post_counts()
+
+    updated = 0
+    skipped = 0
+    for event in events:
+        try:
+            # Resolve place_id if missing
+            if not event.place_id:
+                search_parts = [
+                    getattr(event, "address", None),
+                    getattr(event, "title", None),
+                ]
+                search = " ".join(filter(None, search_parts))
+                if search:
+                    event.place_id = _match_place(search, place_keywords)
+
+            event_dict = {
+                col.name: getattr(event, col.name) for col in event.__table__.columns
+            }
+            breakdown = calculate_score(
+                event_data=event_dict,
+                existing_titles=recent_titles,
+                place_id=event.place_id,
+                scoring_config=scoring_config,
+                place_post_counts=place_counts,
+            )
+
+            event.score = breakdown.total
+            event.score_breakdown = breakdown.to_json()
+            recent_titles.append(event_dict.get("title", ""))
+            updated += 1
+        except Exception:
+            skipped += 1
+
+    db.commit()
+    return {"updated": updated, "skipped": skipped}
+
+
+######–--FINISH--–######
+
+
+### Place lookup ###
+######–-START-–######
+
+_MIN_KEYWORD_LENGTH = 4
+
+
+@db_session
+def _load_place_keywords(db) -> list[tuple[str, int]]:
+    """Load all usable PlaceKeywords from DB, sorted longest-first.
+
+    Returns list of (keyword_lower, place_id) tuples ready for Python matching.
+    Called once before a batch insert — not per-event.
+    """
+    rows = (
+        db.query(PlaceKeyword.place_keyword, PlaceKeyword.place_id)
+        .filter(func.length(PlaceKeyword.place_keyword) >= _MIN_KEYWORD_LENGTH)
+        .order_by(func.length(PlaceKeyword.place_keyword).desc())
+        .all()
+    )
+    return [(kw.lower(), place_id) for kw, place_id in rows]
+
+
+def _match_place(search_text: str, keywords: list[tuple[str, int]]):
+    """Return place_id for the first (longest) keyword found in search_text.
+
+    Pure Python substring check — O(n) over pre-sorted keyword list.
+    keywords must be sorted longest-first (as returned by _load_place_keywords).
+    """
+    text = search_text.lower()
+    for kw, place_id in keywords:
+        if kw in text:
+            return place_id
+    return None
+
+
+@db_session
+def find_place_by_address(db, address: str, title: str = None):
+    """Find place_id for a single event by matching PlaceKeywords.
+
+    Use this for one-off lookups (e.g. create_event_to_post).
+    For batch inserts use _load_place_keywords() + _match_place() directly.
+    """
+    search_parts = [p for p in (address, title) if p]
+    if not search_parts:
+        return None
+    keywords = _load_place_keywords()
+    return _match_place(" ".join(search_parts), keywords)
+
+
+######–-FINISH-–######
 
 ### Searching functions ###
 ######–----START----–######

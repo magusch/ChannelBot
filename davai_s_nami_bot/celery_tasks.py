@@ -517,10 +517,32 @@ def upload_event_images_to_s3(event_ids: list = []):
     events = crud.get_events_missing_images(event_ids)
 
     for event in events:
-        print(event)
         image_url = event.get('image', None)
         if not image_url: continue
 
         result = utils.process_image_from_url(image_url=image_url)
-        print(result)
         crud.update_image_events(event['id'], result['url'])
+
+
+@celery_app.task
+def recalculate_scores_bulk(table: str = "events_eventsnotapprovednew", ids: list = None, force: bool = False):
+    """Resolve place_id (if missing) and recalculate score for events.
+
+    - ids given              → recalculate those IDs (score always updated)
+    - ids=None, force=False  → only where score IS NULL
+    - ids=None, force=True   → all records in the table
+
+    Parameters
+    ----------
+    table : str
+        "events_events2post" or "events_eventsnotapprovednew"
+    ids : list[int] | None
+        Optional list of specific event IDs to process.
+    force : bool
+        If True and ids=None — recalculate all records, not just score IS NULL.
+    """
+    only_null = (ids is None) and (not force)
+    log.info(f"recalculate_scores_bulk: table={table}, ids={ids}, force={force}, only_null={only_null}")
+    result = crud.recalculate_scores_bulk(table=table, ids=ids, only_null=only_null)
+    log.info(f"recalculate_scores_bulk done: {result}")
+    return result
