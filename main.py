@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
 
-from davai_s_nami_bot.api import auth, users, tasks, register_routers
+from davai_s_nami_bot.api import auth, users, tasks #, register_routers
 from davai_s_nami_bot import crud
 
 from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
