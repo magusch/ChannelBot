@@ -18,10 +18,14 @@ def get_logger(name: str):
     file_handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
-    logger.addHandler(file_handler)
+
+    # Avoid adding duplicate FileHandlers
+    if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+        logger.addHandler(file_handler)
 
     # change default root stream handler formater
-    logger.parent.handlers[0].setFormatter(formatter)
+    if logger.parent and logger.parent.handlers:
+        logger.parent.handlers[0].setFormatter(formatter)
 
     return logger
 
@@ -29,14 +33,18 @@ log = get_logger(__name__)
 
 
 def log_task(func):
+    task_log = get_logger(func.__qualname__)
     def wrapper(*args, **kwargs):
         task_name = func.__name__
-        log.info(f"Task {task_name}: Starting task")
-        result = func(*args, **kwargs)
-        log.info(f"Task {task_name}: Task completed")
-        return result
+        task_log.info(f"Task {task_name}: Starting task")
+        try:
+            result = func(*args, **kwargs)
+            task_log.info(f"Task {task_name}: Task completed")
+            return result
+        except Exception as e:
+            task_log.error(f"Task {task_name}: Failed with error: {e}")
+            raise
     return wrapper
-
 
 
 log = get_logger("Exceptions")
