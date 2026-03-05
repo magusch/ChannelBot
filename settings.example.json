@@ -19,6 +19,48 @@
       "culture": {"city": "spb"},
       "mts": {"city": "spb", "days": 15},
       "vk": {"city": "spb", "days": 15}
+    },
+    "scoring": {
+      "enabled": true,
+      "weights": {
+        "price": 15,
+        "place": 15,
+        "category": 20,
+        "keywords": 15,
+        "completeness": 15,
+        "source": 10
+      },
+      "repetition_penalty": -20,
+      "price_ranges": [
+        {"max": 0, "score": 100},
+        {"max": 500, "score": 80},
+        {"max": 1500, "score": 60},
+        {"max": 3000, "score": 40},
+        {"max": 99999, "score": 20}
+      ],
+      "category_scores": {
+        "1": 90, "8": 85, "6": 85,
+        "9": 85, "10": 80, "7": 70,
+        "11": 65, "3": 60, "4": 55,
+        "13": 55, "14": 50, "12": 50,
+        "5": 45, "2": 30
+      },
+      "source_scores": {
+        "timepad": 70, "radario": 70, "ticketscloud": 65,
+        "qtickets": 65, "mts": 60, "culture.ru": 60,
+        "cfg": 65, "other": 80,
+        "vk": 45, "telegram": 40, "instagram": 40
+      },
+      "boost_keywords": [
+        "бесплатно", "премьера", "фестиваль", "открытие",
+        "вернисаж", "дискусси", "лауреат", "впервые",
+        "дебют", "импровизаци", "арт-резиденци", "арт-медиаци"
+      ],
+      "penalty_keywords": [
+        "реклама", "промо", "курс", "обучение", "вебинар", "конференци",
+        "тренинг", "нетворкинг", "розыгрыш", "бизнес", "инвестиц", "корпоратив", "интенсив"
+      ],
+      "repetition_window_days": 14
     }
   }
 }
