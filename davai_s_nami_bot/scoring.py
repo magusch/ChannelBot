@@ -69,9 +69,14 @@ DEFAULT_SOURCE_SCORES = {
 
 DEFAULT_BOOST_KEYWORDS = [
     "бесплатно", "премьера", "фестиваль", "открытие", "вернисаж",
+    "дискусси", "лауреат", "впервые", "дебют", "импровизаци",
+    "арт-резиденци", "арт-медиаци",
+    "квартирник", "маркет", "open air", "кинопоказ", "фест", "филармо"
 ]
 DEFAULT_PENALTY_KEYWORDS = [
-    "реклама", "промо", "курс", "обучение", "вебинар", "тренинг", "конкурс", "розыгрыш",
+    "реклама", "промо", "курс", "обучение", "вебинар", "тренинг",
+    "конференци", "нетворкинг", "розыгрыш", "бизнес", "инвестиц",
+    "корпоратив", "интенсив",
 ]
 
 
@@ -120,9 +125,9 @@ def _score_price(price_int, price_ranges: list) -> int:
     try:
         price_int = int(price_int) if price_int is not None else None
     except (ValueError, TypeError):
-        return 40
+        return 65  # unknown price — neutral, not a penalty
     if price_int is None or price_int < 0:
-        return 40
+        return 65  # unknown price — neutral, not a penalty
     for r in price_ranges:
         if price_int <= r["max"]:
             return r["score"]
@@ -212,15 +217,15 @@ def _score_keywords(
     boost_keywords: list,
     penalty_keywords: list,
 ) -> int:
-    """Base 50, +10 per boost keyword, -10 per penalty keyword, clamped 0-100."""
+    """Base 50, +15 per boost keyword, -15 per penalty keyword, clamped 0-100."""
     text = f"{title} {full_text}".lower()
     score = 50
     for kw in boost_keywords:
         if kw in text:
-            score += 10
+            score += 15
     for kw in penalty_keywords:
         if kw in text:
-            score -= 10
+            score -= 15
     return max(0, min(100, score))
 
 
