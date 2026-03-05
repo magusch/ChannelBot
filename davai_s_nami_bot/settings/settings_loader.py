@@ -17,6 +17,7 @@ class Settings:
         self.city = self.raw['features']['city']
         self.timezone = self.raw['features']['timezone']
         self.escraper_parameters = self.raw['features']['escraper_parameters']
+        self.scoring = self.raw['features'].get('scoring', {})
 
 
 settings = Settings()

@@ -130,20 +130,56 @@ def _lookup_category_score(category_scores: dict, cat_id: int) -> int:
     return category_scores.get(cat_id, category_scores.get(str(cat_id), 30))
 
 
+# Keywords for category inference (checked in order, first match wins).
+# Each entry: (category_id, [keywords_to_match_in_title_or_text])
+_CATEGORY_KEYWORDS: list[tuple[int, list[str]]] = [
+    (10, ["стендап", "stand-up", "стэндап", "stand up"]),
+    (9,  ["перформанс", "performance", "перформативн"]),
+    (6,  ["фестиваль"]),
+    (3,  ["кинопоказ", "кинофестиваль", "показ фильм", "показ кино", "короткометражн"]),
+    (7,  ["спектакль", "театр", "постановк", "пьес"]),
+    (11, ["выставка", "выставк", "экспозиц", "вернисаж"]),
+    (4,  ["лекция", "лекци", "паблик-ток", "публичн", "дискусси", "доклад"]),
+    (1,  ["концерт"]),
+    (8,  ["вечеринк", "рейв", "пати ", "afterparty", "дискотек"]),
+    (13, ["мастер-класс", "воркшоп", "workshop", "мастеркласс"]),
+    (14, ["экскурси", "прогулк", "тур по"]),
+    (3,  ["кино", "фильм", "показ"]),
+    (12, ["турнир", "соревновани", "матч", "чемпионат"]),
+]
+
+
+def _guess_category_from_text(title: str, full_text: str) -> Optional[int]:
+    """Infer category_id from keywords in title+text. Returns None if no match."""
+    haystack = f"{title} {full_text}".lower()
+    for cat_id, keywords in _CATEGORY_KEYWORDS:
+        if any(kw in haystack for kw in keywords):
+            return cat_id
+    return None
+
+
 def _score_category(
     main_category_id: Optional[int],
     category_str: Optional[str],
     category_scores: dict,
+    title: str = "",
+    full_text: str = "",
 ) -> int:
-    """Score by main_category_id (preferred) with fallback to category string."""
+    """Score by main_category_id → exact string match → keyword inference → 30."""
     if main_category_id is not None:
         return _lookup_category_score(category_scores, main_category_id)
 
-    # Fallback: try to match string category to ID
+    # Exact string match against our taxonomy
     if category_str:
         for cat_id, cat_name in CATEGORY_ID_TO_NAME.items():
             if cat_name.lower() == category_str.strip().lower():
                 return _lookup_category_score(category_scores, cat_id)
+
+    # Keyword inference from title + full_text
+    guessed_id = _guess_category_from_text(title, full_text)
+    if guessed_id is not None:
+        return _lookup_category_score(category_scores, guessed_id)
+
     return 30
 
 
@@ -227,11 +263,9 @@ def _is_exhibition_by_id(main_category_id: Optional[int]) -> bool:
 def _is_exhibition(
     main_category_id: Optional[int], category_str: Optional[str]
 ) -> bool:
-    if main_category_id == 11:
-        return True
-    if category_str and category_str.strip().lower() in ("выставки", "выставка"):
-        return True
-    return False
+    # Only trust main_category_id — raw category strings from scrapers are unreliable
+    # (e.g. MTS labels master classes and quests as "Выставки")
+    return main_category_id == 11
 
 
 def calculate_score(
@@ -276,9 +310,6 @@ def calculate_score(
     boost_kw = scoring_config.get("boost_keywords", DEFAULT_BOOST_KEYWORDS)
     penalty_kw = scoring_config.get("penalty_keywords", DEFAULT_PENALTY_KEYWORDS)
     repetition_penalty_val = scoring_config.get("repetition_penalty", -20)
-    exhibition_penalty_val = scoring_config.get(
-        "exhibition_repetition_penalty", -30
-    )
 
     title = event_data.get("title", "") or ""
     full_text = event_data.get("full_text", "") or ""
@@ -288,7 +319,7 @@ def calculate_score(
     source = event_data.get("source")
 
     price_s = _score_price(price_int, price_ranges)
-    category_s = _score_category(main_category_id, category_str, category_scores)
+    category_s = _score_category(main_category_id, category_str, category_scores, title, full_text)
     place_s = _score_place(place_id, place_post_counts)
     keyword_s = _score_keywords(title, full_text, boost_kw, penalty_kw)
     completeness_s = _score_completeness(event_data, place_id)
@@ -307,12 +338,8 @@ def calculate_score(
 
     # Repetition penalty
     rep_penalty = 0
-    is_repeat = _check_repetition(title, existing_titles)
-    if is_repeat:
-        if _is_exhibition(main_category_id, category_str):
-            rep_penalty = exhibition_penalty_val
-        else:
-            rep_penalty = repetition_penalty_val
+    if _check_repetition(title, existing_titles):
+        rep_penalty = repetition_penalty_val
 
     total = max(0, min(100, int(raw + rep_penalty)))
 
