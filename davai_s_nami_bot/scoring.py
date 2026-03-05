@@ -116,7 +116,11 @@ def title_similarity(a: str, b: str) -> float:
     return len(intersection) / len(union)
 
 
-def _score_price(price_int: Optional[int], price_ranges: list) -> int:
+def _score_price(price_int, price_ranges: list) -> int:
+    try:
+        price_int = int(price_int) if price_int is not None else None
+    except (ValueError, TypeError):
+        return 40
     if price_int is None or price_int < 0:
         return 40
     for r in price_ranges:
