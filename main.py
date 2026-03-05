@@ -18,6 +18,8 @@ app = FastAPI()
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
+app.include_router(tasks.router, prefix="/api")
+
 
 origins = [
     "http://example.com",

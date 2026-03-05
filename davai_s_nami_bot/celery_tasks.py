@@ -36,11 +36,17 @@ def post_to_telegram():
 
     event = dsn_site.next_event_to_channel()
     if event is not None:
-        image_path = utils.prepare_image(event.image)
-        clients.Clients().send_post(event=event, image_path=image_path)
-        log.info("Event was posted")
+        try:
+            image_path = utils.prepare_image(event.image)
+            clients.Clients().send_post(event=event, image_path=image_path)
+            log.info("Event was posted")
+        except Exception as e:
+            log.error(f"Failed to post event {event.event_id}: {e}")
+            crud.set_status(event_id=event.event_id, status="Error")
+            log.info(f"Event {event.event_id} marked as Error")
     else:
         log.info("Event not found (or time was changed) or already posted")
+    redis_client.delete('posting_event')
     schedule_posting_tasks.apply_async()
     dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
 
@@ -51,35 +57,112 @@ def schedule_posting_tasks():
     msk_today = get_msk_today()
     event_time = dsn_site.next_posting_time(msk_today)
 
-    if event_time is None:
-        log.info("No events for posting")
+    redis_key = 'posting_event'
+
+    if event_time is None or event_time - msk_today > timedelta(hours=1):
+        if event_time is None:
+            log.info("No events for posting")
+        else:
+            log.info(f"Next posting at {event_time.strftime('%H:%M')}, too far ahead, skipping")
+        # Revoke and clean up any stale scheduled task
+        stale_info = redis_client.hgetall(redis_key)
+        if stale_info:
+            stale_task_id = stale_info.get(b'task_id', b'').decode('utf-8')
+            if stale_task_id:
+                celery_app.control.revoke(stale_task_id, terminate=True)
+                log.info(f"Revoked stale task {stale_task_id}")
+            redis_client.delete(redis_key)
         return
     event_time_str = event_time.strftime('%Y-%m-%d %H:%M:%S')
-    redis_key = 'posting_event'
     current_scheduled_info = redis_client.hgetall(redis_key)
 
+    need_schedule = False
+
     if current_scheduled_info:
-        current_scheduled_time_str = current_scheduled_info.get(b'time').decode('utf-8')
-        current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
-        current_scheduled_time_good = msk_today.replace(
-            hour=current_scheduled_time.hour, minute=current_scheduled_time.minute, second=0, microsecond=0
-        )
-        current_task_id = current_scheduled_info.get(b'task_id').decode('utf-8')
-        if abs(current_scheduled_time_good - event_time) > timedelta(minutes=4):
-            # Cancel old task time
+        current_scheduled_time_str = current_scheduled_info.get(b'time', b'').decode('utf-8')
+        current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
+
+        # Check if stored task is still pending
+        task_alive = False
+        if current_task_id:
+            task_result = celery_app.AsyncResult(current_task_id)
+            task_alive = task_result.state in ('PENDING', 'RETRY')
+
+        if not task_alive:
+            log.info(f"Stored task {current_task_id} is no longer alive (state: {task_result.state if current_task_id else 'empty'}), rescheduling")
+            need_schedule = True
+        else:
+            current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+            current_scheduled_time_good = msk_today.replace(
+                hour=current_scheduled_time.hour, minute=current_scheduled_time.minute, second=0, microsecond=0
+            )
+            if abs(current_scheduled_time_good - event_time) > timedelta(minutes=4):
+                log.info(f"Time changed from {current_scheduled_time_str} to {event_time_str}, rescheduling")
+                need_schedule = True
+            else:
+                log.info(f"Task {current_task_id} still alive for {event_time_str}, skipping")
+    else:
+        need_schedule = True
+
+    if need_schedule:
+        # Revoke old task if exists
+        if current_scheduled_info:
+            current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
             if current_task_id:
                 celery_app.control.revoke(current_task_id, terminate=True)
 
-            # Schedule new task with new time
-            result = post_to_telegram.apply_async((), eta=event_time)
-            redis_client.hset(redis_key,
-                              mapping={'time': event_time_str, 'task_id': result.id})
-            log.info(f"Posting task rescheduled to {event_time_str}")
-    else:
         result = post_to_telegram.apply_async((), eta=event_time)
         redis_client.hset(redis_key,
                           mapping={'time': event_time_str, 'task_id': result.id})
-        log.info(f"Posting task scheduled to {event_time_str}")
+        log.info(f"Posting task scheduled to {event_time_str} (task_id: {result.id})")
+
+
+@celery_app.task
+def schedule_generated_posting_tasks():
+    """Schedule per-platform generated post tasks based on PostingSchedule table."""
+    log.info("Scheduling generated posting tasks based on PostingSchedule entries")
+    time_posting_by_platform = Posting(log).get_next_time_posting()
+
+    for platform, schedule in time_posting_by_platform:
+
+        redis_key = f'cg_posting_event:{platform}'
+        current_scheduled_info = redis_client.hgetall(redis_key)
+        need_schedule = False
+
+        if current_scheduled_info:
+            current_scheduled_time_str = current_scheduled_info.get(b'time', b'').decode('utf-8')
+            current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
+
+            task_alive = False
+            if current_task_id:
+                task_result = celery_app.AsyncResult(current_task_id)
+                task_alive = task_result.state in ('PENDING', 'RETRY')
+
+            if not task_alive:
+                log.info(f"Stored task {current_task_id} ({platform}) is no longer alive, rescheduling")
+                need_schedule = True
+            else:
+                current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+                current_scheduled_time = pytz.UTC.localize(current_scheduled_time)
+                if abs(current_scheduled_time - schedule['eta_utc']) > timedelta(minutes=5):
+                    log.info(f"Time changed for {platform}, rescheduling")
+                    need_schedule = True
+                else:
+                    log.info(f"Task {current_task_id} ({platform}) still alive, skipping")
+        else:
+            need_schedule = True
+
+        if need_schedule:
+            if current_scheduled_info:
+                current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
+                if current_task_id:
+                    celery_app.control.revoke(current_task_id, terminate=True)
+
+            result = post_generated_by_schedule.apply_async((schedule['id'],), eta=schedule['eta_utc'])
+            schedule_time_str = schedule['eta_utc'].strftime('%Y-%m-%d %H:%M:%S')
+            redis_client.hset(redis_key,
+                              mapping={'time': schedule_time_str, 'task_id': result.id, 'schedule_id': str(schedule['id'])})
+            log.info(f"Generated posting task ({platform}) scheduled to {schedule_time_str}")
 
 
 @celery_app.task
@@ -291,8 +374,8 @@ def update_approved_events(event_ids):
     return {"message": "No events were approved."}
 
 
-@log_task
 @celery_app.task
+@log_task
 def full_update():
     update_parameters.apply_async()
     is_empty_check.apply_async()
@@ -483,14 +566,13 @@ def event_reminder():
 def process_reminders():
     reminders = crud.get_pending_reminders()
     for reminder in reminders:
-        #try:
-        post_url = reminder['post_url']
-        text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
-        send_message_to_telegram.delay(text_message, reminder['telegram_id'])
-        crud.mark_reminder_sent(reminder['id'])
-        # except Exception as e:
-        #     crud.increment_reminder_attempts(reminder['id'])
-        #     log.error(f"Failed to send reminder {reminder['id']}: {e}")
+        try:
+            post_url = reminder['post_url']
+            text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
+            send_message_to_telegram.delay(text_message, reminder['telegram_id'])
+            crud.mark_reminder_sent(reminder['id'])
+        except Exception as e:
+            log.error(f"Failed to send reminder {reminder['id']}: {e}")
 
 
 @celery_app.task
