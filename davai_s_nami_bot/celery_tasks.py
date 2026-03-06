@@ -445,12 +445,23 @@ def prepare_events(parameters: dict):
 
 @celery_app.task
 def update_event(new_event_data, event_id):
-    if new_event_data is not None:
-        new_event_data = {k: v for k, v in new_event_data.items() if v}
-        if new_event_data.get('prepared_text'):
-            new_event_data['is_ready'] = True
-            if crud.update_approved_event(event_id, new_event_data):
-                return {**new_event_data, "event_id": event_id}
+    if new_event_data is None:
+        return {"message": f"Skipping event {event_id}, no update data"}
+
+    new_event_data = {k: v for k, v in new_event_data.items() if v}
+
+    # AI relevance check — reject irrelevant events before posting
+    ai_relevant = new_event_data.pop('ai_relevant', 'да')
+    ai_reject_reason = new_event_data.pop('ai_reject_reason', None)
+    if str(ai_relevant).strip().lower() in ('нет', 'no', 'false'):
+        log.info(f"Event {event_id} rejected by AI: {ai_reject_reason}")
+        crud.reject_event_by_ai(event_id, reason=ai_reject_reason)
+        return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
+
+    if new_event_data.get('prepared_text'):
+        new_event_data['is_ready'] = True
+        if crud.update_approved_event(event_id, new_event_data):
+            return {**new_event_data, "event_id": event_id}
 
     return {"message": f"Skipping event {event_id}, no update data"}
 

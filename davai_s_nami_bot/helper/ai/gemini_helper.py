@@ -106,7 +106,9 @@ class GeminiHelper:
                            'заголовок': 'title',
                            'категория': 'category', 'дата': 'from_date',
                            'адрес': 'address', 'стоимость': 'price',
-                           'ссылка': 'url'}
+                           'ссылка': 'url',
+                           'релевантно': 'ai_relevant', 'relevant': 'ai_relevant',
+                           'причина': 'ai_reject_reason', 'reason': 'ai_reject_reason'}
         if self.answer is None:
             self.refactor_post(event)
         ai_event_data = self.parse_ai_answer()

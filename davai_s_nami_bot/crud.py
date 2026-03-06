@@ -873,6 +873,75 @@ def recalculate_scores_bulk(
     return {"updated": updated, "skipped": skipped}
 
 
+@db_session
+def reject_event_by_ai(db, event_id: int, reason: str = None):
+    """Mark an Events2Posts event as rejected by AI during prepare step.
+
+    Stores the rejection reason in score_breakdown JSONB and sets status to 'rejected'.
+    """
+    import json as _json
+    event = db.query(Events2Posts).filter_by(id=event_id).first()
+    if not event:
+        return False
+
+    # Merge ai_review into existing score_breakdown
+    existing = {}
+    if event.score_breakdown:
+        try:
+            existing = _json.loads(event.score_breakdown) if isinstance(event.score_breakdown, str) else dict(event.score_breakdown)
+        except Exception:
+            pass
+    existing['ai_review'] = {'relevant': False, 'reason': reason or ''}
+    event.score_breakdown = existing
+    event.status = 'Rejected'
+    event.is_ready = False
+    db.commit()
+    return True
+
+
+@db_session
+def get_adaptive_scoring_data(db, days: int = 30) -> dict:
+    """Collect positive and negative events for adaptive scoring.
+
+    Positive: Events2Posts (all — they passed moderation).
+    Negative: EventsNotApproved with rejected/spam/not_event/duplicate status,
+              or 'new' older than 7 days (ignored).
+
+    Returns {"positive": [dict], "negative": [dict]}
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    # Positive: all Events2Posts created in the window
+    pos_query = db.query(Events2Posts).filter(
+        Events2Posts.explored_date >= cutoff,
+    )
+    positive = []
+    for e in pos_query:
+        positive.append({
+            col.name: getattr(e, col.name) for col in e.__table__.columns
+        })
+
+    # Negative: explicitly rejected + stale 'new'
+    neg_query = db.query(EventsNotApproved).filter(
+        EventsNotApproved.explored_date >= cutoff,
+        or_(
+            EventsNotApproved.status.in_(["rejected", "not_event", "spam", "duplicate"]),
+            and_(
+                EventsNotApproved.status == "new",
+                EventsNotApproved.explored_date < stale_cutoff,
+            ),
+        ),
+    )
+    negative = []
+    for e in neg_query:
+        negative.append({
+            col.name: getattr(e, col.name) for col in e.__table__.columns
+        })
+
+    return {"positive": positive, "negative": negative}
+
+
 ######–--FINISH--–######
 
 
