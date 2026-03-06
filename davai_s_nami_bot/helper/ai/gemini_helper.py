@@ -14,7 +14,7 @@ class GeminiHelper:
 
         self.system_message = dsn_param.site_parameters('gemini_system_message', last=1)
         self.user_message = dsn_param.site_parameters('gemini_user_message', last=1)
-        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-2.5-pro"
+        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-2.5-flash"
         self.answer = None
 
     def ai_balance(self):
