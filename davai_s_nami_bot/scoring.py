@@ -259,7 +259,7 @@ def _score_completeness(event_data: dict, place_id: Optional[int]) -> int:
             score += points
     if place_id:
         score += 25
-    if event_data.get("price_int") is not None and event_data.get("price_int")>=0:
+    if event_data.get("price_int") is not None and int(event_data.get("price_int"))>=0:
         score += 20
     return min(100, score)  # max possible ~90, cap at 100
 
