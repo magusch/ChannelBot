@@ -19,6 +19,7 @@ class Settings:
         self.escraper_parameters = self.raw['features']['escraper_parameters']
         self.scoring = self.raw['features'].get('scoring', {})
         self.vk_posting_enabled = self.raw['features'].get('vk_posting_enabled', False)
+        self.prepare_events_limit = self.raw['features'].get('prepare_events_limit', 0)
 
 
 settings = Settings()

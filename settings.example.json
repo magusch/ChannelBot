@@ -7,6 +7,7 @@
     "task_event_post":  true,
     "task_digest_post": false,
     "vk_posting_enabled": false,
+    "prepare_events_limit": 0,
     "city": "spb",
     "timezone": "Europe/Moscow",
     "escraper_parameters": {

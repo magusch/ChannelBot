@@ -234,6 +234,36 @@ def get_approved_events(db, params):
 
 
 @db_session
+def get_unprepared_events(db, limit: int = 10):
+    """Get events where is_ready IS NULL (not yet processed by AI)."""
+    events = (
+        db.query(Events2Posts)
+        .filter(
+            Events2Posts.is_ready.is_(None),
+            Events2Posts.status == "draft",
+        )
+        .order_by(Events2Posts.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    event_dict_list = []
+    for event in events:
+        event_data = {
+            field: getattr(event, field)
+            for field in event.__table__.columns.keys()
+        }
+        if event.place:
+            event_data["address"] = (
+                f"{event.place.place_name}, {event.place.place_address}, "
+                f"м.{event.place.place_metro}"
+            )
+        event_dict_list.append(event_data)
+
+    return event_dict_list
+
+
+@db_session
 def get_event_id_by_prefix(db, site_prefix):
     """
     Get event ID by site name

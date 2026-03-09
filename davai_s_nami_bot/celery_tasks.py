@@ -48,7 +48,11 @@ def post_to_telegram():
         log.info("Event not found (or time was changed) or already posted")
     redis_client.delete('posting_event')
     schedule_posting_tasks.apply_async()
-    dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
+    try:
+        dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
+    except Exception as e:
+        log.error(f"Failed to send log to dev channel: {e}")
+
 
 
 @celery_app.task
@@ -441,6 +445,33 @@ def prepare_events(parameters: dict):
 
     task_group = update_tasks.apply_async()
     return {"message": "AI update started.", "task_id": task_group.id}
+
+
+@celery_app.task
+@log_task
+def prepare_unprepared_events(limit: int = 5):
+    """Beat task: prepare events where is_ready IS NULL (draft, not yet processed by AI)."""
+    events = crud.get_unprepared_events(limit=limit)
+
+    if not events:
+        log.info("No unprepared events found.")
+        return {"message": "No unprepared events.", "count": 0}
+
+    log.info(f"Preparing {len(events)} unprepared events.")
+
+    update_tasks = chord(
+        (chain(
+            ai_update_event.s(event),
+            update_event.s(event['id'])
+        ) for event in events),
+        remake_events.s()
+    )
+
+    task_group = update_tasks.apply_async()
+    return {
+        "message": f"AI prepare started for {len(events)} events.",
+        "task_id": task_group.id,
+    }
 
 
 @celery_app.task

@@ -22,8 +22,19 @@ def create_celery_app():
         'process-reminders': {
             'task': 'davai_s_nami_bot.celery_tasks.process_reminders',
             'schedule': crontab(minute='*/30'),
-        }
+        },
+        'update-adaptive-scoring': {
+            'task': 'davai_s_nami_bot.celery_tasks.update_adaptive_scoring',
+            'schedule': crontab(day_of_week=0, hour=3, minute=0),  # Monday 3 AM
+        },
     }
+
+    if settings.prepare_events_limit > 0:
+        beat_schedules['prepare-unprepared-events'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
+            'schedule': crontab(minute=0, hour=1),
+            'kwargs': {'limit': settings.prepare_events_limit},
+        }
 
     if settings.task_event_post:
         beat_schedules['schedule-posting-tasks'] = {
