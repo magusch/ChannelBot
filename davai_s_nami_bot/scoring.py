@@ -216,8 +216,14 @@ def _score_keywords(
     full_text: str,
     boost_keywords: list,
     penalty_keywords: list,
+    trusted_artists: list = None,
+    trusted_organizers: list = None,
+    trusted_boost: int = 25,
 ) -> int:
-    """Base 50, +15 per boost keyword, -15 per penalty keyword, clamped 0-100."""
+    """Base 50, +15 per boost keyword, -15 per penalty keyword, clamped 0-100.
+
+    trusted_artists/trusted_organizers give +trusted_boost each (max once).
+    """
     text = f"{title} {full_text}".lower()
     score = 50
     for kw in boost_keywords:
@@ -226,6 +232,16 @@ def _score_keywords(
     for kw in penalty_keywords:
         if kw in text:
             score -= 15
+    if trusted_artists:
+        for artist in trusted_artists:
+            if artist.lower() in text:
+                score += trusted_boost
+                break
+    if trusted_organizers:
+        for org in trusted_organizers:
+            if org.lower() in text:
+                score += trusted_boost
+                break
     return max(0, min(100, score))
 
 
@@ -318,6 +334,9 @@ def calculate_score(
     source_scores = scoring_config.get("source_scores", DEFAULT_SOURCE_SCORES)
     boost_kw = scoring_config.get("boost_keywords", DEFAULT_BOOST_KEYWORDS)
     penalty_kw = scoring_config.get("penalty_keywords", DEFAULT_PENALTY_KEYWORDS)
+    trusted_artists = scoring_config.get("trusted_artists", [])
+    trusted_organizers = scoring_config.get("trusted_organizers", [])
+    trusted_boost = scoring_config.get("trusted_boost", 25)
     repetition_penalty_val = scoring_config.get("repetition_penalty", -20)
 
     title = event_data.get("title", "") or ""
@@ -330,7 +349,10 @@ def calculate_score(
     price_s = _score_price(price_int, price_ranges)
     category_s = _score_category(main_category_id, category_str, category_scores, title, full_text)
     place_s = _score_place(place_id, place_post_counts)
-    keyword_s = _score_keywords(title, full_text, boost_kw, penalty_kw)
+    keyword_s = _score_keywords(
+        title, full_text, boost_kw, penalty_kw,
+        trusted_artists, trusted_organizers, trusted_boost,
+    )
     completeness_s = _score_completeness(event_data, place_id)
     source_s = _score_source(source, source_scores)
 

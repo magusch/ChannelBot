@@ -639,3 +639,40 @@ def recalculate_scores_bulk(table: str = "events_eventsnotapprovednew", ids: lis
     result = crud.recalculate_scores_bulk(table=table, ids=ids, only_null=only_null)
     log.info(f"recalculate_scores_bulk done: {result}")
     return result
+
+
+@celery_app.task
+def update_adaptive_scoring(days: int = 30):
+    """Weekly task: recalculate adaptive scoring from posted vs rejected events."""
+    from davai_s_nami_bot.adaptive_scoring import (
+        calculate_adaptive_config,
+        save_to_redis,
+    )
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    log.info(f"update_adaptive_scoring: collecting data for last {days} days")
+    data = crud.get_adaptive_scoring_data(days=days)
+    pos_count = len(data["positive"])
+    neg_count = len(data["negative"])
+    log.info(f"update_adaptive_scoring: {pos_count} positive, {neg_count} negative events")
+
+    if pos_count < 10 or neg_count < 10:
+        log.warning("Not enough data for adaptive scoring, skipping")
+        return {"status": "skipped", "reason": "insufficient_data",
+                "positive": pos_count, "negative": neg_count}
+
+    base_config = getattr(settings, "scoring", {})
+    adaptive = calculate_adaptive_config(data["positive"], data["negative"], base_config)
+    save_to_redis(redis_client, adaptive)
+
+    log.info(f"update_adaptive_scoring done: {adaptive.get('source_scores', {})} sources, "
+             f"{adaptive.get('category_scores', {})} categories")
+    return {
+        "status": "ok",
+        "positive": pos_count,
+        "negative": neg_count,
+        "adaptive_source_scores": adaptive.get("source_scores"),
+        "adaptive_category_scores": adaptive.get("category_scores"),
+        "suggested_boost": adaptive.get("suggested_boost_keywords"),
+        "suggested_penalty": adaptive.get("suggested_penalty_keywords"),
+    }

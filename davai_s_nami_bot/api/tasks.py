@@ -94,3 +94,24 @@ async def recalculate_scores(body: RecalculateScoresRequest, request: Request):
     )
     msg = f'Recalculate scores queued for {len(body.ids)} events' if body.ids else 'Recalculate scores (null only) queued'
     return TaskResponse(message=msg, task_id=task.id)
+
+
+@router.post("/update-adaptive-scoring/", response_model=TaskResponse)
+async def update_adaptive_scoring(request: Request):
+    """Trigger adaptive scoring recalculation (normally runs weekly)."""
+    await log_api_request(request)
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.update_adaptive_scoring',
+    )
+    return TaskResponse(message='Adaptive scoring update queued', task_id=task.id)
+
+
+@router.get("/adaptive-scoring/")
+async def get_adaptive_scoring():
+    """View current adaptive scoring config from Redis."""
+    from davai_s_nami_bot.adaptive_scoring import load_from_redis
+    from davai_s_nami_bot.celery_app import redis_client
+    adaptive = load_from_redis(redis_client)
+    if not adaptive:
+        return {"status": "no_adaptive_config", "message": "Not calculated yet or expired"}
+    return adaptive

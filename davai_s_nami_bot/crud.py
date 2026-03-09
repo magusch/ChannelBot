@@ -1,4 +1,4 @@
-from sqlalchemy import func, asc, desc, exc, or_
+from sqlalchemy import func, asc, desc, exc, or_, and_
 from sqlalchemy.orm import joinedload
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, PlaceKeyword, \
@@ -13,6 +13,7 @@ from typing import List
 
 from .events import Event
 from .scoring import calculate_score
+from .adaptive_scoring import merge_adaptive_config, load_from_redis
 from .settings.settings_loader import settings
 
 
@@ -734,6 +735,17 @@ def get_place_post_counts(db) -> dict:
     return {place_id: cnt for place_id, cnt in rows}
 
 
+def _get_scoring_config() -> dict:
+    """Return scoring config merged with adaptive overrides from Redis."""
+    base = getattr(settings, "scoring", {})
+    try:
+        from .celery_app import redis_client
+        adaptive = load_from_redis(redis_client)
+        return merge_adaptive_config(base, adaptive)
+    except Exception:
+        return base
+
+
 def _apply_scoring(
     event_dict: dict,
     place_id,
@@ -741,7 +753,7 @@ def _apply_scoring(
     place_post_counts: dict,
 ):
     """Calculate score and write score/score_breakdown into event_dict."""
-    scoring_config = getattr(settings, "scoring", {})
+    scoring_config = _get_scoring_config()
     breakdown = calculate_score(
         event_data=event_dict,
         existing_titles=recent_titles,
@@ -774,7 +786,7 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
         col.name: getattr(event, col.name) for col in event.__table__.columns
     }
 
-    scoring_config = getattr(settings, "scoring", {})
+    scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
@@ -832,7 +844,7 @@ def recalculate_scores_bulk(
         return {"updated": 0, "skipped": 0}
 
     place_keywords = _load_place_keywords()
-    scoring_config = getattr(settings, "scoring", {})
+    scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
