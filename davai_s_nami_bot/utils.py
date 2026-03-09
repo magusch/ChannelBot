@@ -4,7 +4,10 @@ import warnings
 
 import requests
 from PIL import Image
+from pillow_heif import register_heif_opener
 import boto3
+
+register_heif_opener()
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
