@@ -6,6 +6,7 @@
   "features": {
     "task_event_post":  true,
     "task_digest_post": false,
+    "vk_posting_enabled": false,
     "city": "spb",
     "timezone": "Europe/Moscow",
     "escraper_parameters": {
@@ -18,7 +19,15 @@
       "ticketscloud": {"city": "spb"},
       "culture": {"city": "spb"},
       "mts": {"city": "spb", "days": 15},
-      "vk": {"city": "spb", "days": 15}
+      "vk": {"city": "spb", "days": 15},
+      "tg": {
+        "channels": ["@example_channel"],
+        "days": 4
+      },
+      "cfg": {
+        "sites": [],
+        "days": 10
+      }
     },
     "scoring": {
       "enabled": true,
@@ -60,7 +69,10 @@
         "реклама", "промо", "курс", "обучение", "вебинар", "конференци",
         "тренинг", "нетворкинг", "розыгрыш", "бизнес", "инвестиц", "корпоратив", "интенсив"
       ],
-      "repetition_window_days": 14
+      "repetition_window_days": 14,
+      "trusted_artists": [],
+      "trusted_organizers": [],
+      "trusted_boost": 25
     }
   }
 }

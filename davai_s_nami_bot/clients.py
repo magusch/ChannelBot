@@ -272,7 +272,11 @@ class DevClient(Telegram):
 
 class Clients:
     def __init__(self):
-        self._clients = [cls() for cls in BaseClient.__subclasses__()]
+        from .settings.settings_loader import settings
+
+        self._clients = [Telegram()]
+        if settings.vk_posting_enabled:
+            self._clients.append(VKRequests())
 
     def send_post(self, *args, **kwargs):
         for client in self._clients:
