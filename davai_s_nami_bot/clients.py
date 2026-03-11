@@ -81,7 +81,7 @@ class Telegram(BaseClient):
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
-            parse_mode="markdown",
+            parse_mode="MarkdownV2",
         )
         self.param = DSNParameters()
         self.channel_link = self.param.site_parameters('channel_link', last=1)
