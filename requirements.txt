@@ -1,7 +1,7 @@
 markdown==3.3.3
 fake-useragent==0.1.11
 psycopg2-binary==2.8.5
-pyTelegramBotAPI==3.7.2
+pyTelegramBotAPI>=4.18.0
 requests<=2.25.1, >=2.24.0
 escraper@git+https://git@github.com/magusch/escraper.git@develop
 celery==5.4.0
