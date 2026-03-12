@@ -17,7 +17,7 @@ class DSNParameters:
         self.start()
 
     def start(self):
-        cached_site_params = redis_client.getex(f'parameters:dsn_site')
+        cached_site_params = redis_client.get(f'parameters:dsn_site')
         if not cached_site_params:
             self.update_parameters()
 
@@ -75,11 +75,11 @@ class DSNParameters:
 
     def read_param(self, site):
         if site not in self.sites.keys() or self._is_stale(site):
-            cached_params = redis_client.getex(f'parameters:{site}')
+            cached_params = redis_client.get(f'parameters:{site}')
             if cached_params is None:
                 self.update_parameters()
                 self._wait_for_parameters()
-                cached_params = redis_client.getex(f'parameters:{site}')
+                cached_params = redis_client.get(f'parameters:{site}')
                 if cached_params is None:
                     return {}
 
