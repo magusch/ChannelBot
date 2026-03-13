@@ -763,7 +763,12 @@ def get_ticketscloud_events(
     existed_event_ids = crud.get_event_id_by_prefix('TC')
     new_events = []
     if tc_org_ids:
-        new_events = _get_events(ticketscloud_parser, org_ids=list(set(tc_org_ids)), city=ts_city, tags=ALL_EVENT_TAGS,
+        request_params = {
+            'org_ids': list(set(tc_org_ids)),
+            'city': ts_city,
+            'days': settings.escraper_parameters.get('ticketscloud').get('days', 10),
+        }
+        new_events = _get_events(ticketscloud_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
                              existed_event_ids=existed_event_ids)
 
     if events_filter:
