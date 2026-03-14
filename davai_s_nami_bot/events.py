@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
 from escraper.parsers import (ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets,
-                              MTS, Culture, Telegram, ConfigScraper)
+                              MTS, Culture, Telegram, ConfigScraper, Kassir)
 
 from . import utils
 from .logger import catch_exceptions
@@ -38,12 +38,14 @@ mts_parser = MTS(use_proxy=_use_proxy('mts'))
 culture_parser = Culture(use_proxy=_use_proxy('culture'))
 tg_parser = Telegram(use_proxy=_use_proxy('tg'))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy('cfg'))
+kassir_parser = Kassir(use_proxy=_use_proxy('kassir'))
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
     'qtickets.events': qt_parser, 'live.mts.ru': mts_parser,
-    'culture.ru': culture_parser, 't.me': tg_parser
+    'culture.ru': culture_parser, 't.me': tg_parser,
+    'kassir.ru': kassir_parser,
 }
 
 
@@ -943,6 +945,40 @@ def get_cfg_events(
     return new_events
 
 
+def get_kassir_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+    days = settings.escraper_parameters.get('kassir', {}).get('days', days)
+
+    kassir_city_domain = settings.escraper_parameters.get('kassir', {}).get('city_domain', 'spb.kassir.ru')
+    kassir_cities = dsn_parameters.read_param('kassir').get('city_domain')
+    if kassir_cities:
+        kassir_city_domain = kassir_cities[0]
+
+    kassir_categories = dsn_parameters.read_param('kassir').get('categories')
+    if not kassir_categories:
+        kassir_categories = settings.escraper_parameters.get('kassir', {}).get(
+            'categories', ["koncert", "teatr", "shou", "festivali", "sport"])
+
+    request_params = {
+        "city_domain": kassir_city_domain,
+        "categories": kassir_categories,
+        "days": days,
+    }
+
+    existed_event_ids = crud.get_event_id_by_prefix('KASSIR')
+    new_events = _get_events(kassir_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def kassir_others_organizations(days: int) -> List[Event]:
+    return get_kassir_events(days)
+
+
 escraper_sites = {
     'timepad':      get_timepad_events,
     'radario':      get_radario_events,
@@ -953,6 +989,7 @@ escraper_sites = {
     'culture':      get_culture_events,
     'tg':           get_tg_posts,
     'cfg':          get_cfg_events,
+    'kassir':       get_kassir_events,
 }
 
 
