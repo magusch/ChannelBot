@@ -26,21 +26,24 @@ STARTS_AT_MAX = "{year_month_day}T23:59:00"
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
 ## PARSERS
-timepad_parser = Timepad()
-radario_parser = Radario()
-ticketscloud_parser = Ticketscloud()
-vk_parser = VK()
-qt_parser = QTickets()
-mts_parser = MTS()
-culture_parser = Culture()
-tg_parser = Telegram()
-cfg_parser = ConfigScraper()
+def _use_proxy(parser_name):
+    return settings.escraper_parameters.get(parser_name, {}).get('use_proxy', True)
+
+timepad_parser = Timepad(use_proxy=_use_proxy('timepad'))
+radario_parser = Radario(use_proxy=_use_proxy('radario'))
+ticketscloud_parser = Ticketscloud(use_proxy=_use_proxy('ticketscloud'))
+vk_parser = VK(use_proxy=_use_proxy('vk'))
+qt_parser = QTickets(use_proxy=_use_proxy('qtickets'))
+mts_parser = MTS(use_proxy=_use_proxy('mts'))
+culture_parser = Culture(use_proxy=_use_proxy('culture'))
+tg_parser = Telegram(use_proxy=_use_proxy('tg'))
+cfg_parser = ConfigScraper(use_proxy=_use_proxy('cfg'))
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
     'qtickets.events': qt_parser, 'live.mts.ru': mts_parser,
-    'culture.ru': culture_parser, 't.me': culture_parser
+    'culture.ru': culture_parser, 't.me': tg_parser
 }
 
 
@@ -759,17 +762,17 @@ def get_ticketscloud_events(
     if ts_cities:
         ts_city = ts_cities[0]
 
-
     existed_event_ids = crud.get_event_id_by_prefix('TC')
-    new_events = []
+
+    request_params = {
+        'city': ts_city,
+        'days': settings.escraper_parameters.get('ticketscloud').get('days', 10),
+    }
     if tc_org_ids:
-        request_params = {
-            'org_ids': list(set(tc_org_ids)),
-            'city': ts_city,
-            'days': settings.escraper_parameters.get('ticketscloud').get('days', 10),
-        }
-        new_events = _get_events(ticketscloud_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
-                             existed_event_ids=existed_event_ids)
+        request_params['org_ids'] = list(set(tc_org_ids))
+
+    new_events = _get_events(ticketscloud_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                         existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -865,7 +868,7 @@ def get_culture_events(
 
     days = settings.escraper_parameters.get('cultire').get('days', days)
 
-    culture_city = settings.escraper_parameters.get('cultire').get('city', 'sankt-peterburg')
+    culture_city = settings.escraper_parameters.get('culture').get('city', 'sankt-peterburg')
     culture_cities = dsn_parameters.read_param('culture').get('city')
     if culture_cities:
         culture_city = culture_cities[0]
