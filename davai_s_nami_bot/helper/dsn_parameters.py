@@ -81,6 +81,9 @@ class DSNParameters:
                 self._wait_for_parameters()
                 cached_params = redis_client.get(f'parameters:{site}')
                 if cached_params is None:
+                    # Redis пуст, но в памяти есть старые данные — используем их
+                    if site in self.sites and self.sites[site].get("params"):
+                        return self.sites[site]["params"]
                     return {}
 
             self.sites[site] = {

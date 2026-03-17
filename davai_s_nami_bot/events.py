@@ -29,6 +29,9 @@ two_days = timedelta(days=2)
 def _use_proxy(parser_name):
     return settings.escraper_parameters.get(parser_name, {}).get('use_proxy', True)
 
+def _is_scraper_enabled(scraper_name):
+    return settings.escraper_parameters.get(scraper_name, {}).get('enabled', True)
+
 timepad_parser = Timepad(use_proxy=_use_proxy('timepad'))
 radario_parser = Radario(use_proxy=_use_proxy('radario'))
 ticketscloud_parser = Ticketscloud(use_proxy=_use_proxy('ticketscloud'))
@@ -529,6 +532,28 @@ def timepad_approved_organizations(days: int) -> List[Event]:
         return []
 
 
+def _run_scraper(events_list, func, days):
+    """Запускает скрапер если он включён в settings."""
+    # Маппинг функций к именам скраперов в settings
+    scraper_names = {
+        'timepad': timepad_others_organizations,
+        'radario': radario_others_organizations,
+        'qtickets': qtickets_others_organizations,
+        'ticketscloud': ticketscloud_others_organizations,
+        'vk': vk_others_organizations,
+        'mts': mts_others_organization,
+        'culture': culture_others_organizations,
+        'kassir': kassir_others_organizations,
+    }
+    scraper_name = next((k for k, v in scraper_names.items() if v == func), None)
+    if scraper_name and not _is_scraper_enabled(scraper_name):
+        return
+    try:
+        events_list += func(days)
+    except Exception as e:
+        print(f"An error occurred in {func.__name__}: {e}")
+
+
 def from_not_approved_organizations(days: int) -> List[Event]:
     events = []
 
@@ -546,33 +571,18 @@ def from_not_approved_organizations(days: int) -> List[Event]:
 
     if weekday % 2 == 1:
         for func in function_list_odd:
-            try:
-                events += func(days*2)
-            except Exception as e:
-                print(f"An error occurred in {func.__name__}: {e}")
+            _run_scraper(events, func, days*2)
     else:
         for func in function_list_even:
-            try:
-                events += func(days)
-            except Exception as e:
-                print(f"An error occurred in {func.__name__}: {e}")
+            _run_scraper(events, func, days)
 
     if weekday == 6:
-        try:
-            events += vk_others_organizations(days)
-        except Exception as e:
-            print(f"An error occurred in vk_others_organizations: {e}")
+        _run_scraper(events, vk_others_organizations, days)
 
     if weekday == 0 or weekday == 4:
-        try:
-            events += mts_others_organization(days)
-        except Exception as e:
-            print(f"An error occurred in mts_others_organization: {e}")
+        _run_scraper(events, mts_others_organization, days)
     elif weekday == 2 or weekday == 5:
-        try:
-            events += culture_others_organizations(days)
-        except Exception as e:
-            print(f"An error occurred in culture_organizations: {e}")
+        _run_scraper(events, culture_others_organizations, days)
 
     return events
 

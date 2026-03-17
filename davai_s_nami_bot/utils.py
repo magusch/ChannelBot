@@ -184,9 +184,11 @@ def upload_bytes_to_s3(bytes, ext: str) -> dict:
         Key=key,
         Body=bytes,
         ContentType="image/jpeg",
+        ContentEncoding="identity",
+        ContentDisposition="inline",
+        CacheControl="public, max-age=31536000",
         ACL="public-read",
     )
-
     if s3_public_url:
         url = f"https://{s3_public_url.rstrip('/')}/{key}"
     else:
