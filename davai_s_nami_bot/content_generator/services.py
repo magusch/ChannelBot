@@ -1,13 +1,22 @@
-from datetime import datetime, timedelta
+import re
+
+from datetime import datetime, timedelta, timezone
+import pytz
 import json
 import random
 
 from typing import List, Dict, Any
 
+import logging
+
 from . import crud
 from davai_s_nami_bot import crud as dsn_crud
 
+from ..settings.settings_loader import settings
+from ..helper.ai_helper import AIHelper
 from davai_s_nami_bot.pydantic_models import EventRequestParameters
+
+log = logging.getLogger(__name__)
 
 CATEGORIES_NAME = ["Концерты", "Без категории", "Кино", "Лекции", "Культура", "Фестивали", "Театр", "Вечеринки", "Перфомансы", "Стэндап", "Выставки"]
 
@@ -100,21 +109,33 @@ class GeneratorPost:
     def __init__(self):
         pass
 
+    @staticmethod
+    def _parse_json_field(value):
+        """Parse a JSON string field, returning the value as-is if already parsed."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return value if value is not None else {}
+
     # Make in model ContentGeneratorEventSelection new event selection by random filter set and also put events from Events2Posts to ContentGeneratorEventSelectionSelectedEvents
     def event_selection(self, filter_set_id: int = None) -> dict:
         filter_set = crud.get_filter(filter_set_id)
         if not filter_set:
             raise ValueError("Фильтр не найден")
 
+        filter_params = self._parse_json_field(filter_set['filter_params'])
+
         filtered_events = self.apply_filters(filter_set)
         if not filtered_events:
             return {}
-        
+
         event_selection_dict = {
             'filter_set_id': filter_set['id'],
             'name':          filter_set['name'],
             'status':       'draft',
-            'generation_settings': json.dumps(filter_set['filter_params']),
+            'generation_settings': json.dumps(filter_params),
         }
 
         event_selection = crud.create_event_selection(event_selection_dict)
@@ -124,7 +145,7 @@ class GeneratorPost:
 
     def apply_filters(self, filter_set): # -> models.QuerySet:
         """Apply filter and return filtered events."""
-        filter_params = filter_set['filter_params']
+        filter_params = self._parse_json_field(filter_set['filter_params'])
 
         today = datetime.today()
         week_ahead = today + timedelta(days=7)
@@ -196,8 +217,14 @@ class GeneratorPost:
         if not selected_event_ids:
             raise ValueError("Selected Events not found for the event selection")
 
+        # Parse JSON string fields from DB
+        variables = self._parse_json_field(post_template['variables'])
+        if isinstance(variables, str):
+            variables = []
+        generation_settings = self._parse_json_field(event_selection['generation_settings'])
+
         variables_to_db = []
-        for var in post_template['variables']:
+        for var in variables:
             if var in VIRTUAL_FIELD_DEPENDENCIES:
                 for v in VIRTUAL_FIELD_DEPENDENCIES[var]:
                     if v not in variables_to_db:
@@ -209,7 +236,8 @@ class GeneratorPost:
         params = EventRequestParameters(**parameters)
         selected_events = dsn_crud.get_approved_events(params)
 
-        new_post, headline = self.generate_post(post_template, selected_events, event_selection['generation_settings'])
+        post_template_parsed = {**post_template, 'variables': variables}
+        new_post, headline = self.generate_post(post_template_parsed, selected_events, generation_settings)
         # Create a new generated post
         new_post = {
             'title': headline or event_selection['name'],
@@ -385,3 +413,260 @@ class GeneratorPost:
         if template and template.strip():
             introduction += template.strip() + "\n\n"
         return introduction, headline_raw
+
+    def generate_post_by_ai(self, event_selection_id: int = None, event_ids: list = None, post_template_id: int = None, title: str = None) -> Dict[str, Any]:
+        """Generate a digest post using AI instead of templates.
+
+        Accepts either event_selection_id (from saved selection) or event_ids (direct list).
+        """
+        generation_settings = {}
+        event_selection = None
+
+        if event_selection_id:
+            event_selection = crud.get_event_selection(event_selection_id)
+            selected_event_ids = crud.get_selected_events(event_selection['id'])
+            if not selected_event_ids:
+                raise ValueError("Selected Events not found for the event selection")
+            generation_settings = self._parse_json_field(event_selection['generation_settings'])
+        elif event_ids:
+            selected_event_ids = event_ids
+        else:
+            raise ValueError("event_selection_id or event_ids required")
+
+        # Title priority: API param > event_selection name > fallback
+        post_title = title or (event_selection.get('name') if event_selection else '') or ''
+
+        fields = [
+            'id', 'title', 'prepared_text', 'from_date', 'to_date',
+            'address', 'price', 'url', 'ticket_url', 'category', 'place',
+        ]
+        parameters = {'ids': selected_event_ids, 'fields': fields}
+        params = EventRequestParameters(**parameters)
+        selected_events = dsn_crud.get_approved_events(params)
+
+        if not selected_events:
+            raise ValueError("No events found for the selection")
+
+        events_for_prompt = []
+        for event in selected_events:
+            e = {
+                'title': event.get('title', ''),
+                'description': event.get('prepared_text') or event.get('full_text', ''),
+                'date': date_to_post(event['from_date'], event.get('to_date')) if event.get('from_date') else '',
+                'price': event.get('price', ''),
+                'url': event.get('url', ''),
+                'ticket_url': event.get('ticket_url', ''),
+            }
+            if event.get('place'):
+                place = event['place']
+                addr = place.get('place_name', '')
+                if place.get('place_address'):
+                    addr += f", {place['place_address']}"
+                if place.get('place_metro'):
+                    addr += f", м.{place['place_metro']}"
+                e['address'] = addr
+            else:
+                e['address'] = event.get('address', '')
+            events_for_prompt.append(e)
+
+        events_json = json.dumps(events_for_prompt, ensure_ascii=False, default=str)
+
+        # Context from generation settings
+        categories = generation_settings.get('main_category', [])
+        if categories and not isinstance(categories, list):
+            categories = [categories]
+        cat_names = [category_name(c) for c in (categories or []) if isinstance(c, int) and c > 0]
+        cat_text = ", ".join(cat_names) if cat_names else "разные"
+
+        period = "ближайшие дни"
+        if generation_settings.get('weekend'):
+            period = "выходные"
+        elif generation_settings.get('this_week'):
+            period = "эту неделю"
+        elif generation_settings.get('week_ahead'):
+            period = "ближайшую неделю"
+
+        system_prompt = (
+            "Ты ведёшь Telegram-канал о мероприятиях в Санкт-Петербурге. "
+            "Аудитория — 17–29 лет. "
+            "Пиши как блогер, который рассказывает друзьям куда сходить. "
+            "Каждый пост должен звучать по-новому — меняй структуру, подачу, интонацию. "
+            "Не бойся быть неформальным, но без пошлости и кликбейта."
+        )
+
+        user_prompt = f"""Напиши пост-подборку для Telegram.
+Тема подборки: «{post_title}»
+Мероприятий: {len(events_for_prompt)}.
+
+ЗАДАЧА:
+Тема подборки — это главный контекст поста. Начни пост естественно, отталкиваясь от темы. Не выделяй вступление как отдельный блок — оно должно перетекать в мероприятия. Например для «Концерты недели» можно начать с "На этой неделе в Питере звучит кое-что интересное:", а для «Бесплатные лекции» — "Залипнуть на пару часов и ещё ума набраться — вот что можно послушать:". Суть — тема задаёт тон, а не формат.
+
+Дальше — мероприятия. Для каждого: название со ссылкой, пара слов своими словами (зачем идти), дата, место, цена. Подачу варьируй — не надо одинаковых блоков.
+
+ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ (Telegram MarkdownV1):
+— Название мероприятия — кликабельная ссылка: [Название](url) — можно обернуть в *жирный*
+— Если есть ticket\_url — используй для ссылки на билеты/цену
+— Экранируй \\_ \\* \\` \\[ в тексте вне разметки
+— Компактно, читаемо с телефона
+
+СТИЛЬ:
+— Варьируй подачу: эмодзи, разделители, жирный — всё опционально, по настроению
+— Описание мероприятий — своими словами, кратко. Не копируй из данных
+— Ок: лёгкий юмор, субъективные оценки, разговорный тон
+— Не ок: канцелярит, штампы ("уникальная возможность", "не пропустите", "собрали для вас"), шаблонные призывы ("сохраняй", "делись с друзьями")
+— Пост должен выглядеть написанным живым человеком
+
+Данные мероприятий (JSON):
+{events_json}"""
+
+        ai_helper = AIHelper()
+        ai_helper.current_model.answer = None
+
+        try:
+            if hasattr(ai_helper.current_model, 'client'):
+                model_name = getattr(ai_helper.current_model, 'claude_model', None) or \
+                             getattr(ai_helper.current_model, 'openai_model', None) or \
+                             'default'
+                log.info(f"Generating AI digest post with model: {model_name}")
+
+            # Use Claude directly if available, otherwise fallback
+            if hasattr(ai_helper.current_model, 'client') and hasattr(ai_helper.claude_helper, 'client'):
+                from anthropic import Anthropic
+                client = ai_helper.claude_helper.client
+                claude_model = ai_helper.claude_helper.claude_model
+                message = client.messages.create(
+                    model=claude_model,
+                    max_tokens=2000,
+                    temperature=0.7,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                ai_content = message.content[0].text
+            else:
+                client = ai_helper.openai_helper.client
+                openai_model = ai_helper.openai_helper.openai_model
+                completion = client.chat.completions.create(
+                    model=openai_model,
+                    temperature=0.7,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                ai_content = completion.choices[0].message.content
+
+        except Exception as e:
+            log.error(f"AI generation failed: {e}")
+            raise ValueError(f"AI generation failed: {e}")
+
+        # Strip markdown fences if AI wrapped the response
+        ai_content = ai_content.strip()
+        if ai_content.startswith('```'):
+            ai_content = ai_content.split('\n', 1)[1] if '\n' in ai_content else ai_content[3:]
+            ai_content = ai_content.rsplit('```', 1)[0].strip()
+
+        # Extract headline from first line
+        first_line = ai_content.split('\n')[0].strip()
+        headline = re.sub(r'[*_`]', '', first_line).strip()
+
+        selection_name = event_selection['name'] if event_selection else ''
+        generated_post_data = {
+            'title': headline or post_title or selection_name,
+            'content': ai_content,
+            'status': 'draft',
+            'post_template_id': post_template_id or 0,
+        }
+        if event_selection:
+            generated_post_data['event_selection_id'] = event_selection['id']
+
+        new_post = crud.create_generated_post(generated_post_data)
+
+        return {
+            "id": new_post['id'],
+            "title": new_post['title'],
+            "content": new_post['content'],
+            "status": new_post['status'],
+        }
+
+
+class Posting:
+
+    def __init__(self, log):
+        self.log = log
+
+    def get_next_time_posting(self):
+        time_posting_by_platform = {}
+        next_by_platform = crud.get_next_schedule_per_platform()
+        for platform, schedule in next_by_platform.items():
+            eta = schedule['scheduled_time']
+            if eta is None:
+                continue
+
+            tz_name = settings.timezone if settings.timezone else 'UTC'
+            tz = pytz.timezone(tz_name)
+            if eta.tzinfo is None:
+                eta_local = tz.localize(eta)
+            else:
+                eta_local = eta.astimezone(tz)
+            eta_utc = eta_local.astimezone(pytz.UTC)
+            time_posting_by_platform[platform] = {'eta_utc': eta_utc, 'schedule_id': schedule['id']}
+        return time_posting_by_platform
+
+    def schedule_posting(self, schedule_id):
+        schedule = crud.get_schedule_by_id(schedule_id)
+        if not schedule:
+            self.log.info("Schedule not found")
+            return
+
+        # Double-check: skip if already posted
+        if schedule.get('is_posted'):
+            self.log.info(f"Schedule {schedule_id} already posted, skipping")
+            return
+
+        try:
+            tz_name = settings.timezone if settings.timezone else 'UTC'
+            tz = pytz.timezone(tz_name)
+            eta = schedule.get('scheduled_time')
+            if eta is None:
+                self.log.info("Schedule time is None, skipping")
+                return
+            if eta.tzinfo is None:
+                eta_local = tz.localize(eta)
+            else:
+                eta_local = eta.astimezone(tz)
+            eta_utc = eta_local.astimezone(pytz.UTC)
+            now_utc = datetime.now(timezone.utc)
+
+            # Allow small clock skew window; skip if too far from now
+            if abs(now_utc - eta_utc) > timedelta(minutes=5):
+                self.log.info(f"Skipping schedule {schedule_id}: time window mismatch (now={now_utc}, eta={eta_utc})")
+                return
+        except Exception as e:
+            self.log.error(f"Error validating schedule time for {schedule_id}: {e}")
+            return
+
+        generated_post = crud.get_generated_post_by_id(schedule['generated_post_id'])
+        if not generated_post:
+            self.log.info("Generated post not found")
+            return
+
+        try:
+
+            post_text = generated_post['content']
+
+            # Choose client by platform
+            platform = (schedule.get('platform') or 'telegram').lower()
+            image_path = None
+
+            if platform in ('telegram', 'vk'):
+                return {'platform': platform, 'text': post_text, 'image_path': image_path}
+            else:
+                self.log.info(f"Unsupported platform: {platform}")
+                return
+
+        except Exception as e:
+            self.log.error(f"Error posting generated content for schedule {schedule_id}: {e}")
+            crud.increment_schedule_retry(schedule_id, error_message=str(e))
+
+    def schedule_posted(self, schedule_id):
+        crud.mark_schedule_posted(schedule_id, posted_at=datetime.now(timezone.utc))

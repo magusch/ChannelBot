@@ -629,6 +629,17 @@ def content_generator_generate_post(post_template_id: int, event_selection_id: i
     post = generator_post.generate_post_by_template(post_template_id, event_selection_id, generated_by_id)
     return post
 
+@celery_app.task
+def content_generator_generate_post_ai(event_selection_id: int = None, event_ids: list = None, post_template_id: int = None, title: str = None):
+    generator_post = GeneratorPost()
+    post = generator_post.generate_post_by_ai(
+        event_selection_id=event_selection_id,
+        event_ids=event_ids,
+        post_template_id=post_template_id,
+        title=title,
+    )
+    return post
+
 
 @celery_app.task
 def upload_image_to_s3(file_path: str):

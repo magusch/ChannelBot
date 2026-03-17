@@ -55,3 +55,10 @@ class ContentGeneratorGeneratePostRequest(BaseModel):
     event_selection_id: int
     post_template_id: int
     generated_by_id: Optional[int] = None
+
+
+class ContentGeneratorGeneratePostAIRequest(BaseModel):
+    event_selection_id: Optional[int] = None
+    event_ids: Optional[List[int]] = None
+    post_template_id: Optional[int] = None
+    title: Optional[str] = None

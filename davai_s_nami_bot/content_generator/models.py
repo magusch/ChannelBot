@@ -58,11 +58,11 @@ class ContentGeneratorGeneratedPost(Base):
     title = Column(String(300), nullable=False)
     content = Column(String, nullable=False)
     status = Column(String(20), nullable=False)
-    tags = Column(String, nullable=False)  # Assuming JSONB is stored as String
-    media_files = Column(String, nullable=False)  # Assuming JSONB is stored as String
-    event_selection_id = Column(BigInteger, ForeignKey('content_generator_eventselection.id', deferrable=True, initially='DEFERRED'), nullable=False)
+    tags = Column(String, nullable=False, default='[]')
+    media_files = Column(String, nullable=False, default='[]')
+    event_selection_id = Column(BigInteger, ForeignKey('content_generator_eventselection.id', deferrable=True, initially='DEFERRED'), nullable=True)
     #generated_by_id = Column(Integer, ForeignKey('auth_user.id', deferrable=True, initially='DEFERRED'), nullable=False)
-    post_template_id = Column(BigInteger, ForeignKey('content_generator_posttemplate.id', deferrable=True, initially='DEFERRED'), nullable=False)
+    post_template_id = Column(BigInteger, ForeignKey('content_generator_posttemplate.id', deferrable=True, initially='DEFERRED'), nullable=True)
     post_template = relationship("ContentGeneratorPostTemplate", back_populates="generated_posts")
     event_selection = relationship("ContentGeneratorEventSelection", back_populates="generated_posts")
 
