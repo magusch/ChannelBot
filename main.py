@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
 
-from davai_s_nami_bot.api import auth, users, tasks #, register_routers
+from davai_s_nami_bot.api import auth, users, tasks, content_generator #, register_routers
 from davai_s_nami_bot import crud
 
 from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
@@ -19,6 +19,7 @@ app = FastAPI()
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
+app.include_router(content_generator.router, prefix="/api")
 
 
 origins = [
@@ -138,6 +139,14 @@ async def update_parameters(token: str = Depends(verify_token)):
         'davai_s_nami_bot.celery_tasks.update_parameters',
     )
     return {'message': 'Task PARAMETERS added to queue', 'task_id': task.id}
+
+
+@app.get('/api/check_ai_balance/')
+async def check_ai_balance(token: str = Depends(verify_token)):
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.check_ai_balance',
+    )
+    return {'message': 'Task check AI balance added to queue', 'task_id': task.id}
 
 
 @app.post('/api/ai_update_event/')

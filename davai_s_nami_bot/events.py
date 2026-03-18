@@ -33,6 +33,7 @@ def _is_scraper_enabled(scraper_name):
     return settings.escraper_parameters.get(scraper_name, {}).get('enabled', True)
 
 timepad_parser = Timepad(use_proxy=_use_proxy('timepad'))
+timepad_parser.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 radario_parser = Radario(use_proxy=_use_proxy('radario'))
 ticketscloud_parser = Ticketscloud(use_proxy=_use_proxy('ticketscloud'))
 vk_parser = VK(use_proxy=_use_proxy('vk'))
