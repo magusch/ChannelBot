@@ -402,7 +402,7 @@ class GeneratorPost:
         ]
 
         DIGEST_VARIANTS = [
-            "Подборка из {count_event} интересных {categories_nominative}{price_desc} на {dates_desc}",
+            "Подборка из {event_count} интересных {categories_nominative}{price_desc} на {dates_desc}",
             "{event_count} отличных мероприятий{price_desc} на {dates_desc}, как провести время.",
             "Вся подборка {categories_nominative}",
             "Главные {categories_nominative}#{price_desc}.",
@@ -580,7 +580,7 @@ class GeneratorPost:
             'title': headline or post_title or selection_name,
             'content': ai_content,
             'status': 'draft',
-            'post_template_id': post_template_id or 0,
+            'post_template_id': post_template_id or None,
         }
         if event_selection:
             generated_post_data['event_selection_id'] = event_selection['id']
