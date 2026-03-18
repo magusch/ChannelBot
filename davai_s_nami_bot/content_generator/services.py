@@ -14,6 +14,7 @@ from davai_s_nami_bot import crud as dsn_crud
 
 from ..settings.settings_loader import settings
 from ..helper.ai_helper import AIHelper
+from .. import utils
 from davai_s_nami_bot.pydantic_models import EventRequestParameters
 
 log = logging.getLogger(__name__)
@@ -232,32 +233,54 @@ class GeneratorPost:
             else:
                 variables_to_db.append(var)
 
+        # Always fetch image fields for collage
+        for img_field in ['image', 'image_upload']:
+            if img_field not in variables_to_db:
+                variables_to_db.append(img_field)
+
         parameters = {'ids': selected_event_ids, 'fields': variables_to_db}
         params = EventRequestParameters(**parameters)
         selected_events = dsn_crud.get_approved_events(params)
 
         post_template_parsed = {**post_template, 'variables': variables}
         new_post, headline = self.generate_post(post_template_parsed, selected_events, generation_settings)
+
+        # Create collage from event images
+        image_urls = []
+        for event in selected_events:
+            img = event.get('image_upload') or event.get('image')
+            if img and isinstance(img, str) and img.startswith('http'):
+                image_urls.append(img)
+
+        collage_result = None
+        if image_urls:
+            try:
+                collage_result = utils.create_collage_and_upload(image_urls)
+            except Exception as e:
+                log.warning(f"Collage creation failed, continuing without image: {e}")
+
         # Create a new generated post
         new_post = {
             'title': headline or event_selection['name'],
             'content': new_post,
-            'status': 'draft',  # Default status
-            # 'tags': post_template.tags,
-            # 'media_files': post_template.media_files,
+            'status': 'draft',
             'event_selection_id': event_selection['id'],
-            #'generated_by_id': generated_by_id or 1,
             'post_template_id': post_template['id'],
         }
+        if collage_result:
+            new_post['media_files'] = json.dumps([collage_result['url']])
 
         new_post = crud.create_generated_post(new_post)
 
-        return {
+        result = {
             "id": new_post['id'],
             "title": new_post['title'],
             "content": new_post['content'],
-            "status": new_post['status']
+            "status": new_post['status'],
         }
+        if collage_result:
+            result['image'] = collage_result['url']
+        return result
 
 
     def generate_post(self, post_template: dict, selected_events: list[dict], generation_settings: dict) -> Dict[str, Any]:
@@ -439,6 +462,7 @@ class GeneratorPost:
         fields = [
             'id', 'title', 'prepared_text', 'from_date', 'to_date',
             'address', 'price', 'url', 'ticket_url', 'category', 'place',
+            'image', 'image_upload',
         ]
         parameters = {'ids': selected_event_ids, 'fields': fields}
         params = EventRequestParameters(**parameters)
@@ -537,6 +561,20 @@ class GeneratorPost:
         first_line = ai_content.split('\n')[0].strip()
         headline = re.sub(r'[*_`]', '', first_line).strip()
 
+        # Collect event images and create collage
+        image_urls = []
+        for event in selected_events:
+            img = event.get('image_upload') or event.get('image')
+            if img and isinstance(img, str) and img.startswith('http'):
+                image_urls.append(img)
+
+        collage_result = None
+        if image_urls:
+            try:
+                collage_result = utils.create_collage_and_upload(image_urls)
+            except Exception as e:
+                log.warning(f"Collage creation failed, continuing without image: {e}")
+
         selection_name = event_selection['name'] if event_selection else ''
         generated_post_data = {
             'title': headline or post_title or selection_name,
@@ -546,15 +584,20 @@ class GeneratorPost:
         }
         if event_selection:
             generated_post_data['event_selection_id'] = event_selection['id']
+        if collage_result:
+            generated_post_data['media_files'] = json.dumps([collage_result['url']])
 
         new_post = crud.create_generated_post(generated_post_data)
 
-        return {
+        result = {
             "id": new_post['id'],
             "title": new_post['title'],
             "content": new_post['content'],
             "status": new_post['status'],
         }
+        if collage_result:
+            result['image'] = collage_result['url']
+        return result
 
 
 class Posting:
