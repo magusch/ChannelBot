@@ -747,7 +747,7 @@ def get_radario_events(
     if radario_cities:
         radario_city = radario_cities[0]
 
-    categories = int(settings.escraper_parameters.get('radario', {}).get('categories', category))
+    categories = settings.escraper_parameters.get('radario', {}).get('categories', category)
 
     request_params = {
         "from": date_from,

@@ -1,9 +1,13 @@
+import logging
+
 from .ai.perplexity_helper import PerplexityHelper
 from .ai.open_ai_helper import OpenAIHelper
-from .ai.claude_helper import ClaudeHelper 
+from .ai.claude_helper import ClaudeHelper
 from .ai.gemini_helper import GeminiHelper
 
 from .dsn_parameters import DSNParameters
+
+log = logging.getLogger(__name__)
 
 
 class AIHelper:
@@ -12,16 +16,16 @@ class AIHelper:
         self.perplexity_helper = PerplexityHelper(dsn_param)
         self.openai_helper = OpenAIHelper(dsn_param)
         self.claude_helper = ClaudeHelper(dsn_param)
-        self.gemini_helper = GeminiHelper(dsn_param)        
-        
-        # Model in priority 
+        self.gemini_helper = GeminiHelper(dsn_param)
+
+        # Model in priority
         self.models = [
             ('gemini', self.gemini_helper),
             ('openai', self.openai_helper),
             ('claude', self.claude_helper),
-            ('perplexity', self.perplexity_helper),    
+            ('perplexity', self.perplexity_helper),
         ]
-        
+
         self.current_model_index = 0
         self.current_model = self.models[self.current_model_index][1]
 
@@ -59,3 +63,36 @@ class AIHelper:
     
     def new_event_data(self, event):
         return self.current_model.new_event_data(event)
+
+    def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+        """Universal text generation using the current model.
+
+        Works with any provider (Claude, OpenAI, Gemini, Perplexity).
+        Returns the raw text response.
+        """
+        model = self.current_model
+        model_name = self.models[self.current_model_index][0]
+        log.info(f"generate_text: using provider={model_name}")
+
+        if isinstance(model, ClaudeHelper):
+            message = model.client.messages.create(
+                model=model.claude_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return message.content[0].text
+        else:
+            # OpenAI-compatible: OpenAI, Gemini, Perplexity
+            model_id = getattr(model, 'model', None) or getattr(model, 'openai_model', None)
+            completion = model.client.chat.completions.create(
+                model=model_id,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            return completion.choices[0].message.content

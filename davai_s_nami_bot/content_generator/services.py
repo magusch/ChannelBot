@@ -520,41 +520,9 @@ class GeneratorPost:
 {events_json}"""
 
         ai_helper = AIHelper()
-        ai_helper.current_model.answer = None
 
         try:
-            if hasattr(ai_helper.current_model, 'client'):
-                model_name = getattr(ai_helper.current_model, 'claude_model', None) or \
-                             getattr(ai_helper.current_model, 'openai_model', None) or \
-                             'default'
-                log.info(f"Generating AI digest post with model: {model_name}")
-
-            # Use Claude directly if available, otherwise fallback
-            if hasattr(ai_helper.current_model, 'client') and hasattr(ai_helper.claude_helper, 'client'):
-                from anthropic import Anthropic
-                client = ai_helper.claude_helper.client
-                claude_model = ai_helper.claude_helper.claude_model
-                message = client.messages.create(
-                    model=claude_model,
-                    max_tokens=2000,
-                    temperature=0.7,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}],
-                )
-                ai_content = message.content[0].text
-            else:
-                client = ai_helper.openai_helper.client
-                openai_model = ai_helper.openai_helper.openai_model
-                completion = client.chat.completions.create(
-                    model=openai_model,
-                    temperature=0.7,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                )
-                ai_content = completion.choices[0].message.content
-
+            ai_content = ai_helper.generate_text(system_prompt, user_prompt, temperature=0.7)
         except Exception as e:
             log.error(f"AI generation failed: {e}")
             raise ValueError(f"AI generation failed: {e}")
