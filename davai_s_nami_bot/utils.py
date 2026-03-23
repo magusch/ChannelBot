@@ -116,7 +116,7 @@ def prepare_image(image_url):
         image_path = None
 
     else:
-        with Image.open(io.BytesIO(requests.get(image_url).content)) as img:
+        with Image.open(io.BytesIO(requests.get(image_url, timeout=15).content)) as img:
             image_name = "img"
             img.thumbnail(IMG_MAXSIZE, THUMB_RESAMPLE)
 
@@ -179,6 +179,8 @@ def upload_bytes_to_s3(bytes, ext: str) -> dict:
     """
     aws_s3_bucket = os.environ.get("AWS_STORAGE_BUCKET_NAME")
     s3_public_url = os.environ.get("AWS_S3_PUBLIC_URL")
+
+    log.info(f"upload_bytes_to_s3: bucket={repr(aws_s3_bucket)}, public_url={repr(s3_public_url)}")
 
     key = f"uploads/{uuid.uuid4().hex}.{ext}"
 

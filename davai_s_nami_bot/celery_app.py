@@ -52,7 +52,9 @@ def create_celery_app():
         timezone=settings.timezone if settings.timezone else ['UTC'],
         enable_utc=True,
         beat_schedule=beat_schedules,
-        include=['davai_s_nami_bot.celery_tasks']
+        include=['davai_s_nami_bot.celery_tasks'],
+        task_soft_time_limit=600,
+        task_time_limit=1200,
     )
 
     return celery_app

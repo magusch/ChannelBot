@@ -284,7 +284,7 @@ class Clients:
 
 
 def _requests_get(url, params: Dict[str, Any], return_key: str = "response"):
-    return _check_response(requests.get(url=url, params=params), return_key=return_key)
+    return _check_response(requests.get(url=url, params=params, timeout=15), return_key=return_key)
 
 
 def _requests_post(
@@ -295,7 +295,7 @@ def _requests_post(
     return_key: str = "response",
 ):
     return _check_response(
-        requests.post(url=url, data=data, json=json, files=files), return_key=return_key
+        requests.post(url=url, data=data, json=json, files=files, timeout=30), return_key=return_key
     )
 
 
