@@ -48,6 +48,9 @@ def post_to_telegram():
             log.info("Event not found (or time was changed) or already posted")
     except BaseException as e:
         log.error(f"Task post_to_telegram interrupted: {e}")
+        if event is not None:
+            crud.set_status(event_id=event.event_id, status="Error")
+            log.info(f"Event {event.event_id} marked as Error (timeout)")
         raise
     finally:
         redis_client.delete('posting_event')
