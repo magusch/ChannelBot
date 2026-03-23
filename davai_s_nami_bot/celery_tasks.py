@@ -33,25 +33,29 @@ CHANNEL_LINK = os.getenv('CHANNEL_LINK')
 @celery_app.task
 def post_to_telegram():
     log.info(f"Posting event")
-
-    event = dsn_site.next_event_to_channel()
-    if event is not None:
-        try:
-            image_path = utils.prepare_image(event.image)
-            clients.Clients().send_post(event=event, image_path=image_path)
-            log.info("Event was posted")
-        except Exception as e:
-            log.error(f"Failed to post event {event.event_id}: {e}")
-            crud.set_status(event_id=event.event_id, status="Error")
-            log.info(f"Event {event.event_id} marked as Error")
-    else:
-        log.info("Event not found (or time was changed) or already posted")
-    redis_client.delete('posting_event')
-    schedule_posting_tasks.apply_async()
     try:
-        dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
-    except Exception as e:
-        log.error(f"Failed to send log to dev channel: {e}")
+        event = dsn_site.next_event_to_channel()
+        if event is not None:
+            try:
+                image_path = utils.prepare_image(event.image)
+                clients.Clients().send_post(event=event, image_path=image_path)
+                log.info("Event was posted")
+            except Exception as e:
+                log.error(f"Failed to post event {event.event_id}: {e}")
+                crud.set_status(event_id=event.event_id, status="Error")
+                log.info(f"Event {event.event_id} marked as Error")
+        else:
+            log.info("Event not found (or time was changed) or already posted")
+    except BaseException as e:
+        log.error(f"Task post_to_telegram interrupted: {e}")
+        raise
+    finally:
+        redis_client.delete('posting_event')
+        schedule_posting_tasks.apply_async()
+        try:
+            dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
+        except Exception as e:
+            log.error(f"Failed to send log to dev channel: {e}")
 
 
 
@@ -482,9 +486,9 @@ def update_event(new_event_data, event_id):
     new_event_data = {k: v for k, v in new_event_data.items() if v}
 
     # AI relevance check — reject irrelevant events before posting
-    ai_relevant = new_event_data.pop('ai_relevant', 'да')
+    ai_relevant = new_event_data.pop('ai_relevant', True)
     ai_reject_reason = new_event_data.pop('ai_reject_reason', None)
-    if str(ai_relevant).strip().lower() in ('нет', 'no', 'false'):
+    if ai_relevant is False or str(ai_relevant).strip().lower() in ('нет', 'no', 'false'):
         log.info(f"Event {event_id} rejected by AI: {ai_reject_reason}")
         crud.reject_event_by_ai(event_id, reason=ai_reject_reason)
         return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
