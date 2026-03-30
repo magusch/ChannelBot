@@ -280,9 +280,9 @@ class Event:
     _tags = list(_escraper_event_parsers)
 
     _additional_tags = [
-        'id', 'queue', 'prepared_text', 'status', 'post_url', 
-        'place_id', 'is_ready', 'explored_date', 'post_date', 
-        'main_category_id'
+        'id', 'queue', 'prepared_text', 'status', 'post_url',
+        'place_id', 'is_ready', 'explored_date', 'post_date',
+        'main_category_id', 'image_upload'
     ]
 
     _all_tags = _tags + _additional_tags
@@ -779,7 +779,7 @@ def get_ticketscloud_events(
 
     request_params = {
         'city': ts_city,
-        'days': settings.escraper_parameters.get('ticketscloud').get('days', 10),
+        'days': settings.escraper_parameters.get('ticketscloud', {}).get('days', 10),
     }
     if tc_org_ids:
         request_params['org_ids'] = list(set(tc_org_ids))

@@ -37,19 +37,20 @@ def post_to_telegram():
         event = dsn_site.next_event_to_channel()
         if event is not None:
             try:
-                image_path = utils.prepare_image(event.image)
+                s3_key = getattr(event, 'image_upload', None)
+                image_path = utils.prepare_image(event.image, s3_key=s3_key)
                 clients.Clients().send_post(event=event, image_path=image_path)
                 log.info("Event was posted")
             except Exception as e:
                 log.error(f"Failed to post event {event.event_id}: {e}")
-                crud.set_status(event_id=event.event_id, status="Error")
+                crud.set_status(event_id=event.event_id, status="Error", error_message=str(e))
                 log.info(f"Event {event.event_id} marked as Error")
         else:
             log.info("Event not found (or time was changed) or already posted")
     except BaseException as e:
         log.error(f"Task post_to_telegram interrupted: {e}")
         if event is not None:
-            crud.set_status(event_id=event.event_id, status="Error")
+            crud.set_status(event_id=event.event_id, status="Error", error_message=str(e))
             log.info(f"Event {event.event_id} marked as Error (timeout)")
         raise
     finally:

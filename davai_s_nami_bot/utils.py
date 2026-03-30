@@ -111,12 +111,43 @@ def read_constants():
                 raise ValueError(f"Constant {key} not found in environ.")
 
 
-def prepare_image(image_url):
-    if image_url is None or isinstance(image_url, list) or image_url=='':
-        image_path = None
+def _download_from_s3(s3_key: str) -> bytes:
+    """Download image bytes directly from S3 by key, bypassing public URL."""
+    bucket = os.environ.get("AWS_STORAGE_BUCKET_NAME")
+    response = s3_client.get_object(Bucket=bucket, Key=s3_key)
+    return response["Body"].read()
 
-    else:
-        with Image.open(io.BytesIO(requests.get(image_url, timeout=15).content)) as img:
+
+def prepare_image(image_url, s3_key: str = None):
+    if image_url is None and s3_key is None:
+        return None
+    if isinstance(image_url, list) or image_url == '':
+        image_url = None
+
+    image_bytes = None
+
+    # 1) Try S3 direct download (no HTTP blocking)
+    if s3_key:
+        try:
+            image_bytes = _download_from_s3(s3_key)
+            log.info(f"Image downloaded from S3 key: {s3_key}")
+        except Exception as e:
+            log.warning(f"Failed to download from S3 key {s3_key}: {e}")
+
+    # 2) Fallback to HTTP URL
+    if image_bytes is None and image_url:
+        try:
+            image_bytes = requests.get(image_url, timeout=15).content
+            log.info(f"Image downloaded from URL: {image_url}")
+        except Exception as e:
+            log.warning(f"Failed to download image from URL {image_url}: {e}")
+            return None
+
+    if image_bytes is None:
+        return None
+
+    image_path = None
+    with Image.open(io.BytesIO(image_bytes)) as img:
             image_name = "img"
             img.thumbnail(IMG_MAXSIZE, THUMB_RESAMPLE)
 

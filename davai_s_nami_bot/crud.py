@@ -564,7 +564,7 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
 
 
 @db_session
-def set_status(db: object, event_id: str, status: str) -> None:
+def set_status(db: object, event_id: str, status: str, error_message: str = None) -> None:
     """
     Update status of row in table Event2Post by event ID.
 
@@ -578,10 +578,24 @@ def set_status(db: object, event_id: str, status: str) -> None:
 
     status : str
         New status for updating.
+
+    error_message : str, optional
+        Error details to store in score_breakdown['error'].
     """
+    import json as _json
+
     event = db.query(Events2Posts).filter_by(event_id=event_id).first()
     if event:
         event.status = status
+        if error_message:
+            existing = {}
+            if event.score_breakdown:
+                try:
+                    existing = _json.loads(event.score_breakdown) if isinstance(event.score_breakdown, str) else dict(event.score_breakdown)
+                except Exception:
+                    pass
+            existing['error'] = {'message': error_message, 'status': status}
+            event.score_breakdown = existing
 
 
 @db_session
