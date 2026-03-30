@@ -240,7 +240,7 @@ def _update_events(events, table, msk_today):
 @celery_app.task
 def update_event_from_sites(sites=None, days=7):
     if sites is None or sites[0] == 'all':
-        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture']
+        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir']
     log.info("Start updating events from special sites.")
     msk_today = get_msk_today()
 
@@ -664,7 +664,8 @@ def upload_event_images_to_s3(event_ids: list = []):
         if not image_url: continue
 
         result = utils.process_image_from_url(image_url=image_url)
-        crud.update_image_events(event['id'], result['url'])
+        crud.update_image_events(event['id'], result['url'], s3_key=result.get('key'))
+
 
 
 @celery_app.task

@@ -636,8 +636,11 @@ def get_events_missing_images(db, event_ids: list = [], limit: int = 50) -> List
 
 
 @db_session
-def update_image_events(db, event_id: str, image_url: str) -> None:
-    db.query(Events2Posts).filter_by(id=event_id).update({"image": image_url})
+def update_image_events(db, event_id: str, image_url: str, s3_key: str = None) -> None:
+    update_fields = {"image": image_url}
+    if s3_key:
+        update_fields["image_upload"] = s3_key
+    db.query(Events2Posts).filter_by(id=event_id).update(update_fields)
 
 @db_session
 def save_api_request_log(db, request_info: dict):
