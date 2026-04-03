@@ -20,12 +20,66 @@ from davai_s_nami_bot.pydantic_models import EventRequestParameters
 
 log = logging.getLogger(__name__)
 
+
+def _build_location(event):
+    """Build smart location fields without duplication.
+
+    Returns (location, metro) where:
+    - location: "Place Name, улица, д.1" or just "улица, д.1"
+    - metro: "м.Невский проспект" or ""
+    """
+    place = event.get('place') or {}
+    place_name = place.get('place_name', '') or ''
+    place_metro = place.get('place_metro', '') or ''
+    raw_address = event.get('address') or ''
+
+    metro = place_metro
+    address_without_metro = raw_address
+    if raw_address:
+        metro_match = re.search(
+            r',?\s*(м\.\s*\S+(?:\s+\S+)?|метро\s+\S+(?:\s+\S+)?)\s*$',
+            raw_address,
+        )
+        if metro_match:
+            if not metro:
+                metro = metro_match.group(1).strip().lstrip(',').strip()
+            address_without_metro = raw_address[:metro_match.start()].strip().rstrip(',')
+
+    street = address_without_metro
+    if place_name and street:
+        if street.lower().startswith(place_name.lower()):
+            street = street[len(place_name):].lstrip(',').lstrip().lstrip(',').strip()
+
+    if place_name and street:
+        location = f"{place_name}, {street}"
+    elif place_name:
+        location = place_name
+    else:
+        location = street
+
+    return location, metro or ''
+
+
+MSK_TZ = pytz.timezone(settings.timezone if settings.timezone else 'Europe/Moscow')
+
+
+def _to_local(dt):
+    """Convert a datetime to local timezone (from settings)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return MSK_TZ.localize(dt)
+    return dt.astimezone(MSK_TZ)
+
+
 CATEGORIES_NAME = ["Концерты", "Без категории", "Кино", "Лекции", "Культура", "Фестивали", "Театр", "Вечеринки", "Перфомансы", "Стэндап", "Выставки"]
 
 VIRTUAL_FIELD_DEPENDENCIES = {
     'event_date': ['from_date', 'to_date'],
     'place_name': ['address', 'place'],
     'event_time': ['from_date'],
+    'location': ['address', 'place'],
+    'metro': ['address', 'place'],
 }
 
 def category_name(cat_id):
@@ -311,13 +365,16 @@ class GeneratorPost:
         if not variables:
             variables = re.findall(r'\{(.*?)\}', template)
 
-        if 'event_date' in variables and event.get('from_date'):
-            event['event_date'] = date_to_post(event['from_date'], event.get('to_date'))
+        local_from = _to_local(event.get('from_date'))
+        local_to = _to_local(event.get('to_date'))
+
+        if 'event_date' in variables and local_from:
+            event['event_date'] = date_to_post(local_from, local_to)
         else:
             event['event_date'] = ''
 
-        if 'event_time' in variables and event.get('from_date'):
-            event['event_time'] = event['from_date'].strftime('%H:%M')
+        if 'event_time' in variables and local_from:
+            event['event_time'] = local_from.strftime('%H:%M')
 
         if 'address' in variables and event.get('place'):
             event['address'] = f"{event['place']['place_name']}, {event['place']['place_address']}"
@@ -326,6 +383,11 @@ class GeneratorPost:
 
         if 'place_name' in variables:
             event['place_name'] = event['place']['place_name'] if event['place'] else event['address'].split(',')[0]
+
+        if 'location' in variables or 'metro' in variables:
+            location, metro = _build_location(event)
+            event['location'] = location
+            event['metro'] = metro
 
         event_text = template.format(
             **event,
@@ -477,7 +539,7 @@ class GeneratorPost:
             e = {
                 'title': event.get('title', ''),
                 'description': event.get('prepared_text') or event.get('full_text', ''),
-                'date': date_to_post(event['from_date'], event.get('to_date')) if event.get('from_date') else '',
+                'date': date_to_post(_to_local(event['from_date']), _to_local(event.get('to_date'))) if event.get('from_date') else '',
                 'price': event.get('price', ''),
                 'url': event.get('url', ''),
                 'ticket_url': event.get('ticket_url', ''),
