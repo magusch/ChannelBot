@@ -384,22 +384,17 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
 
 @db_session
 def update_expired_events(db, date):
-    db.query(Events2Posts) \
-        .filter(Events2Posts.to_date < date, Events2Posts.is_ready == False) \
-        .filter(or_(Events2Posts.post_url.is_(None), Events2Posts.post_url == '')) \
-        .delete(synchronize_session=False)
     db.query(Events2Posts)\
-        .filter(Events2Posts.to_date < date, Events2Posts.status == 'ReadyToPost', Events2Posts.is_ready == True)\
+        .filter(Events2Posts.to_date < date, Events2Posts.status == 'ReadyToPost')\
         .update({'status': 'Posted', 'post_date': None})
-    db.query(Events2Posts) \
-        .filter(Events2Posts.status == 'Spam') \
-        .delete(synchronize_session=False)
 
 
 @db_session
 def remove_old_not_approved_events(db, date):
     db.query(EventsNotApproved) \
-        .filter(EventsNotApproved.to_date < date) \
+        .filter(
+            func.coalesce(EventsNotApproved.to_date, EventsNotApproved.from_date) < date
+        ) \
         .delete(synchronize_session=False)
 
 

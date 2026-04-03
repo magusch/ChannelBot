@@ -82,6 +82,10 @@ class AIHelper:
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
+            log.info(f"generate_text: Claude stop_reason={message.stop_reason}, "
+                     f"usage=in:{message.usage.input_tokens}/out:{message.usage.output_tokens}")
+            if message.stop_reason == 'max_tokens':
+                log.warning("generate_text: response was truncated (max_tokens reached)")
             return message.content[0].text
         else:
             # OpenAI-compatible: OpenAI, Gemini, Perplexity
@@ -95,4 +99,8 @@ class AIHelper:
                     {"role": "user", "content": user_prompt},
                 ],
             )
+            finish_reason = completion.choices[0].finish_reason
+            log.info(f"generate_text: {model_name} finish_reason={finish_reason}")
+            if finish_reason == 'length':
+                log.warning("generate_text: response was truncated (max_tokens reached)")
             return completion.choices[0].message.content
