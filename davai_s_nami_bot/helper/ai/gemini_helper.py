@@ -2,8 +2,9 @@ import datetime
 import json
 import logging
 import os
+import time
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 log = logging.getLogger(__name__)
 
@@ -59,16 +60,9 @@ class GeminiHelper:
                 continue
             event_info += f"{key}: {value}\n"
 
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            temperature=0.5,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system",
-                 "content": system_message
-                 },
-                {"role": "user",
-                 "content":
+        messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content":
                      user_message +
                      f"""
                      На основе предоставленной информации о мероприятии, адаптируй её для поста.
@@ -96,10 +90,25 @@ class GeminiHelper:
                         {event_info}
                          """
                  }
-            ],)
-        self.answer = completion.choices[0].message.content
+            ]
 
-        return self.answer
+        for attempt in range(3):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    temperature=0.5,
+                    response_format={"type": "json_object"},
+                    messages=messages,
+                )
+                self.answer = completion.choices[0].message.content
+                return self.answer
+            except OpenAIError as e:
+                if '429' in str(e) and attempt < 2:
+                    wait = 60 * (attempt + 1)
+                    log.warning(f"Gemini rate limit hit, waiting {wait}s (attempt {attempt + 1})")
+                    time.sleep(wait)
+                else:
+                    raise
 
     def parse_ai_answer(self):
         if self.answer is None:

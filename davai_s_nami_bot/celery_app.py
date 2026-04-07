@@ -29,6 +29,24 @@ def create_celery_app():
         },
     }
 
+    beat_schedules['auto-promote-by-score'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
+        'schedule': crontab(minute=30, hour=0),  # Daily at 00:30, after full_update
+        'kwargs': {'min_score': 70, 'limit': 20},
+    }
+
+    beat_schedules['distribute-event-queue'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
+        'schedule': crontab(minute=45, hour=0),  # Daily at 00:45, after auto_promote
+        'kwargs': {'protect_first': 10},
+    }
+
+    beat_schedules['auto-moderate-mid-score'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
+        'schedule': crontab(minute=0, hour=2, day_of_week='1,3,5'),  # Mon, Wed, Fri
+        'kwargs': {'min_score': 40, 'max_score': 69, 'sample_size': 10},
+    }
+
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
@@ -52,6 +70,7 @@ def create_celery_app():
         timezone=settings.timezone if settings.timezone else ['UTC'],
         enable_utc=True,
         beat_schedule=beat_schedules,
+        beat_schedule_filename='/tmp/celerybeat-schedule',
         include=['davai_s_nami_bot.celery_tasks'],
         task_soft_time_limit=600,
         task_time_limit=1200,

@@ -1,7 +1,10 @@
+import logging
 import re
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
+
+log = logging.getLogger(__name__)
 
 from typing import Any, Callable, Dict, List, NamedTuple
 
@@ -548,11 +551,12 @@ def _run_scraper(events_list, func, days):
     }
     scraper_name = next((k for k, v in scraper_names.items() if v == func), None)
     if scraper_name and not _is_scraper_enabled(scraper_name):
+        log.info(f"Scraper '{scraper_name}' is disabled in settings, skipping.")
         return
     try:
         events_list += func(days)
     except Exception as e:
-        print(f"An error occurred in {func.__name__}: {e}")
+        log.error(f"An error occurred in {func.__name__}: {e}", exc_info=True)
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
@@ -770,7 +774,7 @@ def get_ticketscloud_events(
     tc_org_ids = dsn_parameters.read_param('ticketscloud').get('org_id', [])
     tc_org_ids += settings.escraper_parameters.get('ticketscloud', {}).get('org_id', [])
 
-    ts_cities = dsn_parameters.read_param('ticketscloud', {}).get('city')
+    ts_cities = dsn_parameters.read_param('ticketscloud').get('city')
     ts_city = settings.escraper_parameters.get('ticketscloud', {}).get('city', 'Санкт-Петербург')
     if ts_cities:
         ts_city = ts_cities[0]

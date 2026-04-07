@@ -21,7 +21,9 @@ from .logger import get_logger, LOG_FILE, log_task
 from .helper.ai_helper import AIHelper
 # from .helper.open_ai_event_moderator import OpenAIEventModerator as EventModerator
 # from .helper.claude_event_moderator import ClaudeEventModerator as EventModerator
-from .helper.ai.perplexity_event_moderator import PerplexityEventModerator as EventModerator
+# from .helper.ai.perplexity_event_moderator import PerplexityEventModerator as EventModerator
+from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
+from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
 
 from .content_generator.services import GeneratorPost
 
@@ -387,7 +389,6 @@ def update_approved_events(event_ids):
 
 
 @celery_app.task
-@log_task
 def full_update():
     update_parameters.apply_async()
     is_empty_check.apply_async()
@@ -404,7 +405,10 @@ def full_update():
     msg = "Next scheduled time in {time}".format(
         time=next_time.strftime(STRFTIME),
     )
-    dev_channel.send_text(msg)
+    try:
+        dev_channel.send_text(msg)
+    except Exception as e:
+        log.warning(f"Failed to send dev message: {e}")
 
 
 @celery_app.task
@@ -456,7 +460,6 @@ def prepare_events(parameters: dict):
 
 
 @celery_app.task
-@log_task
 def prepare_unprepared_events(limit: int = 5):
     """Beat task: prepare events where is_ready IS NULL (draft, not yet processed by AI)."""
     events = crud.get_unprepared_events(limit=limit)
@@ -479,6 +482,66 @@ def prepare_unprepared_events(limit: int = 5):
     return {
         "message": f"AI prepare started for {len(events)} events.",
         "task_id": task_group.id,
+    }
+
+
+@celery_app.task
+def auto_promote_by_score(min_score: int = 70, limit: int = 20):
+    """Переносит высокоскоринговые события из NotApproved в Events2Posts."""
+    promoted_ids = crud.auto_promote_high_score_events(
+        min_score=min_score, limit=limit
+    )
+    log.info(f"Auto-promoted {len(promoted_ids)} events with score >= {min_score}")
+
+    if promoted_ids:
+        dsn_site_session.fill_empty_post_time()
+        log.info("Filled empty post times for promoted events")
+
+        upload_event_images_to_s3.apply_async(args=[promoted_ids])
+        log.info(f"Scheduled S3 image upload for {len(promoted_ids)} events")
+
+    return {"promoted_count": len(promoted_ids), "promoted_ids": promoted_ids}
+
+
+@celery_app.task
+def distribute_event_queue(protect_first: int = 10):
+    """Переупорядочивает очередь публикации для разнообразия контента."""
+    reordered = crud.distribute_event_queue(protect_first=protect_first)
+    log.info(f"Reordered {reordered} events in posting queue")
+    return {"reordered_count": reordered}
+
+
+@celery_app.task
+def auto_moderate_mid_score_events(
+    min_score: int = 40, max_score: int = 69, sample_size: int = 10
+):
+    """AI-модерация случайной выборки событий со средним score."""
+    # Автоотклонение мусора (score < min_score)
+    rejected_count = crud.auto_reject_low_score_events(max_score=min_score - 1)
+    log.info(f"Auto-rejected {rejected_count} events with score < {min_score}")
+
+    # Случайная выборка для AI-модерации
+    events = crud.get_mid_score_events_sample(
+        min_score=min_score, max_score=max_score, sample_size=sample_size
+    )
+    if not events:
+        log.info("No mid-score events for AI moderation")
+        return {
+            "rejected_count": rejected_count,
+            "moderated_count": 0,
+            "approved_ids": [],
+        }
+
+    log.info(f"Sending {len(events)} mid-score events for AI moderation")
+    task = chain(
+        ai_moderate_events.s(events, []),
+        update_approved_events.s()
+    ).apply_async()
+
+    return {
+        "rejected_count": rejected_count,
+        "moderated_count": len(events),
+        "task_id": task.id,
     }
 
 

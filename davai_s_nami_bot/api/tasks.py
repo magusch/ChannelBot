@@ -106,6 +106,50 @@ async def update_adaptive_scoring(request: Request):
     return TaskResponse(message='Adaptive scoring update queued', task_id=task.id)
 
 
+@router.post("/prepare-unprepared-events/", response_model=TaskResponse)
+async def prepare_unprepared_events(request: Request):
+    """AI-подготовка событий с is_ready=NULL."""
+    await log_api_request(request)
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
+        kwargs={'limit': 15},
+    )
+    return TaskResponse(message='Prepare unprepared events queued', task_id=task.id)
+
+
+@router.post("/auto-promote-by-score/", response_model=TaskResponse)
+async def auto_promote_by_score(request: Request):
+    """Перенос высокоскоринговых событий из NotApproved в Events2Posts."""
+    await log_api_request(request)
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
+        kwargs={'min_score': 70, 'limit': 20},
+    )
+    return TaskResponse(message='Auto-promote by score queued', task_id=task.id)
+
+
+@router.post("/distribute-event-queue/", response_model=TaskResponse)
+async def distribute_event_queue(request: Request):
+    """Переупорядочить очередь публикации для разнообразия."""
+    await log_api_request(request)
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.distribute_event_queue',
+        kwargs={'protect_first': 10},
+    )
+    return TaskResponse(message='Distribute event queue queued', task_id=task.id)
+
+
+@router.post("/auto-moderate-mid-score/", response_model=TaskResponse)
+async def auto_moderate_mid_score(request: Request):
+    """AI-модерация событий со средним score (40-69)."""
+    await log_api_request(request)
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
+        kwargs={'min_score': 40, 'max_score': 69, 'sample_size': 10},
+    )
+    return TaskResponse(message='Auto-moderate mid-score queued', task_id=task.id)
+
+
 @router.get("/adaptive-scoring/")
 async def get_adaptive_scoring():
     """View current adaptive scoring config from Redis."""
