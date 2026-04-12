@@ -1486,7 +1486,7 @@ def auto_promote_high_score_events(db, min_score: int = 70, limit: int = 20) -> 
         db.flush()
         promoted_ids.append(new_event.id)
 
-        event.status = 'approved'
+        db.delete(event)
         existing_event_ids.add(event.event_id)
 
     db.commit()
