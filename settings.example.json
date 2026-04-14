@@ -73,7 +73,13 @@
       "repetition_window_days": 14,
       "trusted_artists": [],
       "trusted_organizers": [],
-      "trusted_boost": 25
+      "trusted_boost": 25,
+      "place_category_queue_limit": 6,
+      "place_category_queue_penalty": -15,
+      "date_scarcity_window_days": 10,
+      "date_scarcity_min_days": 2,
+      "date_scarcity_threshold": 5,
+      "date_scarcity_boost": 8
     }
   }
 }

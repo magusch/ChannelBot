@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 
@@ -89,6 +90,8 @@ class ScoreBreakdown:
     completeness_score: int = 50
     source_score: int = 50
     repetition_penalty: int = 0
+    place_queue_penalty: int = 0
+    date_scarcity_boost: int = 0
     total: int = 50
 
     def to_json(self) -> str:
@@ -100,6 +103,8 @@ class ScoreBreakdown:
             "completeness": self.completeness_score,
             "source": self.source_score,
             "repetition_penalty": self.repetition_penalty,
+            "place_queue_penalty": self.place_queue_penalty,
+            "date_scarcity_boost": self.date_scarcity_boost,
             "total": self.total,
         }, ensure_ascii=False)
 
@@ -167,6 +172,22 @@ def _guess_category_from_text(title: str, full_text: str) -> Optional[int]:
     return None
 
 
+def resolve_category_id(
+    main_category_id: Optional[int],
+    category_str: Optional[str],
+    title: str = "",
+    full_text: str = "",
+) -> Optional[int]:
+    """Resolve effective category_id: main_category_id → string match → keyword inference → None."""
+    if main_category_id is not None:
+        return main_category_id
+    if category_str:
+        for cat_id, cat_name in CATEGORY_ID_TO_NAME.items():
+            if cat_name.lower() == category_str.strip().lower():
+                return cat_id
+    return _guess_category_from_text(title, full_text)
+
+
 def _score_category(
     main_category_id: Optional[int],
     category_str: Optional[str],
@@ -175,20 +196,9 @@ def _score_category(
     full_text: str = "",
 ) -> int:
     """Score by main_category_id → exact string match → keyword inference → 30."""
-    if main_category_id is not None:
-        return _lookup_category_score(category_scores, main_category_id)
-
-    # Exact string match against our taxonomy
-    if category_str:
-        for cat_id, cat_name in CATEGORY_ID_TO_NAME.items():
-            if cat_name.lower() == category_str.strip().lower():
-                return _lookup_category_score(category_scores, cat_id)
-
-    # Keyword inference from title + full_text
-    guessed_id = _guess_category_from_text(title, full_text)
-    if guessed_id is not None:
-        return _lookup_category_score(category_scores, guessed_id)
-
+    cat_id = resolve_category_id(main_category_id, category_str, title, full_text)
+    if cat_id is not None:
+        return _lookup_category_score(category_scores, cat_id)
     return 30
 
 
@@ -299,6 +309,8 @@ def calculate_score(
     place_id: Optional[int],
     scoring_config: dict,
     place_post_counts: Optional[dict] = None,
+    place_category_queue_counts: Optional[dict] = None,
+    date_event_counts: Optional[dict] = None,
 ) -> ScoreBreakdown:
     """Calculate event score based on config weights.
 
@@ -315,6 +327,12 @@ def calculate_score(
         Scoring config block from settings.json.
     place_post_counts : dict or None
         {place_id: number_of_posted_events} for place reputation.
+    place_category_queue_counts : dict or None
+        {(place_id, category_id): count} of ReadyToPost events per place+category.
+        Used to penalise oversaturation from a single venue/genre.
+    date_event_counts : dict or None
+        {date: count} of events (Posted/ReadyToPost + NotApproved) per from_date.
+        Used to boost events on sparse upcoming days.
 
     Returns
     -------
@@ -338,6 +356,12 @@ def calculate_score(
     trusted_organizers = scoring_config.get("trusted_organizers", [])
     trusted_boost = scoring_config.get("trusted_boost", 25)
     repetition_penalty_val = scoring_config.get("repetition_penalty", -20)
+    place_category_queue_limit = scoring_config.get("place_category_queue_limit", 6)
+    place_category_queue_penalty = scoring_config.get("place_category_queue_penalty", -15)
+    date_scarcity_window = scoring_config.get("date_scarcity_window_days", 10)
+    date_scarcity_min_days = scoring_config.get("date_scarcity_min_days", 2)
+    date_scarcity_threshold = scoring_config.get("date_scarcity_threshold", 5)
+    date_scarcity_boost_val = scoring_config.get("date_scarcity_boost", 8)
 
     title = event_data.get("title", "") or ""
     full_text = event_data.get("full_text", "") or ""
@@ -367,12 +391,38 @@ def calculate_score(
         + source_s * weights.get("source", 10)
     ) / w_total
 
-    # Repetition penalty
+    # Repetition penalty (title similarity)
     rep_penalty = 0
     if _check_repetition(title, existing_titles):
         rep_penalty = repetition_penalty_val
 
-    total = max(0, min(100, int(raw + rep_penalty)))
+    # Place+category queue saturation penalty
+    place_queue_pen = 0
+    if place_category_queue_counts and place_id:
+        effective_cat_id = resolve_category_id(main_category_id, category_str, title, full_text)
+        if effective_cat_id is not None:
+            queue_count = place_category_queue_counts.get((place_id, effective_cat_id), 0)
+            if queue_count >= place_category_queue_limit:
+                place_queue_pen = place_category_queue_penalty
+
+    # Date scarcity boost: small boost for sparse upcoming days
+    # Only applies when: min_days <= days_ahead <= window_days AND 1 <= day_count < threshold
+    date_boost = 0
+    if date_event_counts:
+        from_date = event_data.get("from_date")
+        if from_date is not None:
+            if isinstance(from_date, datetime):
+                event_day = from_date.date()
+            else:
+                event_day = from_date  # already a date
+            today = datetime.now(timezone.utc).date()
+            days_ahead = (event_day - today).days
+            if date_scarcity_min_days <= days_ahead <= date_scarcity_window:
+                day_count = date_event_counts.get(event_day, 0)
+                if 1 <= day_count < date_scarcity_threshold:
+                    date_boost = date_scarcity_boost_val
+
+    total = max(0, min(100, int(raw + rep_penalty + place_queue_pen + date_boost)))
 
     return ScoreBreakdown(
         price_score=price_s,
@@ -382,5 +432,7 @@ def calculate_score(
         completeness_score=completeness_s,
         source_score=source_s,
         repetition_penalty=rep_penalty,
+        place_queue_penalty=place_queue_pen,
+        date_scarcity_boost=date_boost,
         total=total,
     )

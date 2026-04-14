@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 
 from .events import Event
-from .scoring import calculate_score
+from .scoring import calculate_score, resolve_category_id
 from .adaptive_scoring import merge_adaptive_config, load_from_redis
 from .settings.settings_loader import settings
 
@@ -472,9 +472,12 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 
     # Load keywords once for the whole batch — avoids one DB query per event.
     place_keywords = _load_place_keywords()
-    window = getattr(settings, "scoring", {}).get("repetition_window_days", 14)
+    scoring_cfg = getattr(settings, "scoring", {})
+    window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_cat_queue = get_place_category_queue_counts()
+    date_counts = get_date_event_counts(days=scoring_cfg.get("date_scarcity_window_days", 10))
 
     list_inserted_ids = []
     for event in events:
@@ -490,12 +493,23 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
             search = " ".join(filter(None, [event_dict.get('address'), event_dict.get('title')]))
             event_dict['place_id'] = _match_place(search, place_keywords)
 
-        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts)
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
         new_event = create_event(event_dict, Events2Posts)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
             recent_titles.append(event_dict.get('title', ''))
+            # Update in-memory counter so subsequent events in this batch feel the saturation
+            pid = event_dict.get('place_id')
+            cid = resolve_category_id(
+                event_dict.get('main_category_id'),
+                event_dict.get('category'),
+                event_dict.get('title', ''),
+                event_dict.get('full_text', ''),
+            )
+            if pid and cid is not None:
+                key = (pid, cid)
+                place_cat_queue[key] = place_cat_queue.get(key, 0) + 1
 
     return list_inserted_ids
 
@@ -525,9 +539,12 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
         raise ValueError(f"Неизвестная таблица: {table}")
 
     place_keywords = _load_place_keywords()
-    window = getattr(settings, "scoring", {}).get("repetition_window_days", 14)
+    scoring_cfg = getattr(settings, "scoring", {})
+    window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_cat_queue = get_place_category_queue_counts()
+    date_counts = get_date_event_counts(days=scoring_cfg.get("date_scarcity_window_days", 10))
 
     list_inserted_ids = []
     for event in events:
@@ -547,7 +564,7 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
             )
             event_dict['place_id'] = _match_place(search, place_keywords)
 
-        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts)
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
         # Создаем новую запись в базе данных
         new_event = create_event(event_dict, model)
@@ -777,6 +794,62 @@ def get_place_post_counts(db) -> dict:
     return {place_id: cnt for place_id, cnt in rows}
 
 
+@db_session
+def get_date_event_counts(db, days: int = 10) -> dict:
+    """Return {date: count} of events per from_date within the next N days.
+
+    Counts Events2Posts (Posted/ReadyToPost) + EventsNotApproved (all statuses).
+    The combined count tells us whether the system has data for that date at all
+    (used to avoid boosting events for dates that simply haven't been scraped yet).
+    """
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff = today + timedelta(days=days)
+
+    rows_e2p = (
+        db.query(Events2Posts.from_date)
+        .filter(
+            Events2Posts.from_date >= today,
+            Events2Posts.from_date < cutoff,
+            Events2Posts.status.in_(["Posted", "ReadyToPost"]),
+        )
+        .all()
+    )
+    rows_na = (
+        db.query(EventsNotApproved.from_date)
+        .filter(
+            EventsNotApproved.from_date >= today,
+            EventsNotApproved.from_date < cutoff,
+        )
+        .all()
+    )
+
+    counts = {}
+    for (dt,) in rows_e2p + rows_na:
+        if dt:
+            d = dt.date() if hasattr(dt, "date") else dt
+            counts[d] = counts.get(d, 0) + 1
+    return counts
+
+
+@db_session
+def get_place_category_queue_counts(db) -> dict:
+    """Return {(place_id, category_id): count} of ReadyToPost events per place+category.
+
+    Used to detect venue/genre saturation in the posting queue.
+    """
+    rows = (
+        db.query(Events2Posts.place_id, Events2Posts.main_category_id, func.count(Events2Posts.id))
+        .filter(
+            Events2Posts.place_id.isnot(None),
+            Events2Posts.main_category_id.isnot(None),
+            Events2Posts.status == "ReadyToPost",
+        )
+        .group_by(Events2Posts.place_id, Events2Posts.main_category_id)
+        .all()
+    )
+    return {(place_id, cat_id): cnt for place_id, cat_id, cnt in rows}
+
+
 def _get_scoring_config() -> dict:
     """Return scoring config merged with adaptive overrides from Redis."""
     base = getattr(settings, "scoring", {})
@@ -793,6 +866,8 @@ def _apply_scoring(
     place_id,
     recent_titles: List[str],
     place_post_counts: dict,
+    place_category_queue_counts: dict = None,
+    date_event_counts: dict = None,
 ):
     """Calculate score and write score/score_breakdown into event_dict."""
     scoring_config = _get_scoring_config()
@@ -802,6 +877,8 @@ def _apply_scoring(
         place_id=place_id,
         scoring_config=scoring_config,
         place_post_counts=place_post_counts,
+        place_category_queue_counts=place_category_queue_counts,
+        date_event_counts=date_event_counts,
     )
     event_dict["score"] = breakdown.total
     event_dict["score_breakdown"] = breakdown.to_json()
@@ -832,6 +909,8 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_cat_queue = get_place_category_queue_counts()
+    date_counts = get_date_event_counts(days=scoring_config.get("date_scarcity_window_days", 10))
 
     breakdown = calculate_score(
         event_data=event_dict,
@@ -839,6 +918,8 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
         place_id=event_dict.get("place_id"),
         scoring_config=scoring_config,
         place_post_counts=place_counts,
+        place_category_queue_counts=place_cat_queue,
+        date_event_counts=date_counts,
     )
 
     event.score = breakdown.total
@@ -890,6 +971,8 @@ def recalculate_scores_bulk(
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_cat_queue = get_place_category_queue_counts()
+    date_counts = get_date_event_counts(days=scoring_config.get("date_scarcity_window_days", 10))
 
     updated = 0
     skipped = 0
@@ -914,6 +997,8 @@ def recalculate_scores_bulk(
                 place_id=event.place_id,
                 scoring_config=scoring_config,
                 place_post_counts=place_counts,
+                place_category_queue_counts=place_cat_queue,
+                date_event_counts=date_counts,
             )
 
             event.score = breakdown.total
