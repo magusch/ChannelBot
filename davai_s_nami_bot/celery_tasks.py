@@ -262,10 +262,8 @@ def update_event_from_sites(sites=None, days=7):
 @celery_app.task
 def move_approved():
     log.info("Move approved events")
-    dsn_site_session.move_approved()
-
-    log.info("Fill empty post time")
-    dsn_site_session.fill_empty_post_time()
+    moved_ids = crud.move_approved_to_posts()
+    log.info(f"Moved {len(moved_ids)} approved events to Events2Posts: {moved_ids}")
 
 
 @celery_app.task

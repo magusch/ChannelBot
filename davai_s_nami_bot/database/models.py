@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, UniqueConstraint, SmallInteger, Time
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -6,6 +6,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 
 Base = declarative_base()
+
+WEEKDAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вск']
 
 
 class Place(Base):
@@ -19,18 +21,62 @@ class Place(Base):
     place_city = Column(String, nullable=True)
     events = relationship("Events2Posts", back_populates="place")
     keywords = relationship("PlaceKeyword", back_populates="place")
+    schedules = relationship("PlaceSchedule", back_populates="place")
 
-    def markdown_address(self, with_url=True):
-        markdown_address = ''
-        if self.url_to_address != '' and with_url is True:
-            markdown_address += f"[{self.place_name}, {self.place_address}]({self.url_to_address})"
-        else:
-            markdown_address += f"{self.place_name}, {self.place_address}"
+    def get_schedule_str(self):
+        schedules = sorted(
+            [s for s in self.schedules if s.weekday is not None],
+            key=lambda s: s.weekday,
+        )
+        if not schedules:
+            return None
 
-        if self.place_metro != '':
-            markdown_address += f", м.{self.place_metro}"
+        # Group days with similar hours
+        time_to_days = {}
+        for schedule in schedules:
+            key = f"{schedule.open_time.strftime('%H:%M')}-{schedule.close_time.strftime('%H:%M')}"
+            time_to_days.setdefault(key, []).append(schedule.weekday)
 
-        return markdown_address
+        result = []
+        for time_string, days in time_to_days.items():
+            groups = []
+            start = days[0]
+            end = days[0]
+            for day in days[1:]:
+                if day == end + 1:
+                    end = day
+                else:
+                    groups.append((start, end))
+                    start = end = day
+            groups.append((start, end))
+
+            parts = []
+            for start, end in groups:
+                if start == end:
+                    parts.append(WEEKDAY_NAMES[start])
+                else:
+                    parts.append(f"{WEEKDAY_NAMES[start]}-{WEEKDAY_NAMES[end]}")
+
+            result.append(f"{', '.join(parts)} {time_string}")
+
+        return "\n".join(result)
+
+    def __str__(self):
+        return f"{self.place_name}, {self.place_address}"
+
+
+class PlaceSchedule(Base):
+    __tablename__ = 'place_placeschedule'
+
+    id = Column(Integer, primary_key=True, index=True)
+    place_id = Column(Integer, ForeignKey('place_place.id'), nullable=False)
+    schedule_type = Column(String(10), nullable=False, default='std')
+    weekday = Column(SmallInteger, nullable=True)
+    date = Column(DateTime, nullable=True)
+    open_time = Column(Time, nullable=True)
+    close_time = Column(Time, nullable=True)
+
+    place = relationship("Place", back_populates="schedules")
 
 
 class PlaceKeyword(Base):

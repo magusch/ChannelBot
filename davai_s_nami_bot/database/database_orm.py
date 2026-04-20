@@ -25,7 +25,17 @@ def get_db_session():
 
 
 def db_session(func):
+    """Decorator that provides a SQLAlchemy session as the first argument.
+
+    Reentrant: if the caller already has a session (passed as first positional
+    arg or as `db` kwarg), reuse it so all calls share one transaction.
+    Otherwise, open a new session via get_db_session().
+    """
     def wrapper(*args, **kwargs):
+        if 'db' in kwargs:
+            return func(*args, **kwargs)
+        if args and hasattr(args[0], 'query'):
+            return func(*args, **kwargs)
         with get_db_session() as db:
             return func(db, *args, **kwargs)
     return wrapper

@@ -441,7 +441,8 @@ def create_event(db, event_data: dict, model):
     return {"id": event.id} # or make Event model
 
 
-def add_events_to_post(events: List[Event], explored_date: datetime, queue_increase=2):
+@db_session
+def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_increase=2):
     """
     Make new rows in table Events2Posts for posting.
 
@@ -461,7 +462,7 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
     List[int]
         List of added events IDs.
     """
-    value = int(get_last_queue_value())
+    value = int(get_last_queue_value(db))
 
     def func(value=value, queue_increase=queue_increase):
         while True:
@@ -471,13 +472,13 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
     queue_value_gen = func()
 
     # Load keywords once for the whole batch — avoids one DB query per event.
-    place_keywords = _load_place_keywords()
+    place_keywords = _load_place_keywords(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(days=window)
-    place_counts = get_place_post_counts()
-    place_cat_queue = get_place_category_queue_counts()
-    date_counts = get_date_event_counts(days=scoring_cfg.get("date_scarcity_window_days", 10))
+    recent_titles = get_recent_event_titles(db, days=window)
+    place_counts = get_place_post_counts(db)
+    place_cat_queue = get_place_category_queue_counts(db)
+    date_counts = get_date_event_counts(db, days=scoring_cfg.get("date_scarcity_window_days", 10))
 
     list_inserted_ids = []
     for event in events:
@@ -495,7 +496,7 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
 
         _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
-        new_event = create_event(event_dict, Events2Posts)
+        new_event = create_event(db, event_dict, Events2Posts)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
             recent_titles.append(event_dict.get('title', ''))
@@ -514,7 +515,8 @@ def add_events_to_post(events: List[Event], explored_date: datetime, queue_incre
     return list_inserted_ids
 
 
-def add_events(events: List[Event], explored_date: datetime, table: str = "events_eventsnotapprovednew"):
+@db_session
+def add_events(db, events: List[Event], explored_date: datetime, table: str = "events_eventsnotapprovednew"):
     """
     Add events to specified table.
 
@@ -536,22 +538,20 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
     """
     model = MODEL_REGISTRY.get(table)
     if not model:
-        raise ValueError(f"Неизвестная таблица: {table}")
+        raise ValueError(f"Unknown table: {table}")
 
-    place_keywords = _load_place_keywords()
+    place_keywords = _load_place_keywords(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(days=window)
-    place_counts = get_place_post_counts()
-    place_cat_queue = get_place_category_queue_counts()
-    date_counts = get_date_event_counts(days=scoring_cfg.get("date_scarcity_window_days", 10))
+    recent_titles = get_recent_event_titles(db, days=window)
+    place_counts = get_place_post_counts(db)
+    place_cat_queue = get_place_category_queue_counts(db)
+    date_counts = get_date_event_counts(db, days=scoring_cfg.get("date_scarcity_window_days", 10))
 
     list_inserted_ids = []
     for event in events:
-        # Преобразуем Event в словарь
         event_dict = event.to_dict()
 
-        # Добавляем дополнительные поля
         event_dict.update({
             'approved': False,
             'explored_date': explored_date,
@@ -566,8 +566,7 @@ def add_events(events: List[Event], explored_date: datetime, table: str = "event
 
         _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
-        # Создаем новую запись в базе данных
-        new_event = create_event(event_dict, model)
+        new_event = create_event(db, event_dict, model)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
             recent_titles.append(event_dict.get('title', ''))
@@ -966,7 +965,7 @@ def recalculate_scores_bulk(
     if not events:
         return {"updated": 0, "skipped": 0}
 
-    place_keywords = _load_place_keywords()
+    place_keywords = _load_place_keywords(db)
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
@@ -1090,12 +1089,11 @@ def get_adaptive_scoring_data(db, days: int = 30) -> dict:
 _MIN_KEYWORD_LENGTH = 4
 
 
-@db_session
 def _load_place_keywords(db) -> list[tuple[str, int]]:
     """Load all usable PlaceKeywords from DB, sorted longest-first.
 
     Returns list of (keyword_lower, place_id) tuples ready for Python matching.
-    Called once before a batch insert — not per-event.
+    Helper — always called with db from outer @db_session function.
     """
     rows = (
         db.query(PlaceKeyword.place_keyword, PlaceKeyword.place_id)
@@ -1129,8 +1127,52 @@ def find_place_by_address(db, address: str, title: str = None):
     search_parts = [p for p in (address, title) if p]
     if not search_parts:
         return None
-    keywords = _load_place_keywords()
+    keywords = _load_place_keywords(db)
     return _match_place(" ".join(search_parts), keywords)
+
+
+def _resolve_place(db, event_data: dict, place_keywords=None):
+    """Resolve a Place for an event: first by place_id, then by address.
+
+    Returns:
+        Place ORM object or None.
+    """
+    if event_data.get('place_id'):
+        place = db.query(Place).get(event_data['place_id'])
+        if place:
+            return place
+
+    search_text = ' '.join(filter(None, [event_data.get('address'), event_data.get('title')]))
+    if not search_text:
+        return None
+
+    if place_keywords is None:
+        place_keywords = _load_place_keywords(db)
+    place_id = _match_place(search_text, place_keywords)
+    if place_id:
+        return db.query(Place).get(place_id)
+    return None
+
+
+def _place_to_view(place):
+    """Convert an ORM Place to a PlaceView for PostHelper."""
+    from .helper.post_helper import PlaceView
+    if place is None:
+        return None
+    return PlaceView(
+        id=place.id,
+        name=place.place_name or '',
+        address=place.place_address or '',
+        url=place.place_url or '',
+        metro=place.place_metro or '',
+        schedule_str=place.get_schedule_str(),
+    )
+
+
+def _resolve_place_view(db, event_data: dict, place_keywords=None):
+    """Resolve a Place and return a PlaceView (or None)."""
+    place = _resolve_place(db, event_data, place_keywords)
+    return _place_to_view(place)
 
 
 ######–-FINISH-–######
@@ -1377,29 +1419,8 @@ def update_not_approved_event_status(db, event_id: int, status: str) -> bool:
     return False
 
 
-@db_session
-def enrich_not_approved_event(db, event_id: int, enriched_data: dict) -> bool:
-    """
-    Обновляет EventsNotApproved обогащёнными данными от AI.
-    Обновляет только непустые поля, не затирая существующие.
-
-    Parameters
-    ----------
-    event_id : int
-        ID записи в EventsNotApproved.
-    enriched_data : dict
-        Обогащённые поля: title, address, price, price_int,
-        category, from_date, to_date, url, ticket_url.
-
-    Returns
-    -------
-    bool
-        True если обновлено.
-    """
-    event = db.query(EventsNotApproved).filter_by(id=event_id).first()
-    if not event:
-        return False
-
+def _enrich_not_approved_event(db, event, enriched_data: dict) -> None:
+    """Apply enriched fields to an already-loaded event. Does not commit."""
     allowed_fields = {
         "title", "address", "price", "price_int", "category",
         "from_date", "to_date", "url", "ticket_url",
@@ -1414,9 +1435,21 @@ def enrich_not_approved_event(db, event_id: int, enriched_data: dict) -> bool:
         search = " ".join(
             filter(None, [enriched_data.get("address"), enriched_data.get("title")])
         )
-        keywords = _load_place_keywords()
+        keywords = _load_place_keywords(db)
         event.place_id = _match_place(search, keywords)
 
+
+@db_session
+def enrich_not_approved_event(db, event_id: int, enriched_data: dict) -> bool:
+    """Update EventsNotApproved with AI-enriched data.
+
+    Only non-empty values overwrite existing fields.
+    """
+    event = db.query(EventsNotApproved).filter_by(id=event_id).first()
+    if not event:
+        return False
+
+    _enrich_not_approved_event(db, event, enriched_data)
     db.commit()
     return True
 
@@ -1444,7 +1477,7 @@ def bulk_update_not_approved_status(db, updates: List[dict]) -> int:
             event.status = item["status"]
             enriched = item.get("enriched")
             if enriched:
-                enrich_not_approved_event(item["id"], enriched)
+                _enrich_not_approved_event(db, event, enriched)
             updated += 1
     db.commit()
     return updated
@@ -1515,6 +1548,156 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
         queue_value += 2
     db.commit()
     return created_ids
+
+
+@db_session
+def move_approved_to_posts(db) -> List[int]:
+    """Move events with status 'approved' from NotApproved to Events2Posts and delete them from NotApproved."""
+    from .helper.post_helper import PostHelper
+
+    skip_fields = {'id', 'status', 'approved'}
+    source_columns = {c.key for c in EventsNotApproved.__table__.columns}
+    target_columns = {c.key for c in Events2Posts.__table__.columns}
+    shared_fields = (source_columns & target_columns) - skip_fields
+
+    existing_event_ids = {
+        eid for (eid,) in db.query(Events2Posts.event_id).all() if eid
+    }
+
+    candidates = (
+        db.query(EventsNotApproved)
+        .filter(EventsNotApproved.status == 'approved')
+        .all()
+    )
+
+    last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
+    queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
+    place_keywords = _load_place_keywords(db)
+    moved_ids = []
+
+    for event in candidates:
+        if event.event_id in existing_event_ids:
+            db.delete(event)
+            continue
+
+        event_data = {
+            field: getattr(event, field)
+            for field in shared_fields
+            if getattr(event, field, None) is not None
+        }
+        event_data['status'] = 'ReadyToPost'
+        event_data['queue'] = queue_value
+        queue_value += 2
+
+        # Resolve place
+        place_view = _resolve_place_view(db, event_data, place_keywords)
+        if place_view:
+            event_data['place_id'] = place_view.id
+
+        # prepared_text = original post; a new post is generated below
+        event_data['prepared_text'] = event_data.get('post')
+        helper = PostHelper(event_data, place=place_view)
+        event_data['post'] = helper.post_markdown()
+        main_category_id = helper.main_category()
+        if main_category_id is not None:
+            event_data['main_category_id'] = main_category_id
+        price_int = PostHelper.price_int(event_data.get('price', ''))
+        if price_int is not None:
+            event_data['price_int'] = price_int
+
+        new_event = Events2Posts(**event_data)
+        db.add(new_event)
+        db.flush()
+        moved_ids.append(new_event.id)
+
+        db.delete(event)
+        existing_event_ids.add(event.event_id)
+
+    db.commit()
+    return moved_ids
+
+
+@db_session
+def remake_event_post(db, event_id: int, save: bool = False) -> dict:
+    """Regenerate the post text for an event in Events2Posts.
+
+    Args:
+        event_id: ID of the event in Events2Posts.
+        save: True — update the post in the DB; False — return the preview only.
+
+    Returns:
+        dict with the regenerated post and resolved place_id.
+    """
+    from .helper.post_helper import PostHelper
+
+    event = db.query(Events2Posts).filter_by(id=event_id).first()
+    if not event:
+        return None
+
+    event_data = {
+        c.key: getattr(event, c.key)
+        for c in Events2Posts.__table__.columns
+        if getattr(event, c.key, None) is not None
+    }
+    place_view = _resolve_place_view(db, event_data)
+    if place_view:
+        event_data['place_id'] = place_view.id
+
+    helper = PostHelper(event_data, place=place_view)
+    new_post = helper.post_markdown()
+    place_id = place_view.id if place_view else event.place_id
+    main_category_id = helper.main_category()
+    price_int = PostHelper.price_int(event.price) if event.price else None
+
+    if save:
+        event.post = new_post
+        if place_id:
+            event.place_id = place_id
+        if main_category_id is not None:
+            event.main_category_id = main_category_id
+        if price_int is not None:
+            event.price_int = price_int
+        db.commit()
+
+    return {
+        "post": new_post,
+        "place_id": place_id,
+        "main_category_id": main_category_id,
+        "price_int": price_int,
+        "event_id": event_id,
+        "saved": save,
+    }
+
+
+@db_session
+def make_post_from_dict(db, event_data: dict) -> dict:
+    """Generate a post from an arbitrary dict (preview only, no DB write).
+
+    Args:
+        event_data: dict with event fields (title, full_text, from_date, to_date,
+                    address, price, url, etc.)
+
+    Returns:
+        dict with post, place_id, main_category_id, price_int.
+    """
+    from .helper.post_helper import PostHelper
+
+    event_data = dict(event_data)
+    place_view = _resolve_place_view(db, event_data)
+    if place_view:
+        event_data['place_id'] = place_view.id
+
+    helper = PostHelper(event_data, place=place_view)
+    post = helper.post_markdown()
+    main_category_id = helper.main_category()
+    price_int = PostHelper.price_int(event_data.get('price', ''))
+
+    return {
+        "post": post,
+        "place_id": place_view.id if place_view else None,
+        "main_category_id": main_category_id,
+        "price_int": price_int,
+    }
 
 
 @db_session
