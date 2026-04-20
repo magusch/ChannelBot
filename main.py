@@ -22,9 +22,11 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(event_api.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
+app.include_router(ai_api.router, prefix="/api")
+app.include_router(images_api.router, prefix="/api")
 app.include_router(content_generator.router, prefix="/api")
-
 app.include_router(places_api.router, prefix="/api")
+app.include_router(search_api.router, prefix="/api")
 
 origins = [
     "http://example.com",
