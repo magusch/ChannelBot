@@ -117,18 +117,18 @@ class PostHelper:
             return default
 
     def dates_to_right_tz(self):
-        from_date = self._safe_get('from_date')
-        to_date = self._safe_get('to_date')
-
-        if isinstance(from_date, str):
-            from_date = datetime.fromisoformat(from_date)
-        if isinstance(to_date, str):
-            to_date = datetime.fromisoformat(to_date)
-
-        if from_date:
-            self.event.from_date = from_date.astimezone(self.TIMEZONE)
-        if to_date:
-            self.event.to_date = to_date.astimezone(self.TIMEZONE)
+        msk = self.TIMEZONE
+        for field in ('from_date', 'to_date'):
+            val = self._safe_get(field)
+            if val is None:
+                continue
+            if isinstance(val, str):
+                val = datetime.fromisoformat(val)
+            if val.tzinfo is None:
+                val = msk.localize(val)
+            else:
+                val = val.astimezone(msk)
+            setattr(self.event, field, val)
 
     def _is_long_exhibition(self):
         main_cat_id = self._safe_get('main_category_id')
