@@ -1,11 +1,13 @@
 import datetime, json, os
+import pytz
 import requests
 from bs4 import BeautifulSoup
+from openai import OpenAIError
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery import chain, chord
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
@@ -328,8 +330,14 @@ def download_event_page(urls=[]):
             ai_update_event.apply_async([event, 1])
 
 
-@celery_app.task
-def ai_update_event(event={}, is_new=0):
+@celery_app.task(
+    bind=True,
+    autoretry_for=(OpenAIError,),
+    max_retries=3,
+    retry_backoff=60,
+    retry_backoff_max=600,
+)
+def ai_update_event(self, event={}, is_new=0):
     log.info("Start get post from url.")
 
     msk_today = get_msk_today()
@@ -484,10 +492,18 @@ def prepare_unprepared_events(limit: int = 5):
 
 
 @celery_app.task
-def auto_promote_by_score(min_score: int = 70, limit: int = 20):
+def auto_promote_by_score(
+    min_score: int = 70,
+    limit: int = 20,
+    uncategorized_min_score: int = 80,
+    social_min_score: int = 80,
+):
     """Переносит высокоскоринговые события из NotApproved в Events2Posts."""
     promoted_ids = crud.auto_promote_high_score_events(
-        min_score=min_score, limit=limit
+        min_score=min_score,
+        limit=limit,
+        uncategorized_min_score=uncategorized_min_score,
+        social_min_score=social_min_score,
     )
     log.info(f"Auto-promoted {len(promoted_ids)} events with score >= {min_score}")
 

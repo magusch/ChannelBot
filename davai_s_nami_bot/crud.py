@@ -1701,13 +1701,25 @@ def make_post_from_dict(db, event_data: dict) -> dict:
 
 
 @db_session
-def auto_promote_high_score_events(db, min_score: int = 70, limit: int = 20) -> List[int]:
+def auto_promote_high_score_events(
+    db,
+    min_score: int = 70,
+    limit: int = 20,
+    uncategorized_min_score: int = 80,
+    social_min_score: int = 80,
+) -> List[int]:
     """Переносит мероприятия с высоким score из NotApproved в Events2Posts (draft).
 
     Выбирает события со score >= min_score, from_date в будущем,
     статус 'new' или 'extracted', и которых ещё нет в Events2Posts.
+
+    uncategorized_min_score: порог для событий без категории или "Без категории"
+    social_min_score: порог для событий из соцсетей (vk, telegram, instagram)
     """
+    from .helper.post_helper import PostHelper
+
     msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
+    _social_sources = ['vk', 'telegram', 'instagram']
 
     existing_event_ids = {
         eid for (eid,) in db.query(Events2Posts.event_id).all() if eid
@@ -1719,6 +1731,19 @@ def auto_promote_high_score_events(db, min_score: int = 70, limit: int = 20) -> 
             EventsNotApproved.score >= min_score,
             EventsNotApproved.from_date > msk_now,
             EventsNotApproved.status.in_(['new', 'extracted']),
+            # Без категории / NULL категория требует более высокий score
+            or_(
+                and_(
+                    EventsNotApproved.category.isnot(None),
+                    EventsNotApproved.category != 'Без категории',
+                ),
+                EventsNotApproved.score >= uncategorized_min_score,
+            ),
+            # Соцсети требуют более высокий score
+            or_(
+                ~EventsNotApproved.source.in_(_social_sources),
+                EventsNotApproved.score >= social_min_score,
+            ),
         )
         .order_by(EventsNotApproved.score.desc())
         .limit(limit)
@@ -1734,6 +1759,7 @@ def auto_promote_high_score_events(db, min_score: int = 70, limit: int = 20) -> 
 
     last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
     queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
+    place_keywords = _load_place_keywords(db)
     promoted_ids = []
 
     for event in candidates:
@@ -1748,6 +1774,20 @@ def auto_promote_high_score_events(db, min_score: int = 70, limit: int = 20) -> 
         event_data['status'] = 'ReadyToPost'
         event_data['queue'] = queue_value
         queue_value += 2
+
+        place_view = _resolve_place_view(db, event_data, place_keywords)
+        if place_view:
+            event_data['place_id'] = place_view.id
+
+        event_data['prepared_text'] = event_data.get('post')
+        helper = PostHelper(event_data, place=place_view)
+        event_data['post'] = helper.post_markdown()
+        main_category_id = helper.main_category()
+        if main_category_id is not None:
+            event_data['main_category_id'] = main_category_id
+        price_int = PostHelper.price_int(event_data.get('price', ''))
+        if price_int is not None:
+            event_data['price_int'] = price_int
 
         new_event = Events2Posts(**event_data)
         db.add(new_event)
