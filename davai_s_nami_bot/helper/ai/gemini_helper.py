@@ -103,10 +103,18 @@ class GeminiHelper:
                 self.answer = completion.choices[0].message.content
                 return self.answer
             except OpenAIError as e:
-                if '429' in str(e) and attempt < 2:
-                    wait = 60 * (attempt + 1)
-                    log.warning(f"Gemini rate limit hit, waiting {wait}s (attempt {attempt + 1})")
-                    time.sleep(wait)
+                err_str = str(e)
+                if attempt < 2:
+                    if '429' in err_str:
+                        wait = 60 * (attempt + 1)
+                        log.warning(f"Gemini rate limit, waiting {wait}s (attempt {attempt + 1})")
+                        time.sleep(wait)
+                    elif '503' in err_str:
+                        wait = 20 * (attempt + 1)
+                        log.warning(f"Gemini unavailable (503), waiting {wait}s (attempt {attempt + 1})")
+                        time.sleep(wait)
+                    else:
+                        raise
                 else:
                     raise
 
