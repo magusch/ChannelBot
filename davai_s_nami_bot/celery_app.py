@@ -17,7 +17,7 @@ def create_celery_app():
     beat_schedules = {
         'update-events': {
             'task': 'davai_s_nami_bot.celery_tasks.full_update',
-            'schedule': crontab(hour=0, minute=0),
+            'schedule': crontab(hour=4, minute=40),
         },
         'process-reminders': {
             'task': 'davai_s_nami_bot.celery_tasks.process_reminders',
@@ -25,32 +25,32 @@ def create_celery_app():
         },
         'update-adaptive-scoring': {
             'task': 'davai_s_nami_bot.celery_tasks.update_adaptive_scoring',
-            'schedule': crontab(day_of_week=0, hour=3, minute=0),  # Monday 3 AM
+            'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
         },
     }
 
     beat_schedules['auto-promote-by-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
-        'schedule': crontab(minute=30, hour=0),  # Daily at 00:30, after full_update
+        'schedule': crontab(minute=30, hour=6),  # Daily at 00:30, after full_update
         'kwargs': {'min_score': 70, 'limit': 20},
     }
 
     beat_schedules['distribute-event-queue'] = {
         'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
-        'schedule': crontab(minute=45, hour=0),  # Daily at 00:45, after auto_promote
+        'schedule': crontab(minute=45, hour=5),  # Daily at 00:45, after auto_promote
         'kwargs': {'protect_first': 10},
     }
 
     beat_schedules['auto-moderate-mid-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
-        'schedule': crontab(minute=0, hour=2, day_of_week='1,3,5'),  # Mon, Wed, Fri
+        'schedule': crontab(minute=10, hour=5, day_of_week='1,3,5'),  # Mon, Wed, Fri
         'kwargs': {'min_score': 40, 'max_score': 69, 'sample_size': 10},
     }
 
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
-            'schedule': crontab(minute=0, hour=1),
+            'schedule': crontab(minute=0, hour=5),
             'kwargs': {'limit': settings.prepare_events_limit},
         }
 
