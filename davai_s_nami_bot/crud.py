@@ -1251,7 +1251,7 @@ def update_user(db, nickname: str, user_update: UserUpdate) -> dict:
     db_user = db.query(DsnUser).filter(DsnUser.nickname == nickname).first()
     if not db_user:
         return None
-    for key, value in user_update.dict(exclude_unset=True).items():
+    for key, value in user_update.model_dump(exclude_unset=True).items():
         setattr(db_user, key, value)
     db.commit()
     db.refresh(db_user)

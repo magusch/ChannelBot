@@ -687,7 +687,7 @@ def get_timepad_events(
         )
     today = date.today() + timedelta(days=1)
 
-    existed_event_ids = crud.get_event_id_by_prefix('TIMEPAD')
+    # NOTE: existed_event_ids removed from the code because it's too big
     if request_params is None:
         request_params = timepad_request_params()
 
@@ -712,7 +712,6 @@ def get_timepad_events(
             timepad_parser,
             request_params=request_params,
             tags=ALL_EVENT_TAGS,
-            existed_event_ids=existed_event_ids[0:30]
         )
         new = [i for i in _new if i.event_id not in event_ids]
         event_ids.update([i.event_id for i in _new])
