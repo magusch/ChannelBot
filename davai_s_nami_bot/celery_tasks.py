@@ -2,6 +2,7 @@ import datetime, json, os
 import pytz
 import requests
 from bs4 import BeautifulSoup
+from anthropic import APIStatusError as AnthropicAPIStatusError
 from openai import OpenAIError
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
@@ -185,7 +186,11 @@ def schedule_generated_posting_tasks():
 def work_with_expired_events():
     log.info("Start working with expired events.")
     msk_today = get_msk_today()
-    crud.update_expired_events(msk_today + timedelta(hours=1))
+    expired_stats = crud.update_expired_events(msk_today + timedelta(hours=1))
+    log.info(
+        f"Expired ReadyToPost: posted={expired_stats.get('posted', 0)} "
+        f"(is_ready=True), expired={expired_stats.get('expired', 0)} (is_ready=False/NULL)"
+    )
     crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
     crud.remove_old_not_approved_events(msk_today + timedelta(hours=1))
     log.info("Finished with expired events.")
@@ -332,10 +337,11 @@ def download_event_page(urls=[]):
 
 @celery_app.task(
     bind=True,
-    autoretry_for=(OpenAIError,),
+    autoretry_for=(OpenAIError, AnthropicAPIStatusError),
     max_retries=3,
     retry_backoff=60,
     retry_backoff_max=600,
+    rate_limit='2/m',
 )
 def ai_update_event(self, event={}, is_new=0):
     log.info("Start get post from url.")
@@ -466,15 +472,22 @@ def prepare_events(parameters: dict):
 
 
 @celery_app.task
-def prepare_unprepared_events(limit: int = 5):
-    """Beat task: prepare events where is_ready IS NULL (draft, not yet processed by AI)."""
+def prepare_unprepared_events(limit: int = 15):
+    """Beat task: prepare events where is_ready IS NULL (draft, not yet processed by AI).
+
+    Selection is tiered (see ``crud.get_unprepared_events``): the ``limit`` is
+    split internally — queue head → random sample of nearest by date → top score.
+    """
     events = crud.get_unprepared_events(limit=limit)
 
     if not events:
         log.info("No unprepared events found.")
         return {"message": "No unprepared events.", "count": 0}
 
-    log.info(f"Preparing {len(events)} unprepared events.")
+    log.info(
+        f"Preparing {len(events)} unprepared events "
+        f"(ids={[e.get('id') for e in events]})."
+    )
 
     update_tasks = chord(
         (chain(

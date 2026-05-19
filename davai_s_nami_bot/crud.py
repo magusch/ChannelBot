@@ -1,3 +1,5 @@
+import random
+
 from sqlalchemy import func, asc, desc, exc, or_, and_
 from sqlalchemy.orm import joinedload
 
@@ -234,21 +236,100 @@ def get_approved_events(db, params):
 
 
 @db_session
-def get_unprepared_events(db, limit: int = 10):
-    """Get events where is_ready IS NULL (not yet processed by AI)."""
-    events = (
-        db.query(Events2Posts)
-        .filter(
-            Events2Posts.is_ready.is_(None),
-            Events2Posts.status == "ReadyToPost",
+def get_unprepared_events(
+    db,
+    limit: int = 15,
+    queue_head: int | None = None,
+    nearest_count: int | None = None,
+    nearest_pool_size: int | None = None,
+    top_score_count: int | None = None,
+):
+    """Select unprepared events (status=ReadyToPost, is_ready IS NULL) in 3 tiers:
+
+    1. Queue head — events with lowest ``queue`` (next to be posted; catches up
+       missed AI-prep so they're ready when their turn comes).
+    2. Nearest by date — random sample from the ``nearest_pool_size`` upcoming
+       events ordered by ``from_date``.
+    3. Top score — fill remainder with highest ``score``.
+
+    Tier sizes default to ``limit // 3`` each (so ``limit=15`` → 5 / 5 / 5).
+    Pass explicit tier kwargs to override. Result is deduplicated across tiers
+    and capped at ``limit``.
+    """
+    if queue_head is None:
+        queue_head = limit // 3
+    if nearest_count is None:
+        nearest_count = limit // 3
+    if top_score_count is None:
+        top_score_count = max(0, limit - queue_head - nearest_count)
+    if nearest_pool_size is None:
+        nearest_pool_size = max(nearest_count * 3, 15)
+
+    base_filters = [
+        Events2Posts.is_ready.is_(None),
+        Events2Posts.status == "ReadyToPost",
+    ]
+
+    selected: list = []
+    seen_ids: set = set()
+
+    def _take(rows, cap=None):
+        for row in rows:
+            if cap is not None and len(selected) >= cap:
+                break
+            if row.id in seen_ids:
+                continue
+            seen_ids.add(row.id)
+            selected.append(row)
+
+    # Tier 1: queue head — events about to be posted that still need AI prep.
+    if queue_head > 0:
+        rows = (
+            db.query(Events2Posts)
+            .filter(*base_filters, Events2Posts.queue.isnot(None))
+            .order_by(asc(Events2Posts.queue))
+            .limit(queue_head)
+            .all()
         )
-        .order_by(Events2Posts.id.desc())
-        .limit(limit)
-        .all()
-    )
+        _take(rows, cap=limit)
+
+    # Tier 2: random sample from nearest upcoming events by from_date.
+    if nearest_count > 0 and len(selected) < limit:
+        now = datetime.now(timezone.utc)
+        filters = list(base_filters) + [
+            Events2Posts.from_date.isnot(None),
+            Events2Posts.from_date >= now,
+        ]
+        if seen_ids:
+            filters.append(~Events2Posts.id.in_(seen_ids))
+        pool = (
+            db.query(Events2Posts)
+            .filter(*filters)
+            .order_by(asc(Events2Posts.from_date))
+            .limit(nearest_pool_size)
+            .all()
+        )
+        if pool:
+            sample = random.sample(pool, min(nearest_count, len(pool)))
+            _take(sample, cap=limit)
+
+    # Tier 3: fill remainder with top-scoring events.
+    if top_score_count > 0 and len(selected) < limit:
+        remaining = limit - len(selected)
+        filters = list(base_filters) + [Events2Posts.score.isnot(None)]
+        if seen_ids:
+            filters.append(~Events2Posts.id.in_(seen_ids))
+        rows = (
+            db.query(Events2Posts)
+            .filter(*filters)
+            .order_by(desc(Events2Posts.score))
+            .limit(min(top_score_count, remaining))
+            .all()
+        )
+        _take(rows, cap=limit)
 
     event_dict_list = []
-    for event in events:
+    for event in selected:
         event_data = {
             field: getattr(event, field)
             for field in event.__table__.columns.keys()
@@ -384,9 +465,34 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
 
 @db_session
 def update_expired_events(db, date):
-    db.query(Events2Posts)\
-        .filter(Events2Posts.to_date < date, Events2Posts.status == 'ReadyToPost')\
-        .update({'status': 'Posted', 'post_date': None})
+    """Перевод истёкших ReadyToPost в терминальный статус.
+
+    - ``is_ready = True``  → ``'Posted'`` — событие было подготовлено к публикации,
+      но дата прошла. Сохраняем как ранее (учитывается в статистике площадок).
+    - ``is_ready`` IS NULL / False → ``'Expired'`` — мероприятие так и не было
+      подготовлено AI, постить нечего; помечаем отдельным статусом, чтобы
+      не засорять аналитику "опубликованных".
+    """
+    expired_filter = and_(
+        Events2Posts.to_date < date,
+        Events2Posts.status == 'ReadyToPost',
+    )
+
+    posted_count = (
+        db.query(Events2Posts)
+        .filter(expired_filter, Events2Posts.is_ready.is_(True))
+        .update({'status': 'Posted', 'post_date': None}, synchronize_session=False)
+    )
+    expired_count = (
+        db.query(Events2Posts)
+        .filter(
+            expired_filter,
+            or_(Events2Posts.is_ready.is_(False), Events2Posts.is_ready.is_(None)),
+        )
+        .update({'status': 'Expired', 'post_date': None}, synchronize_session=False)
+    )
+
+    return {'posted': posted_count, 'expired': expired_count}
 
 
 @db_session
@@ -809,7 +915,7 @@ def get_date_event_counts(db, days: int = 10) -> dict:
         .filter(
             Events2Posts.from_date >= today,
             Events2Posts.from_date < cutoff,
-            Events2Posts.status.in_(["Posted", "ReadyToPost"]),
+            Events2Posts.status.in_(["Posted", "ReadyToPost", "Expired"]),
         )
         .all()
     )
@@ -1755,6 +1861,7 @@ def auto_promote_high_score_events(
         'price_int', 'url', 'ticket_url', 'address', 'from_date',
         'to_date', 'category', 'source', 'place_id', 'explored_date',
         'score', 'score_breakdown',
+        'embedding', 'embedding_model', 'embedding_updated_at',
     ]
 
     last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()

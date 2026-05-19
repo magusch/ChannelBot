@@ -55,7 +55,24 @@ async def get_status(task_id: str):
         return {"status": result.state}
 
 
-@router.post("/param/", response_model=TaskResponse)
+@router.delete("/{task_id}",
+                summary="Отменить задачу",
+                description=(
+                    "Отзывает Celery задачу. Если задача в PENDING/RETRY — она не "
+                    "будет выполнена. Если уже выполняется в воркере — текущий "
+                    "запуск завершится естественно (terminate=False), но "
+                    "дальнейшие автоматические retry не запустятся. "
+                    "Используется фронтом при fallback на локальную обработку, "
+                    "чтобы серверный retry не перезаписал локальный результат в БД."
+                ))
+async def cancel_task(task_id: str):
+    celery_app.control.revoke(task_id)
+    return {"status": "revoked", "task_id": task_id}
+
+
+@router.post("/param/", response_model=TaskResponse,
+              summary="Обновить параметры",
+              description="Обновление DSN параметров из Redis.")
 async def update_parameters():
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_parameters',

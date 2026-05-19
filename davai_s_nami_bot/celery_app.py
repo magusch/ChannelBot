@@ -31,14 +31,8 @@ def create_celery_app():
 
     beat_schedules['auto-promote-by-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
-        'schedule': crontab(minute=30, hour=6),  # Daily at 00:30, after full_update
+        'schedule': crontab(minute=0, hour=5),
         'kwargs': {'min_score': 70, 'limit': 20},
-    }
-
-    beat_schedules['distribute-event-queue'] = {
-        'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
-        'schedule': crontab(minute=45, hour=5),  # Daily at 00:45, after auto_promote
-        'kwargs': {'protect_first': 10},
     }
 
     beat_schedules['auto-moderate-mid-score'] = {
@@ -50,9 +44,15 @@ def create_celery_app():
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
-            'schedule': crontab(minute=0, hour=5),
+            'schedule': crontab(minute=25, hour=5),
             'kwargs': {'limit': settings.prepare_events_limit},
         }
+
+    beat_schedules['distribute-event-queue'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
+        'schedule': crontab(minute=0, hour=6),
+        'kwargs': {'protect_first': 8},
+    }
 
     if settings.task_event_post:
         beat_schedules['schedule-posting-tasks'] = {
