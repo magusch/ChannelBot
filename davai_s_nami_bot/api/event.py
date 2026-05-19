@@ -27,8 +27,8 @@ def get_event(event_id: int):
 
 
 @router.post("/valid/", dependencies=[Depends(verify_token)],
-              summary="Список событий по фильтрам",
-              description="Получение мероприятий с фильтрами: дата, категория, место, цена, статус. Кеш 10 мин.")
+              summary="List events by filters",
+              description="Retrieve events with filters: date, category, place, price, status. Cached for 10 min.")
 async def get_valid_events(body: EventRequestParameters, request: Request):
     data = body.model_dump(mode='json')
     cache_key = get_cache_key(data)
@@ -47,16 +47,16 @@ async def get_valid_events(body: EventRequestParameters, request: Request):
 
 
 @router.post("/make_post/", dependencies=[Depends(verify_token)],
-              summary="Сгенерировать пост из данных",
-              description="Принимает dict с данными мероприятия, возвращает готовый пост. Без сохранения в БД.")
+              summary="Generate a post from data",
+              description="Accepts a dict with event data, returns a ready-made post. Does not save to DB.")
 def make_post(event: dict):
     result = crud.make_post_from_dict(event_data=event)
     return {"status": "success", "result": result}
 
 
 @router.post("/remake_post/{event_id}", dependencies=[Depends(verify_token)],
-              summary="Перегенерировать пост мероприятия",
-              description="Генерирует новый текст поста. save=false — только превью, save=true — сохраняет в БД.")
+              summary="Regenerate event post",
+              description="Generates a new post text. save=false — preview only, save=true — saves to DB.")
 def remake_post(event_id: int, save: bool = False):
     result = crud.remake_event_post(event_id=event_id, save=save)
     if not result:
@@ -68,8 +68,8 @@ def remake_post(event_id: int, save: bool = False):
 
 
 @router.post("/valid/{event_id}", dependencies=[Depends(verify_token)],
-              summary="Событие по ID (с кешем)",
-              description="Получение мероприятия по ID. Кеш 10 мин.")
+              summary="Event by ID (cached)",
+              description="Retrieve an event by ID. Cached for 10 min.")
 async def get_valid_event_by_id(event_id: int, request: Request):
     await log_api_request(request, {"ids": [event_id]})
 

@@ -41,6 +41,12 @@ def create_celery_app():
         'kwargs': {'min_score': 40, 'max_score': 69, 'sample_size': 10},
     }
 
+    if settings.auto_route_to_api.get('enabled'):
+        beat_schedules['auto-route-to-api'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.auto_route_to_api',
+            'schedule': crontab(minute=15, hour=5),  # после auto_promote (05:00), до prepare (05:25)
+        }
+
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
@@ -48,9 +54,17 @@ def create_celery_app():
             'kwargs': {'limit': settings.prepare_events_limit},
         }
 
+    beat_schedules['embed-unembedded-events'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.embed_unembedded_events',
+        'schedule': crontab(minute=45, hour=5),
+        'kwargs': {'limit': 100, 'table': 'both'},
+    }
+
     beat_schedules['distribute-event-queue'] = {
         'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
         'schedule': crontab(minute=0, hour=6),
+        # protect_first=8 ≈ ближайшие 2 дня публикаций (при ~4 постах/день):
+        # уже расписанные слоты не дёргаем, остальное переупорядочиваем.
         'kwargs': {'protect_first': 8},
     }
 

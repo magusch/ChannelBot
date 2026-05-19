@@ -68,7 +68,9 @@ def get_events_by_date_and_category(db, params):
     query = db.query(Events2Posts).options(joinedload(Events2Posts.place)).order_by(sort_order)
 
     if params.status != 'all':
-        query = query.filter((Events2Posts.status == 'Posted') | Events2Posts.is_ready)
+        query = query.filter(
+            Events2Posts.status.in_(('Posted', 'OnlyApi')) | Events2Posts.is_ready
+        )
 
     dict_requests = {}
     if params.ids:
@@ -373,7 +375,7 @@ def get_ready_to_post_events(db):
     """
     events = db.query(Events2Posts).filter(Events2Posts.status == 'ReadyToPost').all()
 
-    # Преобразуем объекты SQLAlchemy в объекты Event
+    # Convert SQLAlchemy objects to Event objects
     result = [Event.from_database(event) for event in events]
 
     return result
@@ -399,7 +401,7 @@ def get_event_to_post_now(db):
     if not events:
         return None
 
-    # Преобразуем объекты SQLAlchemy в объекты Event
+    # Convert SQLAlchemy objects to Event objects
     result = [Event.from_database(event) for event in events]
 
     return result
@@ -465,13 +467,13 @@ def update_not_approved_events_set_approved(db, event_ids=[]):
 
 @db_session
 def update_expired_events(db, date):
-    """Перевод истёкших ReadyToPost в терминальный статус.
+    """Transition expired ReadyToPost events to a terminal status.
 
-    - ``is_ready = True``  → ``'Posted'`` — событие было подготовлено к публикации,
-      но дата прошла. Сохраняем как ранее (учитывается в статистике площадок).
-    - ``is_ready`` IS NULL / False → ``'Expired'`` — мероприятие так и не было
-      подготовлено AI, постить нечего; помечаем отдельным статусом, чтобы
-      не засорять аналитику "опубликованных".
+    - ``is_ready = True``  → ``'Posted'`` — the event was prepared for publication
+      but its date has passed. Counted in place statistics.
+    - ``is_ready`` IS NULL / False → ``'Expired'`` — the event was never prepared
+      by AI, nothing to post; kept as a separate status to avoid polluting
+      the "published" analytics.
     """
     expired_filter = and_(
         Events2Posts.to_date < date,
@@ -915,7 +917,7 @@ def get_date_event_counts(db, days: int = 10) -> dict:
         .filter(
             Events2Posts.from_date >= today,
             Events2Posts.from_date < cutoff,
-            Events2Posts.status.in_(["Posted", "ReadyToPost", "Expired"]),
+            Events2Posts.status.in_(["Posted", "ReadyToPost", "Expired", "OnlyApi"]),
         )
         .all()
     )
@@ -1463,22 +1465,22 @@ AI_SOURCES = ["telegram"]
 @db_session
 def get_not_approved_events_for_processing(db, limit: int = 50, source: str = None, sources: List[str] = None) -> List[dict]:
     """
-    Получает события со статусом 'new' для AI обработки.
+    Retrieve events with status 'new' for AI processing.
 
     Parameters
     ----------
     limit : int
-        Максимальное количество событий.
+        Maximum number of events.
     source : str, optional
-        Фильтр по одному источнику.
+        Filter by a single source.
     sources : List[str], optional
-        Фильтр по нескольким источникам.
-        По умолчанию AI_SOURCES (telegram, instagram, vk).
+        Filter by multiple sources.
+        Defaults to AI_SOURCES (telegram, instagram, vk).
 
     Returns
     -------
     List[dict]
-        Список событий с полями: id, text, image, source.
+        List of events with fields: id, text, image, source.
     """
     query = db.query(EventsNotApproved).filter(
         EventsNotApproved.status == 'new',
@@ -1503,19 +1505,19 @@ def get_not_approved_events_for_processing(db, limit: int = 50, source: str = No
 @db_session
 def update_not_approved_event_status(db, event_id: int, status: str) -> bool:
     """
-    Обновляет статус события в EventsNotApproved.
+    Update the status of an event in EventsNotApproved.
 
     Parameters
     ----------
     event_id : int
-        ID события.
+        Event ID.
     status : str
-        Новый статус: 'new', 'extracted', 'not_event', 'pending', 'approved', 'rejected', 'spam', 'duplicate'.
+        New status: 'new', 'extracted', 'not_event', 'pending', 'approved', 'rejected', 'spam', 'duplicate'.
 
     Returns
     -------
     bool
-        True если обновлено успешно.
+        True if updated successfully.
     """
     event = db.query(EventsNotApproved).filter_by(id=event_id).first()
     if event:
@@ -1563,18 +1565,18 @@ def enrich_not_approved_event(db, event_id: int, enriched_data: dict) -> bool:
 @db_session
 def bulk_update_not_approved_status(db, updates: List[dict]) -> int:
     """
-    Массовое обновление статусов и (опционально) обогащённых данных.
+    Bulk update of statuses and (optionally) enriched data.
 
     Parameters
     ----------
     updates : List[dict]
-        Список обновлений: [{"id": 1, "status": "extracted", "enriched": {...}}, ...]
-        enriched — опциональный dict с полями для обновления.
+        List of updates: [{"id": 1, "status": "extracted", "enriched": {...}}, ...]
+        enriched — optional dict with fields to update.
 
     Returns
     -------
     int
-        Количество обновлённых записей.
+        Number of updated records.
     """
     updated = 0
     for item in updates:
@@ -1591,7 +1593,7 @@ def bulk_update_not_approved_status(db, updates: List[dict]) -> int:
 
 @db_session
 def get_not_approved_event_by_id(db, event_id: int) -> dict:
-    """Получает событие по ID."""
+    """Retrieve an event by ID."""
     event = db.query(EventsNotApproved).filter_by(id=event_id).first()
     if event:
         return {
@@ -1614,7 +1616,7 @@ def get_not_approved_event_by_id(db, event_id: int) -> dict:
 
 @db_session
 def create_not_approved_event(db, event_data: dict) -> int:
-    """Создаёт запись в EventsNotApproved."""
+    """Create a record in EventsNotApproved."""
     event_data.setdefault("status", "new")
     result = create_event(db, event_data, EventsNotApproved)
     return result["id"]
@@ -1622,7 +1624,7 @@ def create_not_approved_event(db, event_data: dict) -> int:
 
 @db_session
 def create_event_to_post(db, event_data: dict) -> int:
-    """Создаёт запись в Events2Posts с автоматическим queue."""
+    """Create a record in Events2Posts with an automatic queue value."""
     if "queue" not in event_data:
         last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
         event_data["queue"] = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
@@ -1639,7 +1641,7 @@ def create_event_to_post(db, event_data: dict) -> int:
 
 @db_session
 def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
-    """Создаёт несколько записей в Events2Posts."""
+    """Create multiple records in Events2Posts."""
     last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
     queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
     created_ids = []
@@ -1814,13 +1816,13 @@ def auto_promote_high_score_events(
     uncategorized_min_score: int = 80,
     social_min_score: int = 80,
 ) -> List[int]:
-    """Переносит мероприятия с высоким score из NotApproved в Events2Posts (draft).
+    """Move high-scoring events from NotApproved to Events2Posts (draft).
 
-    Выбирает события со score >= min_score, from_date в будущем,
-    статус 'new' или 'extracted', и которых ещё нет в Events2Posts.
+    Selects events with score >= min_score, from_date in the future,
+    status 'new' or 'extracted', and not yet present in Events2Posts.
 
-    uncategorized_min_score: порог для событий без категории или "Без категории"
-    social_min_score: порог для событий из соцсетей (vk, telegram, instagram)
+    uncategorized_min_score: threshold for events without a category or with "Без категории"
+    social_min_score: threshold for events from social networks (vk, telegram, instagram)
     """
     from .helper.post_helper import PostHelper
 
@@ -1837,7 +1839,7 @@ def auto_promote_high_score_events(
             EventsNotApproved.score >= min_score,
             EventsNotApproved.from_date > msk_now,
             EventsNotApproved.status.in_(['new', 'extracted']),
-            # Без категории / NULL категория требует более высокий score
+            # No category / NULL category requires a higher score
             or_(
                 and_(
                     EventsNotApproved.category.isnot(None),
@@ -1845,7 +1847,7 @@ def auto_promote_high_score_events(
                 ),
                 EventsNotApproved.score >= uncategorized_min_score,
             ),
-            # Соцсети требуют более высокий score
+            # Social networks require a higher score
             or_(
                 ~EventsNotApproved.source.in_(_social_sources),
                 EventsNotApproved.score >= social_min_score,
@@ -1912,7 +1914,7 @@ def auto_promote_high_score_events(
 def get_mid_score_events_sample(
     db, min_score: int = 40, max_score: int = 69, sample_size: int = 10
 ) -> List[dict]:
-    """Случайная выборка событий со средним score для AI-модерации."""
+    """Random sample of mid-score events for AI moderation."""
     from sqlalchemy.sql.expression import func as sql_func
 
     msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
@@ -1938,7 +1940,7 @@ def get_mid_score_events_sample(
 
 @db_session
 def auto_reject_low_score_events(db, max_score: int = 39) -> int:
-    """Автоотклонение мероприятий с очень низким score."""
+    """Auto-reject events with a very low score."""
     msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
 
     count = (
@@ -1957,14 +1959,14 @@ def auto_reject_low_score_events(db, max_score: int = 39) -> int:
 
 @db_session
 def distribute_event_queue(db, protect_first: int = 10) -> int:
-    """Переупорядочивает queue для ReadyToPost событий с разнообразием.
+    """Reorder the queue for ReadyToPost events with variety.
 
-    Первые protect_first событий (по queue) не трогаются.
-    Остальные переупорядочиваются: round-robin по категориям,
-    внутри категории — по срочности (from_date) и score.
+    The first protect_first events (by queue) are left untouched.
+    The rest are reordered: round-robin by category,
+    within a category — by urgency (from_date) and score.
 
     Returns:
-        Количество переупорядоченных событий.
+        Number of reordered events.
     """
     from collections import defaultdict
 
@@ -1981,10 +1983,10 @@ def distribute_event_queue(db, protect_first: int = 10) -> int:
     protected = all_events[:protect_first]
     to_reorder = all_events[protect_first:]
 
-    # Базовое значение queue — после последнего защищённого
+    # Base queue value — after the last protected event
     base_queue = (protected[-1].queue if protected else 0) + 2
 
-    # Группируем по категории
+    # Group by category
     by_category = defaultdict(list)
     for event in to_reorder:
         cat = event.category or 'Без категории'
@@ -1992,20 +1994,20 @@ def distribute_event_queue(db, protect_first: int = 10) -> int:
 
     msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
 
-    # Внутри каждой категории сортируем: срочные (from_date ближе) и высокий score первыми
+    # Within each category sort: most urgent (from_date soonest) and highest score first
     for cat in by_category:
         by_category[cat].sort(key=lambda e: (
             (e.from_date - msk_now).total_seconds() if e.from_date else 999999999,
             -(e.score or 0),
         ))
 
-    # Round-robin по категориям (от большей к меньшей, чтобы популярные чередовались)
+    # Round-robin by category (largest first so popular categories interleave)
     category_queues = sorted(
         by_category.values(),
         key=lambda q: -len(q),
     )
 
-    # Дополнительно чередуем: бесплатные/платные и разные источники
+    # Additionally interleave: free/paid and different sources
     ordered = []
     while any(category_queues):
         for queue in category_queues:
@@ -2013,9 +2015,87 @@ def distribute_event_queue(db, protect_first: int = 10) -> int:
                 ordered.append(queue.pop(0))
         category_queues = [q for q in category_queues if q]
 
-    # Присваиваем новые queue значения
+    # Assign new queue values
     for i, event in enumerate(ordered):
         event.queue = base_queue + i * 2
 
     db.commit()
     return len(ordered)
+
+
+@db_session
+def route_events_to_api(
+    db,
+    min_score: int = 55,
+    hard_min_score: int = 35,
+    low_category_ids: List[int] = None,
+    far_days: int = 14,
+    limit: int = 100,
+    min_channel_queue: int = 20,
+) -> List[int]:
+    """Remove low-priority events from the channel: ReadyToPost+is_ready IS NULL → OnlyApi.
+
+    An event is a candidate if any of the following is true:
+      - score < hard_min_score (junk)
+      - score < min_score AND main_category_id IN low_category_ids
+      - from_date > now + far_days (too far ahead)
+
+    Safety floor: if fewer than min_channel_queue events with
+    (ReadyToPost & is_ready=True) are scheduled in the next 7 days, skip this run.
+
+    Returns a list of IDs of the moved events.
+
+    # TODO: optional AI prep for OnlyApi — for now we rely on the post field
+    # filled by PostHelper.post_markdown() in auto_promote_high_score_events / add_events_to_post.
+    """
+    low_category_ids = low_category_ids or []
+    msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
+
+    channel_window_end = msk_now + timedelta(days=7)
+    channel_ready_count = (
+        db.query(func.count(Events2Posts.id))
+        .filter(
+            Events2Posts.status == 'ReadyToPost',
+            Events2Posts.is_ready.is_(True),
+            Events2Posts.from_date >= msk_now,
+            Events2Posts.from_date < channel_window_end,
+        )
+        .scalar()
+    )
+    if channel_ready_count < min_channel_queue:
+        return []
+
+    far_cutoff = msk_now + timedelta(days=far_days)
+
+    criteria = [Events2Posts.score < hard_min_score]
+    if low_category_ids:
+        criteria.append(
+            and_(
+                Events2Posts.score < min_score,
+                Events2Posts.main_category_id.in_(low_category_ids),
+            )
+        )
+    criteria.append(Events2Posts.from_date > far_cutoff)
+
+    candidates = (
+        db.query(Events2Posts)
+        .filter(
+            Events2Posts.status == 'ReadyToPost',
+            Events2Posts.is_ready.is_(None),
+            Events2Posts.from_date >= msk_now,
+            or_(*criteria),
+        )
+        .order_by(asc(Events2Posts.score))
+        .limit(limit)
+        .all()
+    )
+
+    routed_ids = []
+    for event in candidates:
+        event.status = 'OnlyApi'
+        event.post_date = None
+        routed_ids.append(event.id)
+
+    if routed_ids:
+        db.commit()
+    return routed_ids

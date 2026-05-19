@@ -505,13 +505,80 @@ def prepare_unprepared_events(limit: int = 15):
 
 
 @celery_app.task
+def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str = None):
+    """Backfill / refresh embeddings for Events2Posts and EventsNotApproved.
+
+    Picks rows where embedding IS NULL OR embedding_model != current model_label.
+    Changing provider/model regenerates on the next run automatically.
+    table ∈ {"both", "events2posts", "not_approved"}.
+    provider: None → uses EMBEDDING_PROVIDER env var (default "gemini"), or pass "openai".
+    """
+    from sqlalchemy import or_
+    from sqlalchemy.orm import joinedload
+
+    from .database.database_orm import get_db_session
+    from .database.models import Events2Posts, EventsNotApproved
+    from .helper.embeddings import EmbeddingClient, build_embedding_input
+
+    tables_map = {
+        "events2posts": [Events2Posts],
+        "not_approved": [EventsNotApproved],
+        "both": [Events2Posts, EventsNotApproved],
+    }
+    if table not in tables_map:
+        raise ValueError(f"Unknown table {table!r}, expected one of {list(tables_map)}")
+
+    client = EmbeddingClient(provider=provider)
+    model_label = client.model_label
+    total = 0
+
+    for model_cls in tables_map[table]:
+        with get_db_session() as db:
+            rows = (
+                db.query(model_cls)
+                .options(joinedload(model_cls.place))
+                .filter(
+                    or_(
+                        model_cls.embedding.is_(None),
+                        model_cls.embedding_model != model_label,
+                    )
+                )
+                .order_by(model_cls.id.desc())
+                .limit(limit)
+                .all()
+            )
+            if not rows:
+                continue
+
+            texts = [build_embedding_input(r) for r in rows]
+            # Empty input would 400 from the API. Skip those rows for this run.
+            valid = [(r, t) for r, t in zip(rows, texts) if t]
+            if not valid:
+                log.info(f"{model_cls.__tablename__}: {len(rows)} rows have empty embedding input, skipping.")
+                continue
+
+            vectors = client.embed_batch([t for _, t in valid])
+            now = datetime.now()
+            for (row, _), vector in zip(valid, vectors):
+                row.embedding = vector
+                row.embedding_model = model_label
+                row.embedding_updated_at = now
+            db.commit()
+            total += len(valid)
+            log.info(f"{model_cls.__tablename__}: embedded {len(valid)} rows.")
+
+    log.info(f"embed_unembedded_events done: {total} rows (table={table}).")
+    return {"embedded": total, "table": table}
+
+
+@celery_app.task
 def auto_promote_by_score(
     min_score: int = 70,
     limit: int = 20,
     uncategorized_min_score: int = 80,
     social_min_score: int = 80,
 ):
-    """Переносит высокоскоринговые события из NotApproved в Events2Posts."""
+    """Move high-scoring events from NotApproved to Events2Posts."""
     promoted_ids = crud.auto_promote_high_score_events(
         min_score=min_score,
         limit=limit,
@@ -531,8 +598,31 @@ def auto_promote_by_score(
 
 
 @celery_app.task
+def auto_route_to_api():
+    """Move low-priority ReadyToPost events off the channel into the OnlyApi status.
+
+    Parameters are read from settings.auto_route_to_api. If the section is empty
+    or enabled=False the task is not scheduled in beat; a manual call still
+    runs with crud.route_events_to_api defaults.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.auto_route_to_api or {}
+    routed_ids = crud.route_events_to_api(
+        min_score=cfg.get('min_score', 55),
+        hard_min_score=cfg.get('hard_min_score', 35),
+        low_category_ids=cfg.get('low_category_ids') or [],
+        far_days=cfg.get('far_days', 14),
+        limit=cfg.get('limit', 100),
+        min_channel_queue=cfg.get('min_channel_queue', 20),
+    )
+    log.info(f"Auto-routed {len(routed_ids)} events to OnlyApi (cfg={cfg})")
+    return {"routed_count": len(routed_ids), "routed_ids": routed_ids}
+
+
+@celery_app.task
 def distribute_event_queue(protect_first: int = 10):
-    """Переупорядочивает очередь публикации для разнообразия контента."""
+    """Reorder the publication queue for content variety."""
     reordered = crud.distribute_event_queue(protect_first=protect_first)
     log.info(f"Reordered {reordered} events in posting queue")
     return {"reordered_count": reordered}
@@ -542,12 +632,12 @@ def distribute_event_queue(protect_first: int = 10):
 def auto_moderate_mid_score_events(
     min_score: int = 40, max_score: int = 69, sample_size: int = 10
 ):
-    """AI-модерация случайной выборки событий со средним score."""
-    # Автоотклонение мусора (score < min_score)
+    """AI moderation of a random sample of mid-score events."""
+    # Auto-reject junk (score < min_score)
     rejected_count = crud.auto_reject_low_score_events(max_score=min_score - 1)
     log.info(f"Auto-rejected {rejected_count} events with score < {min_score}")
 
-    # Случайная выборка для AI-модерации
+    # Random sample for AI moderation
     events = crud.get_mid_score_events_sample(
         min_score=min_score, max_score=max_score, sample_size=sample_size
     )

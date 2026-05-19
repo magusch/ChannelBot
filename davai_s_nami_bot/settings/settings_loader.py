@@ -21,6 +21,7 @@ class Settings:
         self.scoring = self.raw['features'].get('scoring', {})
         self.vk_posting_enabled = self.raw['features'].get('vk_posting_enabled', False)
         self.prepare_events_limit = self.raw['features'].get('prepare_events_limit', 0)
+        self.auto_route_to_api = self.raw['features'].get('auto_route_to_api', {})
 
 
 settings = Settings()

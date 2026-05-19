@@ -2,6 +2,9 @@ from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, F
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
+
+EMBEDDING_DIMENSIONS = 1536
 
 from datetime import datetime, timezone
 
@@ -129,6 +132,10 @@ class Events2Posts(Base):
     score = Column(Integer, nullable=True)
     score_breakdown = Column(JSONB, nullable=True)
 
+    embedding = Column(Vector(EMBEDDING_DIMENSIONS), nullable=True)
+    embedding_model = Column(String(64), nullable=True)
+    embedding_updated_at = Column(DateTime, nullable=True)
+
     bot_user_events = relationship("DsnBotUserEvents", back_populates="event", cascade="all, delete-orphan")
     dsn_user_events = relationship("DsnUserEvent", back_populates="event", cascade="all, delete-orphan")
 
@@ -171,6 +178,10 @@ class EventsNotApproved(Base):
     place = relationship("Place")
     score = Column(Integer, nullable=True)
     score_breakdown = Column(JSONB, nullable=True)
+
+    embedding = Column(Vector(EMBEDDING_DIMENSIONS), nullable=True)
+    embedding_model = Column(String(64), nullable=True)
+    embedding_updated_at = Column(DateTime, nullable=True)
 
 
 class Exhibitions(Base):
