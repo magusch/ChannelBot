@@ -256,13 +256,17 @@ class EmbeddingClient:
         last_exc = None
         for attempt in range(max_retries):
             try:
+                # `dimensions=` as a top-level kwarg only exists in openai>=1.10.
+                # We're pinned to 1.9.x project-wide, so pass it via extra_body
+                # which merges into the request JSON in any 1.x SDK.
                 response = self.client.embeddings.create(
                     model=self.model,
                     input=chunk,
-                    dimensions=self.dimensions,
+                    extra_body={"dimensions": self.dimensions},
                 )
-                ordered = sorted(response.data, key=lambda d: d.index)
-                return [item.embedding for item in ordered]
+                # Both OpenAI and Gemini-compat preserve input order in response.data.
+                # Gemini-compat does not populate `.index`, so we cannot sort by it.
+                return [item.embedding for item in response.data]
             except RateLimitError as e:
                 last_exc = e
                 # Heavy backoff for 429: 30s, 60s, 120s, 240s by default.
