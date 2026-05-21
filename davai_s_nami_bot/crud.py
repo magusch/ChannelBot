@@ -1715,6 +1715,15 @@ def create_event_to_post(db, event_data: dict) -> int:
             address=event_data.get("address"),
             title=event_data.get("title"),
         )
+    main_category_id = resolve_main_category_id(
+        db,
+        category_str=event_data.get("category"),
+        current_main_category_id=event_data.get("main_category_id"),
+        title=event_data.get("title", ""),
+        full_text=event_data.get("full_text", ""),
+    )
+    if main_category_id is not None:
+        event_data["main_category_id"] = main_category_id
     result = create_event(db, event_data, Events2Posts)
     return result["id"]
 
@@ -1729,6 +1738,15 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
         event_data.setdefault("queue", queue_value)
         event_data.setdefault("status", "draft")
         event_data.setdefault("is_ready", event_data["status"] == "ReadyToPost")
+        main_category_id = resolve_main_category_id(
+            db,
+            category_str=event_data.get("category"),
+            current_main_category_id=event_data.get("main_category_id"),
+            title=event_data.get("title", ""),
+            full_text=event_data.get("full_text", ""),
+        )
+        if main_category_id is not None:
+            event_data["main_category_id"] = main_category_id
         event = Events2Posts(**event_data)
         db.add(event)
         db.flush()
