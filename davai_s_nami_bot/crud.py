@@ -4,7 +4,7 @@ from sqlalchemy import func, asc, desc, exc, or_, and_
 from sqlalchemy.orm import joinedload
 
 from .database.models import Events2Posts, EventsNotApproved, Exhibitions, DsnBotEvents, Place, PlaceKeyword, \
-    ApiRequestLog, DsnBotUserEvents, DsnUser, DsnUserEvent
+    ApiRequestLog, DsnBotUserEvents, DsnUser, DsnUserEvent, Category, SubCategory
 from .database.database_orm import db_session
 
 from .pydantic_models import UserCreate, UserUpdate
@@ -1283,6 +1283,86 @@ def _resolve_place_view(db, event_data: dict, place_keywords=None):
     return _place_to_view(place)
 
 
+OTHER_CATEGORY_NAME = "Other"
+UNCATEGORIZED_CATEGORY_ID = 2  # 'Без категории' — treated as fallback, re-resolved like NULL
+
+
+def _get_or_create_other_category(db) -> Category:
+    other = db.query(Category).filter(Category.name == OTHER_CATEGORY_NAME).first()
+    if other:
+        return other
+    other = Category(name=OTHER_CATEGORY_NAME)
+    db.add(other)
+    db.flush()
+    return other
+
+
+def resolve_main_category_id(
+    db,
+    category_str: str | None,
+    current_main_category_id: int | None = None,
+    title: str = "",
+    full_text: str = "",
+    write: bool = True,
+) -> int | None:
+    """Port of Django Events2Post.save() + SubCategory.save() fallback.
+
+    Rules (mirroring Django):
+      1. If current_main_category_id is set AND != UNCATEGORIZED_CATEGORY_ID — keep it.
+      2. Else if category_str matches a SubCategory.name — return its category_id.
+         If that SubCategory has no category — attach it to Category('Other') (write).
+      3. Else if category_str non-empty — create SubCategory + attach to 'Other' (write).
+      4. Else (category_str empty/None) — fall back to keyword inference from title/full_text.
+         Does NOT write to the DB in this branch (no name to store).
+
+    Args:
+        write: if False, only look up existing SubCategory; falls back to keyword
+               guess when missing. Use for preview / no-side-effect calls.
+
+    Returns: category_id or None.
+    """
+    if current_main_category_id is not None and current_main_category_id != UNCATEGORIZED_CATEGORY_ID:
+        return current_main_category_id
+
+    name = (category_str or "").strip()
+    if not name:
+        return resolve_category_id(
+            main_category_id=None,
+            category_str=None,
+            title=title,
+            full_text=full_text,
+        )
+
+    subcat = db.query(SubCategory).filter(SubCategory.name == name).first()
+    if subcat is not None:
+        if subcat.category_id is not None:
+            return subcat.category_id
+        if not write:
+            return resolve_category_id(
+                main_category_id=None,
+                category_str=name,
+                title=title,
+                full_text=full_text,
+            )
+        other = _get_or_create_other_category(db)
+        subcat.category_id = other.id
+        db.flush()
+        return other.id
+
+    if not write:
+        return resolve_category_id(
+            main_category_id=None,
+            category_str=name,
+            title=title,
+            full_text=full_text,
+        )
+    other = _get_or_create_other_category(db)
+    subcat = SubCategory(name=name, category_id=other.id)
+    db.add(subcat)
+    db.flush()
+    return other.id
+
+
 ######–-FINISH-–######
 
 ### Searching functions ###
@@ -1659,8 +1739,13 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
 
 
 @db_session
-def move_approved_to_posts(db) -> List[int]:
-    """Move events with status 'approved' from NotApproved to Events2Posts and delete them from NotApproved."""
+def move_approved_to_posts(db, status: str = 'ReadyToPost') -> List[int]:
+    """Move events with status 'approved' from NotApproved to Events2Posts and delete them from NotApproved.
+
+    Args:
+        status: target status in Events2Posts (default 'ReadyToPost'; e.g. 'OnlyApi'
+                to push events to the API-only bucket without channel publication).
+    """
     from .helper.post_helper import PostHelper
 
     skip_fields = {'id', 'status', 'approved'}
@@ -1693,7 +1778,7 @@ def move_approved_to_posts(db) -> List[int]:
             for field in shared_fields
             if getattr(event, field, None) is not None
         }
-        event_data['status'] = 'ReadyToPost'
+        event_data['status'] = status
         event_data['queue'] = queue_value
         queue_value += 2
 
@@ -1706,7 +1791,13 @@ def move_approved_to_posts(db) -> List[int]:
         event_data['prepared_text'] = event_data.get('post')
         helper = PostHelper(event_data, place=place_view)
         event_data['post'] = helper.post_markdown()
-        main_category_id = helper.main_category()
+        main_category_id = resolve_main_category_id(
+            db,
+            category_str=event_data.get('category'),
+            current_main_category_id=event_data.get('main_category_id'),
+            title=event_data.get('title', ''),
+            full_text=event_data.get('full_text', ''),
+        )
         if main_category_id is not None:
             event_data['main_category_id'] = main_category_id
         price_int = PostHelper.price_int(event_data.get('price', ''))
@@ -1754,7 +1845,13 @@ def remake_event_post(db, event_id: int, save: bool = False) -> dict:
     helper = PostHelper(event_data, place=place_view)
     new_post = helper.post_markdown()
     place_id = place_view.id if place_view else event.place_id
-    main_category_id = helper.main_category()
+    main_category_id = resolve_main_category_id(
+        db,
+        category_str=event_data.get('category'),
+        current_main_category_id=event_data.get('main_category_id'),
+        title=event_data.get('title', ''),
+        full_text=event_data.get('full_text', ''),
+    )
     price_int = PostHelper.price_int(event.price) if event.price else None
 
     if save:
@@ -1797,7 +1894,14 @@ def make_post_from_dict(db, event_data: dict) -> dict:
 
     helper = PostHelper(event_data, place=place_view)
     post = helper.post_markdown()
-    main_category_id = helper.main_category()
+    main_category_id = resolve_main_category_id(
+        db,
+        category_str=event_data.get('category'),
+        current_main_category_id=event_data.get('main_category_id'),
+        title=event_data.get('title', ''),
+        full_text=event_data.get('full_text', ''),
+        write=False,
+    )
     price_int = PostHelper.price_int(event_data.get('price', ''))
 
     return {
@@ -1815,6 +1919,7 @@ def auto_promote_high_score_events(
     limit: int = 20,
     uncategorized_min_score: int = 80,
     social_min_score: int = 80,
+    status: str = 'ReadyToPost',
 ) -> List[int]:
     """Move high-scoring events from NotApproved to Events2Posts (draft).
 
@@ -1823,6 +1928,8 @@ def auto_promote_high_score_events(
 
     uncategorized_min_score: threshold for events without a category or with "Без категории"
     social_min_score: threshold for events from social networks (vk, telegram, instagram)
+    status: target status in Events2Posts (default 'ReadyToPost'; pass 'OnlyApi'
+            to bypass the channel and expose events only via the API).
     """
     from .helper.post_helper import PostHelper
 
@@ -1880,7 +1987,7 @@ def auto_promote_high_score_events(
             for field in shared_fields
             if getattr(event, field, None) is not None
         }
-        event_data['status'] = 'ReadyToPost'
+        event_data['status'] = status
         event_data['queue'] = queue_value
         queue_value += 2
 
@@ -1891,7 +1998,13 @@ def auto_promote_high_score_events(
         event_data['prepared_text'] = event_data.get('post')
         helper = PostHelper(event_data, place=place_view)
         event_data['post'] = helper.post_markdown()
-        main_category_id = helper.main_category()
+        main_category_id = resolve_main_category_id(
+            db,
+            category_str=event_data.get('category'),
+            current_main_category_id=event_data.get('main_category_id'),
+            title=event_data.get('title', ''),
+            full_text=event_data.get('full_text', ''),
+        )
         if main_category_id is not None:
             event_data['main_category_id'] = main_category_id
         price_int = PostHelper.price_int(event_data.get('price', ''))

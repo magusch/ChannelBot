@@ -17,6 +17,21 @@ Base = declarative_base()
 WEEKDAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вск']
 
 
+class Category(Base):
+    __tablename__ = 'category_category'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    name_local = Column(String(100), nullable=True)
+
+
+class SubCategory(Base):
+    __tablename__ = 'category_subcategory'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(250), unique=True, nullable=False)
+    category_id = Column(Integer, ForeignKey('category_category.id', ondelete='SET NULL'), nullable=True)
+    category = relationship("Category")
+
+
 class Place(Base):
     __tablename__ = 'place_place'
     id = Column(Integer, primary_key=True, index=True)
@@ -233,17 +248,6 @@ class ApiRequestLog(Base):
     timestamp = Column(DateTime, nullable=False)
     user_agent = Column(String, nullable=True)
     request_data = Column(String, nullable=True)
-
-
-# class PlaceSchedule(Base):
-#     __tablename__ = 'place_placeschedule'
-#     id = Column(String, primary_key=True, index=True)
-#     schedule_type = Column(String)
-#     weekday = Column(Integer, nullable=True)
-#     date = Column(Date, nullable=True)
-#     open_time = Column(Time, nullable=True)
-#     close_time = Column(Time, nullable=True)
-#     place_id = Column(ForeignKey(Place))
 
 # AUTH models
 
