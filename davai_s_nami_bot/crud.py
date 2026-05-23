@@ -82,7 +82,7 @@ def get_events_by_date_and_category(db, params):
 
     if params.status != 'all':
         query = query.filter(
-            Events2Posts.status.in_(('Posted', 'OnlyApi')) | Events2Posts.is_ready
+            Events2Posts.status.in_(('Posted', 'OnlyApi')) | Events2Posts.status.in_(('ReadyToPost')).is_ready
         )
 
     dict_requests = {}
