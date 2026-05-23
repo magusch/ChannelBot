@@ -27,6 +27,19 @@ MODEL_REGISTRY = {
     'exhibitions': Exhibitions,
 }
 
+# Heavy / non-JSON-serializable columns excluded from default API responses.
+# pgvector returns numpy.ndarray which json.dumps cannot encode.
+_EVENT_EXCLUDED_DEFAULT_FIELDS = {
+    'embedding', 'embedding_model', 'embedding_updated_at',
+}
+
+
+def _default_event_fields(model):
+    return [
+        c for c in model.__table__.columns.keys()
+        if c not in _EVENT_EXCLUDED_DEFAULT_FIELDS
+    ]
+
 
 def order_maping(model, order_by):
     if model == Place:
@@ -125,7 +138,7 @@ def get_events_by_date_and_category(db, params):
     for event in events:
         event_data = {
             field: getattr(event, field)
-            for field in (params.fields or event.__table__.columns.keys())
+            for field in (params.fields or _default_event_fields(Events2Posts))
         }
 
         if event.place:
@@ -220,7 +233,7 @@ def get_approved_events(db, params):
     for event in events:
         event_data = {
             field: getattr(event, field)
-            for field in (params.fields or event.__table__.columns.keys())
+            for field in (params.fields or _default_event_fields(Events2Posts))
         }
 
         if event.place:
@@ -334,7 +347,7 @@ def get_unprepared_events(
     for event in selected:
         event_data = {
             field: getattr(event, field)
-            for field in event.__table__.columns.keys()
+            for field in _default_event_fields(Events2Posts)
         }
         if event.place:
             event_data["address"] = (
@@ -451,7 +464,7 @@ def get_not_approved_events(db, params):
 
     events = query.all()
     result = [
-        {field: getattr(event, field) for field in (params.fields or event.__table__.columns.keys())}
+        {field: getattr(event, field) for field in (params.fields or _default_event_fields(EventsNotApproved))}
         for event in events
     ]
 
@@ -2064,7 +2077,7 @@ def get_mid_score_events_sample(
     )
 
     return [
-        {field: getattr(e, field) for field in e.__table__.columns.keys()}
+        {field: getattr(e, field) for field in _default_event_fields(EventsNotApproved)}
         for e in events
     ]
 
