@@ -621,6 +621,15 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
 
         _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
+        dup_id = find_exhibition_duplicate(
+            db=db,
+            title=event_dict.get('title', ''),
+            place_id=event_dict.get('place_id'),
+            main_category_id=event_dict.get('main_category_id'),
+        )
+        if dup_id:
+            continue
+
         new_event = create_event(db, event_dict, Events2Posts)
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
@@ -884,6 +893,45 @@ def mark_reminder_sent(db, event_id: int):
 
 ### Scoring helpers ###
 ######–--START--–######
+
+
+@db_session
+def find_exhibition_duplicate(
+    db,
+    title: str,
+    place_id: int,
+    main_category_id: int,
+    lookup_days: int = 180,
+    threshold: float = 0.85,
+) -> int:
+    """Returns Events2Posts.id of an existing exhibition (category=11) at the same place
+    with a similar title (Jaccard > threshold) seen within `lookup_days`. 0 if no dup.
+
+    Timepad re-publishes the same exhibition with new dates; this helper catches such
+    duplicates by place + title similarity so we don't post the same thing repeatedly.
+    """
+    from .scoring import _is_exhibition_by_id, title_similarity
+
+    if not _is_exhibition_by_id(main_category_id):
+        return 0
+    if not title or not place_id:
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookup_days)
+    candidates = (
+        db.query(Events2Posts.id, Events2Posts.title)
+        .filter(
+            Events2Posts.main_category_id == 11,
+            Events2Posts.place_id == place_id,
+            Events2Posts.status.in_(('Posted', 'ReadyToPost', 'OnlyApi')),
+            Events2Posts.explored_date >= cutoff,
+        )
+        .all()
+    )
+    for existing_id, existing_title in candidates:
+        if existing_title and title_similarity(title, existing_title) > threshold:
+            return existing_id
+    return 0
 
 
 @db_session
@@ -1909,21 +1957,21 @@ def remake_event_post(db, event_id: int, save: bool = False) -> dict:
     }
 
 
-@db_session
-def make_post_from_dict(db, event_data: dict) -> dict:
-    """Generate a post from an arbitrary dict (preview only, no DB write).
+def _make_post_pipeline(
+    db,
+    event_data: dict,
+    place_keywords=None,
+    write_subcategory: bool = False,
+) -> dict:
+    """Shared pipeline used by single and bulk post-creation paths.
 
-    Args:
-        event_data: dict with event fields (title, full_text, from_date, to_date,
-                    address, price, url, etc.)
-
-    Returns:
-        dict with post, place_id, main_category_id, price_int.
+    Mutates event_data in place with resolved place_id (if any) and returns
+    the computed values. write_subcategory controls whether the category
+    resolver may insert new SubCategory rows.
     """
     from .helper.post_helper import PostHelper
 
-    event_data = dict(event_data)
-    place_view = _resolve_place_view(db, event_data)
+    place_view = _resolve_place_view(db, event_data, place_keywords)
     if place_view:
         event_data['place_id'] = place_view.id
 
@@ -1935,7 +1983,7 @@ def make_post_from_dict(db, event_data: dict) -> dict:
         current_main_category_id=event_data.get('main_category_id'),
         title=event_data.get('title', ''),
         full_text=event_data.get('full_text', ''),
-        write=False,
+        write=write_subcategory,
     )
     price_int = PostHelper.price_int(event_data.get('price', ''))
 
@@ -1945,6 +1993,104 @@ def make_post_from_dict(db, event_data: dict) -> dict:
         "main_category_id": main_category_id,
         "price_int": price_int,
     }
+
+
+@db_session
+def make_post_from_dict(db, event_data: dict) -> dict:
+    """Generate a post from an arbitrary dict (preview only, no DB write).
+
+    Args:
+        event_data: dict with event fields (title, full_text, from_date, to_date,
+                    address, price, url, etc.)
+
+    Returns:
+        dict with post, place_id, main_category_id, price_int.
+    """
+    return _make_post_pipeline(db, dict(event_data), write_subcategory=False)
+
+
+@db_session
+def bulk_make_and_save_posts(
+    db,
+    events_data: List[dict],
+    save: bool = False,
+    status: str = 'ReadyToPost',
+) -> List[dict]:
+    """Bulk variant of make_post_from_dict (+ optional save to Events2Posts).
+
+    Per event runs _make_post_pipeline (same as the single-item endpoint).
+    If save=True — also inserts a row into Events2Posts (queue auto-assigned,
+    is_ready derived from status). Per-event errors are captured and reported
+    without aborting the batch.
+
+    Args:
+        events_data: list of event dicts.
+        save: True — write to DB; False — preview only.
+        status: target status when saving (default 'ReadyToPost').
+
+    Returns:
+        List of dicts, one per input event: {post, place_id, main_category_id,
+        price_int, event_id (or None), saved, error (or None)}.
+    """
+    place_keywords = _load_place_keywords(db)
+
+    queue_value = None
+    if save:
+        last_q = (
+            db.query(Events2Posts.queue)
+            .filter_by(status='ReadyToPost')
+            .order_by(Events2Posts.queue.desc())
+            .first()
+        )
+        queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
+
+    target_columns = {c.key for c in Events2Posts.__table__.columns}
+    # 'id' must be auto-assigned by the DB; callers must not override it.
+    insertable_columns = target_columns - {'id'}
+    results: List[dict] = []
+
+    for raw in events_data:
+        try:
+            event_data = dict(raw)
+            pipeline = _make_post_pipeline(
+                db, event_data, place_keywords=place_keywords, write_subcategory=save,
+            )
+
+            entry = {**pipeline, "event_id": None, "saved": False, "error": None}
+
+            if save:
+                row_data = {k: v for k, v in event_data.items() if k in insertable_columns}
+                row_data['post'] = pipeline['post']
+                if pipeline['main_category_id'] is not None:
+                    row_data['main_category_id'] = pipeline['main_category_id']
+                if pipeline['price_int'] is not None:
+                    row_data['price_int'] = pipeline['price_int']
+                row_data.setdefault('status', status)
+                row_data.setdefault('queue', queue_value)
+                row_data.setdefault('is_ready', row_data['status'] == 'ReadyToPost')
+                queue_value = (queue_value or 0) + 2
+
+                new_event = Events2Posts(**row_data)
+                db.add(new_event)
+                db.flush()
+                entry["event_id"] = new_event.id
+                entry["saved"] = True
+
+            results.append(entry)
+        except Exception as e:
+            results.append({
+                "post": None,
+                "place_id": None,
+                "main_category_id": None,
+                "price_int": None,
+                "event_id": None,
+                "saved": False,
+                "error": str(e),
+            })
+
+    if save:
+        db.commit()
+    return results
 
 
 @db_session
@@ -2045,6 +2191,17 @@ def auto_promote_high_score_events(
         price_int = PostHelper.price_int(event_data.get('price', ''))
         if price_int is not None:
             event_data['price_int'] = price_int
+
+        dup_id = find_exhibition_duplicate(
+            db=db,
+            title=event_data.get('title', ''),
+            place_id=event_data.get('place_id'),
+            main_category_id=event_data.get('main_category_id'),
+        )
+        if dup_id:
+            event.status = 'duplicate'
+            existing_event_ids.add(event.event_id)
+            continue
 
         new_event = Events2Posts(**event_data)
         db.add(new_event)

@@ -52,9 +52,17 @@ class ContentGeneratorEventSelectionRequest(BaseModel):
 
 
 class ContentGeneratorGeneratePostRequest(BaseModel):
-    event_selection_id: int
-    post_template_id: int
-    generated_by_id: Optional[int] = None
+    """Request to generate a post from a template."""
+    event_selection_id: int = Field(..., description="Event selection ID")
+    post_template_id: int = Field(..., description="Post template ID")
+    generated_by_id: Optional[int] = Field(None, description="ID of a previously generated post (for regeneration)")
+
+
+class BulkCreatePostRequest(BaseModel):
+    """Bulk make-post (and optional save) request."""
+    events: List[dict] = Field(..., description="List of event dicts (same shape as /events/make_post)")
+    save: bool = Field(False, description="True — insert rows into Events2Posts; False — preview only")
+    status: str = Field('ReadyToPost', description="Target status when save=true (e.g. 'ReadyToPost', 'OnlyApi', 'draft')")
 
 
 class ContentGeneratorGeneratePostAIRequest(BaseModel):

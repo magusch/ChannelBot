@@ -50,7 +50,6 @@ DEFAULT_CATEGORY_SCORES = {
     4: 70,   # Лекции
     13: 65,  # Мастер-классы
     12: 50,  # Спорт
-    14: 50,  # Экскурсии
     5: 65,   # Культура
     2: 30,   # Без категории
 }
@@ -291,14 +290,8 @@ def _check_repetition(
 
 
 def _is_exhibition_by_id(main_category_id: Optional[int]) -> bool:
-    return main_category_id == 11
-
-
-def _is_exhibition(
-    main_category_id: Optional[int], category_str: Optional[str]
-) -> bool:
     # Only trust main_category_id — raw category strings from scrapers are unreliable
-    # (e.g. MTS labels master classes and quests as "Выставки")
+    # (e.g. MTS labels master classes and quests as "Выставки").
     return main_category_id == 11
 
 

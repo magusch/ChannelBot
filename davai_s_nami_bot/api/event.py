@@ -1,12 +1,13 @@
 import json
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, Response
 from fastapi import HTTPException, status
 
 from ..pydantic_models import EventOut, EventRequestParameters
 from ..celery_app import redis_client
 from .. import crud
 from .dependencies import verify_token, get_cache_key, serialize_datetime, log_api_request
+from .schemas import BulkCreatePostRequest
 
 router = APIRouter(
     prefix="/events",
@@ -52,6 +53,20 @@ async def get_valid_events(body: EventRequestParameters, request: Request):
 def make_post(event: dict):
     result = crud.make_post_from_dict(event_data=event)
     return {"status": "success", "result": result}
+
+
+@router.post("/bulk_create_post/", dependencies=[Depends(verify_token)],
+              summary="Bulk generate posts (+ optional save)",
+              description="Bulk variant of /make_post. Body: {events: [...], save: bool, status?: str}. "
+                          "Per-event: resolves place, generates markdown, resolves category, parses price. "
+                          "save=true also inserts rows into Events2Posts. Per-event errors do not abort the batch.")
+def bulk_create_post(body: BulkCreatePostRequest):
+    results = crud.bulk_make_and_save_posts(
+        events_data=body.events,
+        save=body.save,
+        status=body.status,
+    )
+    return {"status": "success", "result": results, "count": len(results)}
 
 
 @router.post("/remake_post/{event_id}", dependencies=[Depends(verify_token)],
