@@ -7,6 +7,7 @@ from openai import OpenAIError
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery import chain, chord
+from celery.signals import task_postrun, task_prerun
 
 from datetime import datetime, timedelta, timezone
 
@@ -34,6 +35,102 @@ log = get_logger(__file__)
 dev_channel = clients.DevClient()
 
 CHANNEL_LINK = os.getenv('CHANNEL_LINK')
+
+
+# --- Daily-task catch-up tracking ----------------------------------------
+# Beat may miss a cron slot if the container restarts; missed firings are not
+# backfilled. We mark each tracked task after it finishes (success OR failure)
+# so `catch_up_daily_tasks` can re-queue only the ones that never started.
+
+_DAILY_MARKER_PREFIX = 'dsn:daily_task:'
+_DAILY_MARKER_TTL = 12 * 3600  # cleared by next morning's pipeline
+
+
+def _daily_task_schedule():
+    """List of (task_name, hour_msk, minute_msk, weekdays_iso_or_None, kwargs).
+
+    Keep in sync with beat_schedules in celery_app.py.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    schedule = [
+        ('davai_s_nami_bot.celery_tasks.full_update',
+         4, 40, None, {}),
+        ('davai_s_nami_bot.celery_tasks.auto_promote_by_score',
+         5, 0, None, {'min_score': 70, 'limit': 20}),
+        ('davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
+         5, 10, {1, 3, 5}, {'min_score': 40, 'max_score': 69, 'sample_size': 10}),
+        ('davai_s_nami_bot.celery_tasks.embed_unembedded_events',
+         5, 45, None, {'limit': 100, 'table': 'both'}),
+        ('davai_s_nami_bot.celery_tasks.distribute_event_queue',
+         6, 0, None, {'protect_first': 8}),
+    ]
+    if (settings.auto_route_to_api or {}).get('enabled'):
+        schedule.append((
+            'davai_s_nami_bot.celery_tasks.auto_route_to_api',
+            5, 15, None, {},
+        ))
+    if settings.prepare_events_limit > 0:
+        schedule.append((
+            'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
+            5, 25, None, {'limit': settings.prepare_events_limit},
+        ))
+    return schedule
+
+
+def _daily_marker_key(task_name: str, msk_date) -> str:
+    return f'{_DAILY_MARKER_PREFIX}{task_name}:{msk_date.isoformat()}'
+
+
+def _tracked_daily_task_names() -> set:
+    try:
+        return {row[0] for row in _daily_task_schedule()}
+    except Exception:
+        log.exception("Failed to build tracked daily task name set")
+        return set()
+
+
+@task_prerun.connect
+def _mark_daily_task_started(sender=None, task_id=None, task=None, **kwargs):
+    """Set marker BEFORE a tracked daily task runs.
+
+    If the worker dies mid-task (kill -9, OOM, container restart), `task_postrun`
+    never fires — but this marker survives, so catch-up will not retry the job.
+    Uses NX so we don't clobber a postrun marker on out-of-order signal delivery.
+    """
+    if task is None or task.name not in _tracked_daily_task_names():
+        return
+    try:
+        today = get_msk_today().date()
+        redis_client.set(
+            _daily_marker_key(task.name, today),
+            'started',
+            ex=_DAILY_MARKER_TTL,
+            nx=True,
+        )
+    except Exception:
+        log.exception(f"Failed to set daily prerun marker for {task.name}")
+
+
+@task_postrun.connect
+def _record_daily_task_run(sender=None, task_id=None, task=None, state=None, **kwargs):
+    """Update marker after a tracked daily task finishes (success or failure).
+
+    Overwrites the `started` marker set by `task_prerun` with the final state,
+    purely for visibility — catch-up already skips on any non-empty marker.
+    """
+    if task is None or task.name not in _tracked_daily_task_names():
+        return
+    try:
+        today = get_msk_today().date()
+        redis_client.set(
+            _daily_marker_key(task.name, today),
+            state or 'ran',
+            ex=_DAILY_MARKER_TTL,
+        )
+    except Exception:
+        log.exception(f"Failed to set daily marker for {task.name}")
+
 
 @celery_app.task
 def post_to_telegram():
@@ -847,6 +944,244 @@ def upload_event_images_to_s3(event_ids: list = []):
         crud.update_image_events(event['id'], result['url'], s3_key=result.get('key'))
 
 
+# =============================================================================
+# RAW TEXT EVENT EXTRACTION TASKS
+# =============================================================================
+
+@celery_app.task
+def extract_events_from_text(text: str, source: str, image: str = None):
+    """
+    Analyze raw text and save it to EventsNotApproved (status='new').
+
+    Parameters
+    ----------
+    text : str
+        Raw text (HTML or plain text) to analyze.
+    source : str
+        Source of the text (telegram, instagram, vk, etc.).
+    image : str, optional
+        Image URL.
+
+    Returns
+    -------
+    dict
+        Result with information about the created records.
+    """
+    log.info(f"Extracting events from text, source={source}")
+
+    extractor = RawTextEventExtractor()
+    result = extractor.analyze_and_save(text, source, image)
+
+    # Recalculate score for created NotApproved events
+    for eid in result.get("created_ids", []):
+        crud.recalculate_event_score(eid, table="events_eventsnotapprovednew")
+
+    log.info(f"Extraction result: is_event={result.get('is_event')}, "
+             f"events_count={result.get('events_count', 0)}, "
+             f"created_ids={result.get('created_ids', [])}")
+
+    return result
+
+
+@celery_app.task
+def process_not_approved_event(event_id: int):
+    """
+    Process an event from EventsNotApproved: AI analyzes full_text,
+    enriches the record (title, address, price, category) and updates status.
+
+    The event stays in EventsNotApproved:
+    - is_event=true → status='extracted' (enriched, awaiting moderation)
+    - is_event=false → status='not_event'
+
+    Parameters
+    ----------
+    event_id : int
+        ID of the record in EventsNotApproved.
+
+    Returns
+    -------
+    dict
+        Processing result.
+    """
+    log.info(f"Processing not approved event id={event_id}")
+
+    extractor = RawTextEventExtractor()
+    result = extractor.process_not_approved_event(event_id)
+
+    log.info(f"Processing result: {result}")
+    return result
+
+
+@celery_app.task
+def batch_process_not_approved_events(limit: int = 50, source: str = None):
+    """
+    Batch processing of events from EventsNotApproved (one by one via AI).
+    Takes only sources in AI_SOURCES (telegram, instagram, vk).
+    Enriches data and updates status: 'extracted' / 'not_event'.
+
+    Parameters
+    ----------
+    limit : int
+        Maximum number of events to process.
+    source : str, optional
+        Filter by source.
+
+    Returns
+    -------
+    dict
+        Processing statistics.
+    """
+    log.info(f"Batch processing not approved events, limit={limit}, source={source}")
+
+    events_data = crud.get_not_approved_events_for_processing(limit=limit, source=source)
+
+    if not events_data:
+        log.info("No events to process")
+        return {"processed": 0, "success": 0, "failed": 0, "not_events": 0}
+
+    extractor = RawTextEventExtractor()
+    stats = {"processed": 0, "success": 0, "failed": 0, "not_events": 0}
+
+    for event_data in events_data:
+        result = extractor.process_not_approved_event(event_data["id"])
+        stats["processed"] += 1
+
+        if result.get("success"):
+            if result.get("is_event"):
+                stats["success"] += 1
+            else:
+                stats["not_events"] += 1
+        else:
+            stats["failed"] += 1
+
+    log.info(f"Batch processing complete: {stats}")
+    return stats
+
+
+@celery_app.task
+def analyze_text_only(text: str, source: str = "unknown"):
+    """
+    Analyze raw text with AI without saving to the database.
+    For testing and preview purposes only.
+
+    Parameters
+    ----------
+    text : str
+        Text for analysis.
+    source : str
+        source of the text (for logging and AI context).
+
+    Returns
+    -------
+    dict
+        Analysis result.
+    """
+    log.info(f"Analyzing text only, source={source}")
+
+    extractor = RawTextEventExtractor()
+    result = extractor.analyze_text(text, source)
+
+    return result.to_dict()
+
+
+@celery_app.task
+def batch_process_not_approved_events_optimized(limit: int = 50, source: str = None, batch_size: int = 10):
+    """
+    Optimized batch processing — sends multiple texts in a single AI request.
+    Saves tokens by using one system message per batch.
+    Updates statuses: 'extracted' / 'not_event'.
+
+    Parameters
+    ----------
+    limit : int
+        Maximum number of events to process.
+    source : str, optional
+        Filter by source.
+    batch_size : int
+        Batch size for the AI request (max 10).
+
+    Returns
+    -------
+    dict
+        Processing statistics.
+    """
+    log.info(f"Optimized batch processing, limit={limit}, source={source}, batch_size={batch_size}")
+
+    events_data = crud.get_not_approved_events_for_processing(limit=limit, source=source)
+
+    if not events_data:
+        log.info("No events to process")
+        return {"processed": 0, "success": 0, "failed": 0, "not_events": 0, "batches": 0}
+
+    extractor = RawTextEventExtractor()
+    stats = {"processed": 0, "success": 0, "failed": 0, "not_events": 0, "batches": 0}
+
+    # Split into batches
+    for i in range(0, len(events_data), batch_size):
+        batch = events_data[i:i + batch_size]
+        stats["batches"] += 1
+
+        log.info(f"Processing batch {stats['batches']}, size={len(batch)}")
+
+        # Analyze the batch in a single request
+        texts_for_ai = [{"id": e["id"], "text": e["text"]} for e in batch]
+        results, batch_tokens = extractor.analyze_texts_batch(texts_for_ai, source=source or "mixed")
+
+        # Log tokens
+        if batch_tokens:
+            stats["input_tokens"] = stats.get("input_tokens", 0) + batch_tokens.input_tokens
+            stats["output_tokens"] = stats.get("output_tokens", 0) + batch_tokens.output_tokens
+            log.info(f"Batch tokens: input={batch_tokens.input_tokens}, output={batch_tokens.output_tokens}")
+
+        # Save results
+        status_updates = []
+        for idx, result in enumerate(results):
+            event_data = batch[idx]
+            stats["processed"] += 1
+
+            if result.is_event and result.events:
+                # Enrich NotApproved with AI data (first event)
+                try:
+                    extracted = result.events[0]
+                    enriched = {
+                        "title": extracted.title,
+                        "address": extracted.address,
+                        "price": extracted.price,
+                        "price_int": extracted.price_int,
+                        "category": extracted.category,
+                        "from_date": extractor._parse_datetime(extracted.from_date),
+                        "to_date": extractor._parse_datetime(extracted.to_date),
+                        "url": extracted.url,
+                        "ticket_url": extracted.ticket_url,
+                    }
+                    status_updates.append({
+                        "id": event_data["id"],
+                        "status": "extracted",
+                        "enriched": enriched,
+                    })
+                    stats["success"] += 1
+                    log.info(f"Event {event_data['id']} enriched with AI data")
+                except Exception as e:
+                    log.error(f"Error enriching event {event_data['id']}: {e}")
+                    stats["failed"] += 1
+            else:
+                status_updates.append({"id": event_data["id"], "status": "not_event"})
+                stats["not_events"] += 1
+
+        # Bulk update of statuses and enriched data
+        if status_updates:
+            crud.bulk_update_not_approved_status(status_updates)
+            # Recalculate scores for enriched events
+            for upd in status_updates:
+                if upd["status"] == "extracted":
+                    crud.recalculate_event_score(
+                        upd["id"], table="events_eventsnotapprovednew"
+                    )
+
+    log.info(f"Optimized batch processing complete: {stats}")
+    log.info(f"Total tokens used: input={stats.get('input_tokens', 0)}, output={stats.get('output_tokens', 0)}")
+    return stats
+
 
 @celery_app.task
 def recalculate_scores_bulk(table: str = "events_eventsnotapprovednew", ids: list = None, force: bool = False):
@@ -907,3 +1242,51 @@ def update_adaptive_scoring(days: int = 30):
         "suggested_boost": adaptive.get("suggested_boost_keywords"),
         "suggested_penalty": adaptive.get("suggested_penalty_keywords"),
     }
+
+
+@celery_app.task
+def catch_up_daily_tasks():
+    """Safety net for missed daily beat firings (e.g. due to container restart).
+
+    For each task in `_daily_task_schedule()` whose MSK scheduled time has
+    already passed today: if no completion marker is set in Redis, queue it.
+    A task that ran (success OR error) sets its marker via the `task_postrun`
+    signal, so a failing job is NOT retried — operator decides.
+
+    The Redis SET ... NX claim makes the catch-up itself idempotent: if two
+    catch-up runs overlap, only the first queues the missing task.
+    """
+    now_msk = get_msk_today()
+    today = now_msk.date()
+    queued = []
+    skipped = []
+
+    for task_name, hour, minute, weekdays, task_kwargs in _daily_task_schedule():
+        if weekdays is not None and now_msk.isoweekday() not in weekdays:
+            continue
+        scheduled = now_msk.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if now_msk < scheduled:
+            continue
+
+        key = _daily_marker_key(task_name, today)
+        claimed = redis_client.set(
+            key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True
+        )
+        if not claimed:
+            skipped.append(task_name)
+            continue
+
+        log.warning(
+            f"catch_up_daily_tasks: {task_name} missed today's slot "
+            f"{hour:02d}:{minute:02d} MSK, firing now (kwargs={task_kwargs})"
+        )
+        celery_app.send_task(task_name, kwargs=task_kwargs)
+        queued.append(task_name)
+
+    log.info(
+        f"catch_up_daily_tasks done: queued={queued}, "
+        f"skipped={len(skipped)} already-tracked"
+    )
+    return {'queued': queued, 'skipped_count': len(skipped)}

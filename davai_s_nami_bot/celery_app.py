@@ -44,7 +44,7 @@ def create_celery_app():
     if settings.auto_route_to_api.get('enabled'):
         beat_schedules['auto-route-to-api'] = {
             'task': 'davai_s_nami_bot.celery_tasks.auto_route_to_api',
-            'schedule': crontab(minute=15, hour=5),  # после auto_promote (05:00), до prepare (05:25)
+            'schedule': crontab(minute=15, hour=5),  # after auto_promote (05:00), before prepare (05:25)
         }
 
     if settings.prepare_events_limit > 0:
@@ -63,9 +63,17 @@ def create_celery_app():
     beat_schedules['distribute-event-queue'] = {
         'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
         'schedule': crontab(minute=0, hour=6),
-        # protect_first=8 ≈ ближайшие 2 дня публикаций (при ~4 постах/день):
-        # уже расписанные слоты не дёргаем, остальное переупорядочиваем.
+        # protect_first=8 ≈ next ~2 days of posts (at ~4 posts/day):
+        # leave already-scheduled slots untouched, reorder the rest.
         'kwargs': {'protect_first': 8},
+    }
+
+    # Safety net: re-fire daily pipeline tasks that beat missed (container
+    # restart, broker hiccup). Skips anything already run today (success or
+    # error) via marker set in task_postrun. Cheap when nothing's missing.
+    beat_schedules['catch-up-daily-tasks'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.catch_up_daily_tasks',
+        'schedule': crontab(minute=30, hour='6-17'),
     }
 
     if settings.task_event_post:
