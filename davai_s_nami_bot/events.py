@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import re
 import time
@@ -34,6 +35,33 @@ def _use_proxy(parser_name):
 
 def _is_scraper_enabled(scraper_name):
     return settings.escraper_parameters.get(scraper_name, {}).get('enabled', True)
+
+
+DEFAULT_SCRAPER_TIMEOUT_SEC = 300
+
+
+def _call_scraper(func, days, name):
+    """Run a scraper with a wall-clock timeout. Returns [] on timeout or error.
+
+    Timeout is read from settings.escraper_parameters.{name}.timeout_sec (default 300s).
+    Other-scraper results in the same batch are preserved by the caller; partial results
+    from THIS scraper are lost (escraper's get_events is all-or-nothing).
+    """
+    timeout = settings.escraper_parameters.get(name or '', {}).get(
+        'timeout_sec', DEFAULT_SCRAPER_TIMEOUT_SEC
+    )
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        try:
+            return executor.submit(func, days).result(timeout=timeout) or []
+        except concurrent.futures.TimeoutError:
+            log.warning(f"Scraper '{name}' exceeded {timeout}s timeout — skipping (site likely down)")
+            return []
+        except Exception as e:
+            log.error(f"Scraper '{name}' raised: {e}", exc_info=True)
+            return []
+    finally:
+        executor.shutdown(wait=False)
 
 timepad_parser = Timepad(use_proxy=_use_proxy('timepad'))
 timepad_parser.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -118,7 +146,7 @@ def month_name(dt: datetime):
     return utils.MONTHNAMES[dt.month]
 
 
-def date_to_title(date_from: datetime, date_to: datetime):
+def date_to_title(date_from: datetime, date_to: datetime):  # deprecated: use PostHelper.date_to_title()
     title_date = ''
     if date_to is None:
         title_date = "{day} {month}".format(
@@ -152,7 +180,7 @@ def date_to_title(date_from: datetime, date_to: datetime):
     return title_date
 
 
-def date_to_post(date_from: datetime, date_to: datetime):
+def date_to_post(date_from: datetime, date_to: datetime):  # deprecated: use PostHelper.date_to_post()
     s_weekday = weekday_name(date_from)
     s_day = date_from.day
     s_month = month_name(date_from)
@@ -291,16 +319,16 @@ class Event:
     _all_tags = _tags + _additional_tags
 
     def __new__(cls, **kwargs):
-        # Создаем namedtuple с основными полями
+        # Create namedtuple with core fields
         base_fields = {k: v for k, v in kwargs.items() if k in cls._tags}
         base_event = namedtuple("event", cls._tags)(**base_fields)
-        
-        # Создаем экземпляр класса
+
+        # Create class instance
         instance = super().__new__(cls)
         instance._base = base_event
         instance._additional = {}
-        
-        # Сохраняем дополнительные поля
+
+        # Store additional fields
         for tag in cls._additional_tags:
             if tag in kwargs:
                 instance._additional[tag] = kwargs[tag]
@@ -308,23 +336,23 @@ class Event:
         return instance
     
     def __getattr__(self, name):
-        # Пробуем получить атрибут из базового namedtuple
+        # Try to get attribute from the base namedtuple
         try:
             return getattr(self._base, name)
         except AttributeError:
-            # Если атрибут не найден в базовом namedtuple, пробуем получить из дополнительных полей
+            # If attribute not found in base namedtuple, try additional fields
             if name in self._additional:
                 return self._additional[name]
             raise
     
     def _asdict(self):
-        """Возвращает словарь с основными полями (для совместимости с namedtuple)"""
+        """Returns a dict of core fields (for namedtuple compatibility)."""
         return self._base._asdict()
-    
+
     def to_dict(self):
-        """Преобразует Event в словарь для сохранения в базу данных"""
+        """Converts Event to a dict for saving to the database."""
         result = self._asdict()
-        # Добавляем дополнительные поля
+        # Add additional fields
         result.update(self._additional)
         return result
 
@@ -340,31 +368,31 @@ class Event:
     @classmethod
     def from_database(cls, data, columns=None):
         """
-        Создание объекта `Event` из записи базы данных.
+        Create an `Event` object from a database record.
 
         Parameters
         ----------
         data : tuple or dict or SQLAlchemy model
-            Строчка данных из базы данных, словарь с данными или объект SQLAlchemy
+            A row from the database, a dict with data, or a SQLAlchemy object.
 
         columns : iterable
-            Список из параметров мероприятия
+            List of event field names.
 
         Returns
         -------
-        Event : Объект Event
+        Event : An Event object.
         """
-        # Если columns не указан, используем все теги
+        # If columns is not specified, use all tags
         if columns is None:
             columns = cls._all_tags
-            
+
         event_dict = {}
-        
-        # Обработка SQLAlchemy объекта
+
+        # Handle SQLAlchemy object
         if hasattr(data, '__table__'):
             for column in data.__table__.columns:
                 value = getattr(data, column.name)
-                # Преобразуем типы данных, если необходимо
+                # Convert data types if necessary
                 if column.name in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                     if isinstance(value, str):
                         try:
@@ -372,13 +400,13 @@ class Event:
                         except ValueError:
                             value = datetime.today()
                 event_dict[column.name] = value
-                
-        # Обработка словаря
+
+        # Handle dict
         elif isinstance(data, dict):
             for tag in columns:
                 if tag in data:
                     value = data[tag]
-                    # Преобразуем типы данных, если необходимо
+                    # Convert data types if necessary
                     if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                         if isinstance(value, str):
                             try:
@@ -387,7 +415,7 @@ class Event:
                                 value = datetime.today()
                     event_dict[tag] = value
                 else:
-                    # Устанавливаем значения по умолчанию
+                    # Set default values
                     if 'date' in tag:
                         event_dict[tag] = datetime.today()
                     elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -396,13 +424,13 @@ class Event:
                         event_dict[tag] = False
                     else:
                         event_dict[tag] = ''
-                        
-        # Обработка кортежа или другой последовательности
+
+        # Handle tuple or other sequence
         else:
             for i, tag in enumerate(columns):
                 if i < len(data):
                     value = data[i]
-                    # Преобразуем типы данных, если необходимо
+                    # Convert data types if necessary
                     if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                         if isinstance(value, str):
                             try:
@@ -411,7 +439,7 @@ class Event:
                                 value = datetime.today()
                     event_dict[tag] = value
                 else:
-                    # Устанавливаем значения по умолчанию
+                    # Set default values
                     if 'date' in tag:
                         event_dict[tag] = datetime.today()
                     elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -425,42 +453,42 @@ class Event:
     @classmethod
     def from_dict(cls, data, columns=None):
         """
-        Создание объекта `Event` из словаря.
+        Create an `Event` object from a dict.
 
         Parameters
         ----------
         data : dict
-            Словарь с данными
+            Dict with event data.
 
         columns : iterable
-            Список из параметров мероприятия
+            List of event field names.
 
         Returns
         -------
-        Event : Объект Event
+        Event : An Event object.
         """
-        # Если columns не указан, используем все теги
+        # If columns is not specified, use all tags
         if columns is None:
             columns = cls._all_tags
-            
+
         event_dict = {}
-        
+
         for tag in columns:
             if tag in data:
-                # Преобразуем типы данных, если необходимо
+                # Convert data types if necessary
                 value = data[tag]
-                
-                # Обработка специальных типов данных
+
+                # Handle special data types
                 if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                     if isinstance(value, str):
                         try:
                             value = datetime.fromisoformat(value.replace('Z', '+00:00'))
                         except ValueError:
                             value = datetime.today()
-                
+
                 event_dict[tag] = value
             else:
-                # Устанавливаем значения по умолчанию
+                # Set default values
                 if 'date' in tag:
                     event_dict[tag] = datetime.today()
                 elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -469,7 +497,7 @@ class Event:
                     event_dict[tag] = False
                 else:
                     event_dict[tag] = ''
-        
+
         return cls(**event_dict)
 
 
@@ -537,8 +565,8 @@ def timepad_approved_organizations(days: int) -> List[Event]:
 
 
 def _run_scraper(events_list, func, days):
-    """Запускает скрапер если он включён в settings."""
-    # Маппинг функций к именам скраперов в settings
+    """Runs the scraper if it is enabled in settings."""
+    # Mapping of functions to scraper names in settings
     scraper_names = {
         'timepad': timepad_others_organizations,
         'radario': radario_others_organizations,
@@ -553,10 +581,7 @@ def _run_scraper(events_list, func, days):
     if scraper_name and not _is_scraper_enabled(scraper_name):
         log.info(f"Scraper '{scraper_name}' is disabled in settings, skipping.")
         return
-    try:
-        events_list += func(days)
-    except Exception as e:
-        log.error(f"An error occurred in {func.__name__}: {e}", exc_info=True)
+    events_list += _call_scraper(func, days, scraper_name or func.__name__)
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:

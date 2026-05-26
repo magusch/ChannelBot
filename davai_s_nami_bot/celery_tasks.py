@@ -293,7 +293,7 @@ def work_with_expired_events():
     log.info("Finished with expired events.")
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=1800, time_limit=1920)
 def update_events():
     log.info("Start updating events.")
 
@@ -343,7 +343,7 @@ def _update_events(events, table, msk_today):
 
         return inserted_ids
 
-@celery_app.task
+@celery_app.task(soft_time_limit=1800, time_limit=1920)
 def update_event_from_sites(sites=None, days=7):
     if sites is None or sites[0] == 'all':
         sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir']
@@ -351,12 +351,16 @@ def update_event_from_sites(sites=None, days=7):
     msk_today = get_msk_today()
 
     for site in sites:
-        if site in events.escraper_sites.keys():
-            log.info(f"Getting new events from {site} for next {days} days")
-            other_events = events.escraper_sites[site](days)
-            log.info(f"Collected {len(other_events)} events")
+        if site not in events.escraper_sites:
+            continue
+        if not events._is_scraper_enabled(site):
+            log.info(f"Scraper '{site}' is disabled in settings, skipping.")
+            continue
+        log.info(f"Getting new events from {site} for next {days} days")
+        other_events = events._call_scraper(events.escraper_sites[site], days, site)
+        log.info(f"Collected {len(other_events)} events")
 
-            _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
+        _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
 
     events_count = len(crud.get_events_from_all_tables())
 

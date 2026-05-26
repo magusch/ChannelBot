@@ -19,7 +19,7 @@
       "qtickets": {"city": "spb"},
       "ticketscloud": {"city": "spb"},
       "culture": {"city": "spb"},
-      "mts": {"city": "spb", "days": 15},
+      "mts": {"city": "spb", "days": 15, "timeout_sec": 180},
       "vk": {"city": "spb", "days": 15},
       "tg": {
         "channels": ["@example_channel"],
