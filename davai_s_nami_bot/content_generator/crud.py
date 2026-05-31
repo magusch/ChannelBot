@@ -1,6 +1,7 @@
 from ..database.database_orm import db_session, orm_to_dict
 from .models import ContentGeneratorEventSelection, ContentGeneratorFilterSet, \
-    ContentGeneratorEventSelectionSelectedEvents, ContentGeneratorPostTemplate, ContentGeneratorGeneratedPost
+    ContentGeneratorEventSelectionSelectedEvents, ContentGeneratorPostTemplate, \
+    ContentGeneratorGeneratedPost, PostingSchedule
 
 from sqlalchemy import func
 
@@ -84,4 +85,83 @@ def get_post_template(db, post_template_id: int) -> ContentGeneratorPostTemplate
     else:
         post_template = db.query(ContentGeneratorPostTemplate).order_by(func.random()).first()
     return orm_to_dict(post_template)
-    
+
+
+@db_session
+def create_posting_schedule(db, schedule_data: dict):
+    """Create a new PostingSchedule entry"""
+    schedule = PostingSchedule(**schedule_data)
+    db.add(schedule)
+    db.commit()
+    db.refresh(schedule)
+    return orm_to_dict(schedule)
+
+
+@db_session
+def get_pending_schedules(db, *, before_datetime=None, limit: int = 50):
+    """Get pending, not posted schedules optionally before a datetime"""
+    query = db.query(PostingSchedule).filter(PostingSchedule.is_posted == False)
+    if before_datetime is not None:
+        query = query.filter(PostingSchedule.scheduled_time <= before_datetime)
+    query = query.order_by(PostingSchedule.scheduled_time.asc())
+    if limit:
+        query = query.limit(limit)
+    schedules = query.all()
+    return orm_to_dict(schedules)
+
+
+@db_session
+def get_next_schedule_per_platform(db):
+    """Return the nearest schedule per platform that is not posted yet.
+    Output: dict[platform] = schedule_dict
+    """
+    platforms = db.query(PostingSchedule.platform).filter(PostingSchedule.is_posted == False).distinct().all()
+    platform_to_schedule = {}
+    for (platform,) in platforms:
+        schedule = (
+            db.query(PostingSchedule)
+            .filter(PostingSchedule.is_posted == False, PostingSchedule.platform == platform)
+            .order_by(PostingSchedule.scheduled_time.asc())
+            .first()
+        )
+        if schedule:
+            platform_to_schedule[platform] = orm_to_dict(schedule)
+    return platform_to_schedule
+
+
+@db_session
+def mark_schedule_posted(db, schedule_id: int, *, posted_at):
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule:
+        schedule.is_posted = True
+        schedule.status = "Posted"
+        schedule.posted_at = posted_at
+        db.commit()
+        # db.refresh(schedule)
+        # return orm_to_dict(schedule)
+    return None
+
+
+@db_session
+def increment_schedule_retry(db, schedule_id: int, error_message: str = None):
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule:
+        schedule.retry_count = (schedule.retry_count or 0) + 1
+        if error_message:
+            schedule.error_message = error_message
+        db.commit()
+        # db.refresh(schedule)
+        # return orm_to_dict(schedule)
+    return None
+
+
+@db_session
+def get_schedule_by_id(db, schedule_id: int):
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    return orm_to_dict(schedule) if schedule else None
+
+
+@db_session
+def get_generated_post_by_id(db, generated_post_id: int):
+    post = db.query(ContentGeneratorGeneratedPost).get(generated_post_id)
+    return orm_to_dict(post) if post else None

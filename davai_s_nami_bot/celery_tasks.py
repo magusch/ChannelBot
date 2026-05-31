@@ -1,4 +1,4 @@
-import datetime, json, os
+import datetime, json, os, traceback
 import pytz
 import requests
 from bs4 import BeautifulSoup
@@ -29,7 +29,7 @@ from .helper.ai_helper import AIHelper
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
 
-from .content_generator.services import GeneratorPost
+from .content_generator.services import GeneratorPost, Posting
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -144,15 +144,29 @@ def post_to_telegram():
                 clients.Clients().send_post(event=event, image_path=image_path)
                 log.info("Event was posted")
             except Exception as e:
-                log.error(f"Failed to post event {event.event_id}: {e}")
-                crud.set_status(event_id=event.event_id, status="Error", error_message=str(e))
+                # Preserve exception type + full traceback: str(e) alone can be a
+                # cryptic value (e.g. a bare "-241") with no way to trace the source.
+                error_detail = f"{type(e).__name__}: {e!r}"
+                log.error(
+                    f"Failed to post event {event.event_id}: {error_detail}\n"
+                    f"{traceback.format_exc()}"
+                )
+                crud.set_status(
+                    event_id=event.event_id, status="Error", error_message=error_detail
+                )
                 log.info(f"Event {event.event_id} marked as Error")
         else:
             log.info("Event not found (or time was changed) or already posted")
     except BaseException as e:
-        log.error(f"Task post_to_telegram interrupted: {e}")
+        error_detail = f"{type(e).__name__}: {e!r}"
+        log.error(
+            f"Task post_to_telegram interrupted: {error_detail}\n"
+            f"{traceback.format_exc()}"
+        )
         if event is not None:
-            crud.set_status(event_id=event.event_id, status="Error", error_message=str(e))
+            crud.set_status(
+                event_id=event.event_id, status="Error", error_message=error_detail
+            )
             log.info(f"Event {event.event_id} marked as Error (timeout)")
         raise
     finally:
@@ -161,7 +175,40 @@ def post_to_telegram():
         try:
             dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
         except Exception as e:
-            log.error(f"Failed to send log to dev channel: {e}")
+            log.error(f"врFailed to send log to dev channel: {e}")
+
+
+@celery_app.task
+def post_generated_by_schedule(schedule_id: int):
+    """Post a generated post for the given schedule id to its platform."""
+    log.info(f"Posting generated content for schedule_id={schedule_id}")
+    posting_class = Posting(log)
+    postings = posting_class.schedule_posting(schedule_id)
+    platform = postings.get('platform') if postings else None
+    if postings:
+        client_post, destination_id = None, None
+        if platform == 'telegram':
+            client_post = clients.Telegram()
+            destination_id = clients.Telegram.constants['prod']['destination_id']
+        elif platform == 'vk':
+            client_post = clients.VKRequests()
+            destination_id = clients.VKRequests.constants['prod']['destination_id']
+        if client_post:
+            try:
+                if postings['image_path']:
+                    client_post.send_image(text=postings['post_text'], image_path=postings['image_path'],
+                                           destination_id=destination_id)
+                else:
+                    client_post.send_text(text=postings['post_text'], destination_id=destination_id)
+                posting_class.schedule_posted(schedule_id)
+                log.info(f"Schedule {schedule_id} marked as posted successfully")
+            except Exception as e:
+                log.error(f"Failed to post schedule {schedule_id}: {e}")
+    else:
+        log.info(f"No postings generated for schedule_id={schedule_id}")
+    # Clean up Redis so schedule_generated_posting_tasks can reschedule
+    if platform:
+        redis_client.delete(f'cg_posting_event:{platform}')
 
 
 
@@ -183,7 +230,7 @@ def schedule_posting_tasks():
         if stale_info:
             stale_task_id = stale_info.get(b'task_id', b'').decode('utf-8')
             if stale_task_id:
-                celery_app.control.revoke(stale_task_id, terminate=True)
+                celery_app.control.revoke(stale_task_id, terminate=False)
                 log.info(f"Revoked stale task {stale_task_id}")
             redis_client.delete(redis_key)
         return
@@ -223,7 +270,7 @@ def schedule_posting_tasks():
         if current_scheduled_info:
             current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
             if current_task_id:
-                celery_app.control.revoke(current_task_id, terminate=True)
+                celery_app.control.revoke(current_task_id, terminate=False)
 
         result = post_to_telegram.apply_async((), eta=event_time)
         redis_client.hset(redis_key,
@@ -270,7 +317,7 @@ def schedule_generated_posting_tasks():
             if current_scheduled_info:
                 current_task_id = current_scheduled_info.get(b'task_id', b'').decode('utf-8')
                 if current_task_id:
-                    celery_app.control.revoke(current_task_id, terminate=True)
+                    celery_app.control.revoke(current_task_id, terminate=False)
 
             result = post_generated_by_schedule.apply_async((schedule['id'],), eta=schedule['eta_utc'])
             schedule_time_str = schedule['eta_utc'].strftime('%Y-%m-%d %H:%M:%S')
@@ -603,6 +650,40 @@ def prepare_unprepared_events(limit: int = 15):
         "message": f"AI prepare started for {len(events)} events.",
         "task_id": task_group.id,
     }
+
+
+@celery_app.task
+def embed_single_event(event_id: int, table: str = "events2posts"):
+    """On-demand embedding for one event (e.g. dispatched by the /similar API on a miss).
+
+    Returns {'status': 'embedded'|'no_text'|'not_found', 'event_id': id, 'model': label}.
+    Errors propagate so the Celery task ends up FAILURE and clients see it via /tasks/status.
+    """
+    from .database.database_orm import get_db_session
+    from .database.models import Events2Posts, EventsNotApproved
+    from .helper.embeddings import EmbeddingClient, build_embedding_input
+
+    model_cls = {"events2posts": Events2Posts, "not_approved": EventsNotApproved}.get(table)
+    if model_cls is None:
+        raise ValueError(f"Unknown table {table!r}")
+
+    with get_db_session() as db:
+        row = db.query(model_cls).filter(model_cls.id == event_id).first()
+        if row is None:
+            return {"status": "not_found", "event_id": event_id}
+
+        text = build_embedding_input(row)
+        if not text:
+            return {"status": "no_text", "event_id": event_id}
+
+        client = EmbeddingClient()
+        vector = client.embed_batch([text])[0]
+        row.embedding = vector
+        row.embedding_model = client.model_label
+        row.embedding_updated_at = datetime.now()
+        db.commit()
+
+        return {"status": "embedded", "event_id": event_id, "model": client.model_label}
 
 
 @celery_app.task

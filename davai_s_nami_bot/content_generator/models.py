@@ -79,3 +79,24 @@ class ContentGeneratorPostTemplate(Base):
     generated_posts = relationship("ContentGeneratorGeneratedPost", back_populates="post_template")
 
 
+class PostingSchedule(Base):
+    """Posting schedule"""
+    __tablename__ = 'content_generator_postingschedule'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    generated_post_id = Column(BigInteger, ForeignKey('content_generator_generatedpost.id', ondelete='CASCADE'))
+    scheduled_time = Column(DateTime, nullable=False)
+    platform = Column(String(50), nullable=False, default='telegram')
+
+    platform_settings = Column(String, nullable=True)  # Can be replaced with JSON if supported
+
+    is_posted = Column(Boolean, default=False, nullable=False)
+    posted_at = Column(DateTime, nullable=True, comment='Publication time')
+
+    error_message = Column(String, nullable=True, comment='Error message')
+    retry_count = Column(Integer, default=0, nullable=False, comment='Retry count')
+
+    #generated_post = relationship("ContentGeneratorGeneratedPost", backref="posting_schedule", uselist=False)
+
+
+

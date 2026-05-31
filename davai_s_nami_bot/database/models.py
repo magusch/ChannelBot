@@ -41,6 +41,10 @@ class Place(Base):
     place_metro = Column(String, nullable=False)
     place_image = Column(String, nullable=False)
     place_city = Column(String, nullable=True)
+    # Forced category for every event scraped at this place. Overrides the
+    # scraper's guessed category (e.g. a standup club tagged 'Стэндап' fixes
+    # shows that escraper labels 'Концерты'). Empty/NULL = no override.
+    category = Column(String(500), nullable=True)
     events = relationship("Events2Posts", back_populates="place")
     keywords = relationship("PlaceKeyword", back_populates="place")
     schedules = relationship("PlaceSchedule", back_populates="place")

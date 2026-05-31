@@ -162,6 +162,85 @@ def get_events_by_date_and_category(db, params):
 
 
 @db_session
+def find_similar_events(db, event_id: int, limit: int = 10):
+    """Find events semantically similar to the given one via pgvector cosine distance.
+
+    Searches Events2Posts whose status is publicly-valid (Posted / OnlyApi /
+    ReadyToPost+is_ready) — same filter as get_events_by_date_and_category.
+    Source event itself is excluded.
+
+    Only compares vectors made by the same embedding model — cross-provider
+    vectors are not semantically comparable, so they are filtered out.
+
+    Returns:
+      - None if the source event does not exist.
+      - {'events': [...], 'total_count': N, 'request': {...}}
+        — with `distance` per event (0 = identical, 2 = opposite).
+      - The same envelope but with 'reason': 'no_embedding' when the source
+        event has no embedding yet (API layer dispatches a Celery embed task
+        in that case).
+    """
+    source = db.query(Events2Posts).filter(Events2Posts.id == event_id).first()
+    if source is None:
+        return None
+    if source.embedding is None or source.embedding_model is None:
+        return {
+            'events': [],
+            'total_count': 0,
+            'request': {'event_id': event_id, 'limit': limit, 'reason': 'no_embedding'},
+        }
+
+    distance = Events2Posts.embedding.cosine_distance(source.embedding).label('distance')
+
+    rows = (
+        db.query(Events2Posts, distance)
+        .options(joinedload(Events2Posts.place))
+        .filter(
+            Events2Posts.id != event_id,
+            Events2Posts.embedding.isnot(None),
+            Events2Posts.to_date >= datetime.now(timezone.utc),
+            Events2Posts.embedding_model == source.embedding_model,
+            Events2Posts.status.in_(('Posted', 'OnlyApi'))
+            | (
+                (Events2Posts.status == 'ReadyToPost')
+                & Events2Posts.is_ready
+            ),
+        )
+        .order_by(distance.asc())
+        .limit(limit)
+        .all()
+    )
+
+    default_fields = _default_event_fields(Events2Posts)
+    events = []
+    for event, dist in rows:
+        event_data = {field: getattr(event, field) for field in default_fields}
+        event_data['distance'] = float(dist)
+        if event.place:
+            event_data['address'] = (
+                f"{event.place.place_name}, {event.place.place_address}, "
+                f"м.{event.place.place_metro}"
+            )
+            event_data['place'] = {
+                'id': event.place.id,
+                'place_name': event.place.place_name,
+                'place_address': event.place.place_address,
+                'place_metro': event.place.place_metro,
+            }
+        events.append(event_data)
+
+    return {
+        'events': events,
+        'total_count': len(events),
+        'request': {
+            'event_id': event_id,
+            'limit': limit,
+            'embedding_model': source.embedding_model,
+        },
+    }
+
+
+@db_session
 def get_places(db, params):
     sort_order = order_maping(Place, params.order_by)
     query = db.query(Place).order_by(sort_order)
@@ -559,7 +638,12 @@ def create_event(db, event_data: dict, model):
     object
         Maked object SQLAlchemy.
     """
-    event = model(**event_data)
+    # Keep only keys that map to real columns — models differ (e.g. only
+    # Events2Posts has main_category_id), so a shared event_dict may carry
+    # fields the target model lacks.
+    valid_columns = {col.name for col in model.__table__.columns}
+    clean_data = {k: v for k, v in event_data.items() if k in valid_columns}
+    event = model(**clean_data)
     db.add(event)
     db.commit()
     db.refresh(event)
@@ -598,6 +682,7 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
 
     # Load keywords once for the whole batch — avoids one DB query per event.
     place_keywords = _load_place_keywords(db)
+    place_category_overrides = _load_place_category_overrides(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(db, days=window)
@@ -618,6 +703,8 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
         if not event_dict.get('place_id'):
             search = " ".join(filter(None, [event_dict.get('address'), event_dict.get('title')]))
             event_dict['place_id'] = _match_place(search, place_keywords)
+
+        _apply_place_category_override(event_dict, place_category_overrides)
 
         _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
@@ -675,6 +762,7 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
         raise ValueError(f"Unknown table: {table}")
 
     place_keywords = _load_place_keywords(db)
+    place_category_overrides = _load_place_category_overrides(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(db, days=window)
@@ -697,6 +785,8 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
                 filter(None, [event_dict.get('address'), event_dict.get('title')])
             )
             event_dict['place_id'] = _match_place(search, place_keywords)
+
+        _apply_place_category_override(event_dict, place_category_overrides)
 
         _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
 
@@ -1288,6 +1378,45 @@ def _match_place(search_text: str, keywords: list[tuple[str, int]]):
         if kw in text:
             return place_id
     return None
+
+
+def _load_place_category_overrides(db) -> dict:
+    """Map place_id -> (category_name, category_id) for places that pin a category.
+
+    A place can force the category of every event scraped there (e.g. a standup
+    club tagged 'Стэндап'), overriding the scraper's guess, which is often wrong
+    — standup shows routinely arrive labeled 'Концерты'. category_id is resolved
+    from the Category table by name (None if the name has no matching Category).
+    Helper — always called with db from an outer @db_session function.
+    """
+    name_to_id = {name: cid for cid, name in db.query(Category.id, Category.name).all()}
+    rows = (
+        db.query(Place.id, Place.category)
+        .filter(Place.category.isnot(None), Place.category != "")
+        .all()
+    )
+    overrides = {}
+    for place_id, category in rows:
+        name = category.strip()
+        if name:
+            overrides[place_id] = (name, name_to_id.get(name))
+    return overrides
+
+
+def _apply_place_category_override(event_dict: dict, overrides: dict) -> None:
+    """Override an event's category from its matched place's forced category.
+
+    Mutates event_dict in place. Must run after place_id is resolved and before
+    scoring/dedup so they see the corrected category. No-op when the place has no
+    forced category or the event has no place_id.
+    """
+    override = overrides.get(event_dict.get('place_id'))
+    if not override:
+        return
+    name, category_id = override
+    event_dict['category'] = name
+    if category_id is not None:
+        event_dict['main_category_id'] = category_id
 
 
 @db_session
