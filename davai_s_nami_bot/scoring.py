@@ -38,6 +38,18 @@ DEFAULT_PRICE_RANGES = [
     {"max": 99999, "score": 20},
 ]
 
+# Weights for place reputation: positive history boosts, negative history penalises.
+# A place's net reputation = sum(positive_status * weight) - sum(negative_status * weight),
+# then mapped to a 0-100 place score. Posted carries full weight; queued/api-only count
+# less; informed rejections (NOT auto-rejected by low score) and spam count as negatives.
+DEFAULT_PLACE_REPUTATION_WEIGHTS = {
+    "w_posted": 1.0,
+    "w_ready": 0.5,
+    "w_onlyapi": 0.3,
+    "w_rejected": 1.0,
+    "w_spam": 1.5,
+}
+
 DEFAULT_CATEGORY_SCORES = {
     6: 85,   # Фестивали
     9: 85,   # Перфомансы
@@ -200,23 +212,54 @@ def _score_category(
     return 30
 
 
-def _score_place(place_id: Optional[int], place_post_counts: dict) -> int:
-    """Score place by reputation (number of posted events).
+def _place_net_reputation(rep: dict, weights: dict) -> float:
+    """Weighted net reputation from a per-place status-count dict.
 
-    place_post_counts: {place_id: count_of_posted_events}
+    rep keys: posted, ready, onlyapi (positive), rejected, spam (negative).
+    """
+    w = {**DEFAULT_PLACE_REPUTATION_WEIGHTS, **(weights or {})}
+    return (
+        w["w_posted"] * rep.get("posted", 0)
+        + w["w_ready"] * rep.get("ready", 0)
+        + w["w_onlyapi"] * rep.get("onlyapi", 0)
+        - w["w_rejected"] * rep.get("rejected", 0)
+        - w["w_spam"] * rep.get("spam", 0)
+    )
+
+
+def _score_place(
+    place_id: Optional[int],
+    place_post_counts: dict,
+    place_reputation: Optional[dict] = None,
+    weights: Optional[dict] = None,
+) -> int:
+    """Score place by reputation.
+
+    If place_reputation is given ({place_id: {posted, ready, onlyapi, rejected, spam}}),
+    use the weighted net reputation. Otherwise fall back to place_post_counts
+    ({place_id: count_of_posted_events}) for backward compatibility.
     """
     if not place_id:
         return 20
-    count = place_post_counts.get(place_id, 0)
-    if count >= 20:
+
+    if place_reputation is not None:
+        net = _place_net_reputation(place_reputation.get(place_id, {}), weights)
+    else:
+        net = place_post_counts.get(place_id, 0)
+
+    if net >= 20:
         return 100
-    if count >= 10:
+    if net >= 10:
         return 80
-    if count >= 5:
+    if net >= 5:
         return 60
-    if count >= 1:
+    if net >= 1:
         return 45
-    return 30  # known place but no posts yet
+    if net >= 0:
+        return 30  # known place but no track record yet
+    if net >= -5:
+        return 20  # mildly negative history
+    return 10  # strongly negative history
 
 
 def _score_keywords(
@@ -303,6 +346,7 @@ def calculate_score(
     place_post_counts: Optional[dict] = None,
     place_category_queue_counts: Optional[dict] = None,
     date_event_counts: Optional[dict] = None,
+    place_reputation: Optional[dict] = None,
 ) -> ScoreBreakdown:
     """Calculate event score based on config weights.
 
@@ -318,13 +362,18 @@ def calculate_score(
     scoring_config : dict
         Scoring config block from settings.json.
     place_post_counts : dict or None
-        {place_id: number_of_posted_events} for place reputation.
+        {place_id: number_of_posted_events}. Legacy positive-only place reputation;
+        used as a fallback when place_reputation is not provided.
     place_category_queue_counts : dict or None
         {(place_id, category_id): count} of ReadyToPost events per place+category.
         Used to penalise oversaturation from a single venue/genre.
     date_event_counts : dict or None
         {date: count} of events (Posted/ReadyToPost + NotApproved) per from_date.
         Used to boost events on sparse upcoming days.
+    place_reputation : dict or None
+        {place_id: {posted, ready, onlyapi, rejected, spam}} — weighted place
+        reputation across statuses. Takes precedence over place_post_counts.
+        Weights come from scoring_config["place_reputation"].
 
     Returns
     -------
@@ -364,7 +413,8 @@ def calculate_score(
 
     price_s = _score_price(price_int, price_ranges)
     category_s = _score_category(main_category_id, category_str, category_scores, title, full_text)
-    place_s = _score_place(place_id, place_post_counts)
+    place_reputation_weights = scoring_config.get("place_reputation", DEFAULT_PLACE_REPUTATION_WEIGHTS)
+    place_s = _score_place(place_id, place_post_counts, place_reputation, place_reputation_weights)
     keyword_s = _score_keywords(
         title, full_text, boost_kw, penalty_kw,
         trusted_artists, trusted_organizers, trusted_boost,

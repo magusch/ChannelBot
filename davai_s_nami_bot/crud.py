@@ -687,6 +687,7 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
     window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(db, days=window)
     place_counts = get_place_post_counts(db)
+    place_rep = get_place_reputation(db, auto_reject_threshold=_auto_reject_threshold(scoring_cfg))
     place_cat_queue = get_place_category_queue_counts(db)
     date_counts = get_date_event_counts(db, days=scoring_cfg.get("date_scarcity_window_days", 10))
 
@@ -706,7 +707,7 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
 
         _apply_place_category_override(event_dict, place_category_overrides)
 
-        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts, place_reputation=place_rep)
 
         dup_id = find_exhibition_duplicate(
             db=db,
@@ -767,6 +768,7 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
     window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(db, days=window)
     place_counts = get_place_post_counts(db)
+    place_rep = get_place_reputation(db, auto_reject_threshold=_auto_reject_threshold(scoring_cfg))
     place_cat_queue = get_place_category_queue_counts(db)
     date_counts = get_date_event_counts(db, days=scoring_cfg.get("date_scarcity_window_days", 10))
 
@@ -788,7 +790,7 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
 
         _apply_place_category_override(event_dict, place_category_overrides)
 
-        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts)
+        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts, place_reputation=place_rep)
 
         new_event = create_event(db, event_dict, model)
         if new_event and 'id' in new_event:
@@ -1057,6 +1059,71 @@ def get_place_post_counts(db) -> dict:
 
 
 @db_session
+def get_place_reputation(db, auto_reject_threshold: int = 39) -> dict:
+    """Return {place_id: {posted, ready, onlyapi, rejected, spam}} for place reputation.
+
+    Positive signals (Events2Posts): Posted, ReadyToPost, OnlyApi.
+    Negative signals:
+      - Events2Posts: Rejected (AI/manual), Spam (manual from UI).
+      - EventsNotApproved: spam (any score) and rejected with score > auto_reject_threshold.
+        Low-score auto-rejections (score <= threshold, set by auto_reject_low_score_events)
+        are excluded — they carry no information beyond the score itself and would create
+        a feedback loop that keeps lowering a place's reputation. 'duplicate' is also
+        excluded: it reflects title repetition, not venue quality.
+
+    Weights are applied later in scoring._score_place.
+    """
+    reputation = {}
+
+    def _bucket(place_id):
+        return reputation.setdefault(
+            place_id,
+            {"posted": 0, "ready": 0, "onlyapi": 0, "rejected": 0, "spam": 0},
+        )
+
+    e2p_status_to_key = {
+        "Posted": "posted",
+        "ReadyToPost": "ready",
+        "OnlyApi": "onlyapi",
+        "Rejected": "rejected",
+        "Spam": "spam",
+    }
+    e2p_rows = (
+        db.query(Events2Posts.place_id, Events2Posts.status, func.count(Events2Posts.id))
+        .filter(
+            Events2Posts.place_id.isnot(None),
+            Events2Posts.status.in_(tuple(e2p_status_to_key.keys())),
+        )
+        .group_by(Events2Posts.place_id, Events2Posts.status)
+        .all()
+    )
+    for place_id, status, cnt in e2p_rows:
+        _bucket(place_id)[e2p_status_to_key[status]] += cnt
+
+    # EventsNotApproved: spam (any score) + informed rejected (score above auto threshold).
+    na_rows = (
+        db.query(EventsNotApproved.place_id, EventsNotApproved.status, func.count(EventsNotApproved.id))
+        .filter(
+            EventsNotApproved.place_id.isnot(None),
+            or_(
+                EventsNotApproved.status == "spam",
+                and_(
+                    EventsNotApproved.status == "rejected",
+                    EventsNotApproved.score > auto_reject_threshold,
+                ),
+            ),
+        )
+        .group_by(EventsNotApproved.place_id, EventsNotApproved.status)
+        .all()
+    )
+    for place_id, status, cnt in na_rows:
+        key = "spam" if status == "spam" else "rejected"
+        _bucket(place_id)[key] += cnt
+
+    return reputation
+
+
+@db_session
 def get_date_event_counts(db, days: int = 10) -> dict:
     """Return {date: count} of events per from_date within the next N days.
 
@@ -1123,6 +1190,15 @@ def _get_scoring_config() -> dict:
         return base
 
 
+def _auto_reject_threshold(scoring_cfg: dict) -> int:
+    """Score at/below which events are auto-rejected (excluded from negative reputation).
+
+    Mirrors auto_reject_low_score_events (max_score=39). Configurable via
+    scoring.place_reputation.auto_reject_threshold.
+    """
+    return (scoring_cfg.get("place_reputation", {}) or {}).get("auto_reject_threshold", 39)
+
+
 def _apply_scoring(
     event_dict: dict,
     place_id,
@@ -1130,6 +1206,7 @@ def _apply_scoring(
     place_post_counts: dict,
     place_category_queue_counts: dict = None,
     date_event_counts: dict = None,
+    place_reputation: dict = None,
 ):
     """Calculate score and write score/score_breakdown into event_dict."""
     scoring_config = _get_scoring_config()
@@ -1141,6 +1218,7 @@ def _apply_scoring(
         place_post_counts=place_post_counts,
         place_category_queue_counts=place_category_queue_counts,
         date_event_counts=date_event_counts,
+        place_reputation=place_reputation,
     )
     event_dict["score"] = breakdown.total
     event_dict["score_breakdown"] = breakdown.to_json()
@@ -1171,6 +1249,7 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_rep = get_place_reputation(auto_reject_threshold=_auto_reject_threshold(scoring_config))
     place_cat_queue = get_place_category_queue_counts()
     date_counts = get_date_event_counts(days=scoring_config.get("date_scarcity_window_days", 10))
 
@@ -1182,6 +1261,7 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
         place_post_counts=place_counts,
         place_category_queue_counts=place_cat_queue,
         date_event_counts=date_counts,
+        place_reputation=place_rep,
     )
 
     event.score = breakdown.total
@@ -1233,6 +1313,7 @@ def recalculate_scores_bulk(
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
+    place_rep = get_place_reputation(auto_reject_threshold=_auto_reject_threshold(scoring_config))
     place_cat_queue = get_place_category_queue_counts()
     date_counts = get_date_event_counts(days=scoring_config.get("date_scarcity_window_days", 10))
 
@@ -1261,6 +1342,7 @@ def recalculate_scores_bulk(
                 place_post_counts=place_counts,
                 place_category_queue_counts=place_cat_queue,
                 date_event_counts=date_counts,
+                place_reputation=place_rep,
             )
 
             event.score = breakdown.total
