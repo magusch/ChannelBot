@@ -2615,3 +2615,165 @@ def route_events_to_api(
     if routed_ids:
         db.commit()
     return routed_ids
+
+
+@db_session
+def find_unschedulable_events(
+    db,
+    protect_first: int = 5,
+    weekday_slots: int = 4,
+    weekend_slots: int = 3,
+    min_runway_days: int = 1,
+) -> List[dict]:
+    """Return ReadyToPost events that cannot be posted before their ``to_date``
+    even under an optimal (earliest-deadline-first) arrangement of the queue.
+
+    Read-only / dry-run: computes the set that *would* be routed to OnlyApi but
+    changes nothing. Status routing is left to a separate caller once the model
+    is validated on real data.
+
+    Model
+    -----
+    The channel posts ``weekday_slots`` events per weekday and ``weekend_slots``
+    per weekend day. The first ``protect_first`` events by ``queue`` are committed
+    (they occupy the nearest slots), so they are excluded from candidates and the
+    capacity available to everyone else is reduced by ``protect_first``.
+
+    We deliberately ignore each event's *current* queue position: an event deep
+    in the queue could simply be moved a few days earlier by the reordering task.
+    We only flag events that do not fit even when packed optimally — the genuine
+    overflow that no arrangement can save. Deadline is ``to_date`` (an event is
+    still postable while it is ongoing).
+
+    Events ending within ``min_runway_days`` (e.g. today) are excluded — they are
+    left to the regular expiry path (``update_expired_events``) rather than routed.
+
+    Packing is Moore-Hodgson: walk candidates in ``to_date`` order; when a
+    deadline window overflows, drop one scheduled event. Victim priority (dropped
+    first → last): not-prepared before prepared (``is_ready=True`` is protected
+    and removed only as a last resort), then lowest ``score``, then nearest
+    ``to_date`` (the one already most at risk). Dropped events are the
+    unschedulable set. Which victims are chosen never changes *how many* events
+    stay on time — only which ones — so this is free to optimise.
+    """
+    import heapq
+
+    msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
+    today = msk_now.date()
+    weekday0 = today.weekday()  # Mon=0 .. Sun=6
+
+    def cumulative_slots(target_date):
+        """Number of channel slots from today through target_date inclusive.
+
+        O(1): count weekday/weekend days in the range arithmetically instead of
+        iterating day by day (the latter is too slow for far-future deadlines).
+        """
+        if target_date < today:
+            return 0
+        n = (target_date - today).days + 1
+        full_weeks, rem = divmod(n, 7)
+        weekend_days = full_weeks * 2 + sum(
+            1 for i in range(rem) if (weekday0 + i) % 7 >= 5
+        )
+        weekday_days = n - weekend_days
+        return weekday_days * weekday_slots + weekend_days * weekend_slots
+
+    # Select only the columns we need — loading full ORM rows pulls the pgvector
+    # `embedding` and `score_breakdown` JSONB for the whole ReadyToPost pool,
+    # which is what made this slow.
+    all_ready = (
+        db.query(
+            Events2Posts.id,
+            Events2Posts.event_id,
+            Events2Posts.title,
+            Events2Posts.score,
+            Events2Posts.queue,
+            Events2Posts.is_ready,
+            Events2Posts.category,
+            Events2Posts.source,
+            Events2Posts.from_date,
+            Events2Posts.to_date,
+        )
+        .filter(Events2Posts.status == 'ReadyToPost')
+        .order_by(asc(Events2Posts.queue))
+        .all()
+    )
+
+    # First protect_first by queue are committed; they eat the nearest slots.
+    # Events ending before the runway cutoff are left to the regular expiry path.
+    runway_cutoff = today + timedelta(days=min_runway_days)
+    candidates = [
+        e for e in all_ready[protect_first:]
+        if e.to_date is not None and e.to_date.date() >= runway_cutoff
+    ]
+    candidates.sort(key=lambda e: e.to_date)
+
+    # Min-heap keyed by (ready_rank, score, to_date, id): heappop yields the
+    # not-prepared event first (ready_rank 0), then lowest score, then nearest
+    # deadline. So is_ready=True (rank 1) is dropped only as a last resort. id
+    # (unique) keeps the tuple comparable without ever reaching the row object.
+    scheduled = []
+    dropped = []
+    for e in candidates:
+        capacity = max(0, cumulative_slots(e.to_date.date()) - protect_first)
+        ready_rank = 1 if e.is_ready is True else 0
+        heapq.heappush(scheduled, (ready_rank, e.score or 0, e.to_date, e.id, e))
+        if len(scheduled) > capacity:
+            dropped.append(heapq.heappop(scheduled)[4])
+
+    dropped.sort(key=lambda e: e.to_date)
+    return [
+        {
+            'id': e.id,
+            'event_id': e.event_id,
+            'title': e.title,
+            'score': e.score,
+            'queue': e.queue,
+            'is_ready': e.is_ready,
+            'category': e.category,
+            'source': e.source,
+            'from_date': e.from_date.isoformat() if e.from_date else None,
+            'to_date': e.to_date.isoformat() if e.to_date else None,
+        }
+        for e in dropped
+    ]
+
+
+@db_session
+def route_unschedulable_events(
+    db,
+    protect_first: int = 5,
+    weekday_slots: int = 4,
+    weekend_slots: int = 3,
+    min_runway_days: int = 1,
+    limit: int = 0,
+) -> List[int]:
+    """Route events that cannot be posted before their ``to_date`` off the
+    channel into the ``OnlyApi`` status.
+
+    The unschedulable set is computed by :func:`find_unschedulable_events` (same
+    capacity model, runway floor and victim priority). This mirrors
+    :func:`route_events_to_api`: ``status -> 'OnlyApi'`` and ``post_date`` cleared.
+
+    If ``limit > 0`` only the first ``limit`` events are routed — the list is
+    ordered by ``to_date``, so the most urgent overflow goes first.
+
+    Returns the list of routed ids.
+    """
+    events = find_unschedulable_events(
+        db=db,
+        protect_first=protect_first,
+        weekday_slots=weekday_slots,
+        weekend_slots=weekend_slots,
+        min_runway_days=min_runway_days,
+    )
+    ids = [e['id'] for e in events]
+    if limit and limit > 0:
+        ids = ids[:limit]
+
+    if ids:
+        db.query(Events2Posts).filter(Events2Posts.id.in_(ids)).update(
+            {'status': 'OnlyApi', 'post_date': None}, synchronize_session=False
+        )
+        db.commit()
+    return ids

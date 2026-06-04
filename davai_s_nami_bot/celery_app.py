@@ -47,6 +47,14 @@ def create_celery_app():
             'schedule': crontab(minute=15, hour=5),  # after auto_promote (05:00), before prepare (05:25)
         }
 
+    if settings.route_unschedulable.get('enabled'):
+        beat_schedules['route-unschedulable-events'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.route_unschedulable_events',
+            # after auto_route (05:15), before prepare (05:25) so we don't spend
+            # AI prep on events we're about to route off the channel
+            'schedule': crontab(minute=20, hour=5),
+        }
+
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',

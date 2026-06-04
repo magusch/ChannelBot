@@ -22,6 +22,14 @@
       "limit": 100,
       "min_channel_queue": 20
     },
+    "route_unschedulable": {
+      "enabled": false,
+      "protect_first": 5,
+      "weekday_slots": 4,
+      "weekend_slots": 3,
+      "min_runway_days": 1,
+      "limit": 0
+    },
     "escraper_parameters": {
       "timepad": {
         "city": "Санкт-Петербург",

@@ -803,6 +803,28 @@ def auto_route_to_api():
 
 
 @celery_app.task
+def route_unschedulable_events():
+    """Route ReadyToPost events that won't fit before their to_date to OnlyApi.
+
+    Parameters are read from settings.route_unschedulable. If the section is
+    empty or enabled=False the task is not scheduled in beat; a manual call still
+    runs with crud.route_unschedulable_events defaults.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.route_unschedulable or {}
+    routed_ids = crud.route_unschedulable_events(
+        protect_first=cfg.get('protect_first', 5),
+        weekday_slots=cfg.get('weekday_slots', 4),
+        weekend_slots=cfg.get('weekend_slots', 3),
+        min_runway_days=cfg.get('min_runway_days', 1),
+        limit=cfg.get('limit', 0),
+    )
+    log.info(f"Routed {len(routed_ids)} unschedulable events to OnlyApi (cfg={cfg})")
+    return {"routed_count": len(routed_ids), "routed_ids": routed_ids}
+
+
+@celery_app.task
 def distribute_event_queue(protect_first: int = 10):
     """Reorder the publication queue for content variety."""
     reordered = crud.distribute_event_queue(protect_first=protect_first)
