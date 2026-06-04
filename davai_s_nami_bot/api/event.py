@@ -7,7 +7,7 @@ from ..pydantic_models import EventOut, EventRequestParameters
 from ..celery_app import redis_client
 from .. import crud
 from .dependencies import verify_token, get_cache_key, serialize_datetime, log_api_request
-from .schemas import BulkCreatePostRequest
+from .schemas import BulkCreatePostRequest, SimilarEventsResponse
 
 router = APIRouter(
     prefix="/events",
@@ -79,6 +79,58 @@ def remake_post(event_id: int, save: bool = False):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
         )
+    return {"status": "success", "result": result}
+
+
+@router.get("/{event_id}/similar",
+            response_model=SimilarEventsResponse,
+            dependencies=[Depends(verify_token)],
+            summary="Find similar events by embedding",
+            description="Returns events whose embedding is closest (cosine distance) "
+                        "to the given event among publicly-valid Events2Posts. "
+                        "Source event is excluded. Only events embedded by the same "
+                        "model are compared. Cached for 10 min.\n\n"
+                        "If the source event has no embedding yet, dispatches a Celery "
+                        "embed task and returns 202 with {status: 'pending', task_id}. "
+                        "Client should poll /tasks/status/{task_id} then re-request.")
+async def get_similar_events(event_id: int, request: Request, limit: int = 10):
+    if limit < 1 or limit > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="limit must be between 1 and 50",
+        )
+
+    cache_key = f"similar_events_{event_id}_{limit}"
+    cached_data = redis_client.get(cache_key)
+    await log_api_request(request, {"event_id": event_id, "limit": limit})
+
+    if cached_data:
+        return {"status": "success", "message": "cached", "result": json.loads(cached_data)}
+
+    result = crud.find_similar_events(event_id=event_id, limit=limit)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        )
+
+    # Source has no embedding yet — dispatch a Celery embed task and tell the client to retry.
+    if result.get('request', {}).get('reason') == 'no_embedding':
+        from ..celery_tasks import embed_single_event
+        task = embed_single_event.delay(event_id)
+        return Response(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=json.dumps({
+                "status": "pending",
+                "task_id": task.id,
+                "result": result,
+                "message": "Source event has no embedding; embedding task dispatched. "
+                           "Poll /tasks/status/{task_id} then retry this endpoint.",
+            }, default=serialize_datetime),
+            media_type="application/json",
+        )
+
+    redis_client.setex(cache_key, 60 * 10, json.dumps(result, default=serialize_datetime))
     return {"status": "success", "result": result}
 
 

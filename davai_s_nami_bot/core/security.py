@@ -1,5 +1,5 @@
 import os, json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from passlib.context import CryptContext
 from typing import Any, Dict
@@ -33,9 +33,9 @@ def create_access_token(
 ) -> str:
     """Generate a JWT token for the given subject (user identifier)."""
     if expires_delta:
-        expire = datetime.utcnow() + timedelta(minutes=expires_delta)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=expires_delta)
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     # Payload - data contained in the token
     to_encode = {"exp": expire, "sub": str(subject)}
