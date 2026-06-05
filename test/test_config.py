@@ -22,7 +22,7 @@ TEST_ENV = {
     "VK_USER_ID": "test_vk_id",
     "BASE_URL": "test",
     "API_TOKEN": "test",
-    "CONFIG_PATH": "settings.json",
+    "CONFIG_PATH": "settings.example.json",
 }
 
 TEST_SITE_PARAMS = {
