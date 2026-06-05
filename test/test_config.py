@@ -4,7 +4,7 @@ Config file for tests
 
 TEST_ENV = {
     "TIMEPAD_TOKEN": "test_timepad_token",
-    "TELEGRAM_BOT_TOKEN": "test_telegram_token",
+    "TELEGRAM_BOT_TOKEN": "0000000000:test_telegram_token",
     "CHANNEL_ID": "-100",
     "DEV_CHANNEL_ID": "-100",
     "VK_GROUP_ID": "test_vk_group_id",
@@ -15,13 +15,14 @@ TEST_ENV = {
     "DSN_DATABASE_URL": "sqlite:///:memory:",
     "DSN_USERNAME": "test_login",
     "DSN_PASSWORD": "test_password",
-    "BOT_TOKEN": "test_bot_token",
+    "BOT_TOKEN": "0000000000:test_bot_token",
     "DATABASE_URL": "test_database_url",
     "VK_TOKEN": "test_vk_token",
     "VK_ID": "test_vk_id",
     "VK_USER_ID": "test_vk_id",
     "BASE_URL": "test",
     "API_TOKEN": "test",
+    "CONFIG_PATH": "settings.example.json",
 }
 
 TEST_SITE_PARAMS = {

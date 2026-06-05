@@ -38,7 +38,7 @@ def format_text(text: str, style: str = None):
 
 class BaseClient(ABC):
     constants: Dict[str, Dict[str, Union[str, int]]]
-    name: ""
+    name: str = ""
     formatter_style = ""
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
@@ -81,7 +81,7 @@ class Telegram(BaseClient):
     def __init__(self):
         self._client = TeleBot(
             token=os.environ.get("BOT_TOKEN"),
-            parse_mode="markdown",
+            parse_mode="MarkdownV2",
         )
         self.param = DSNParameters()
         self.channel_link = self.param.site_parameters('channel_link', last=1)
@@ -99,12 +99,9 @@ class Telegram(BaseClient):
         try:
             if event.main_category_id == 11:
                 crud.add_exhibition_to_dsn_bot(event, message.message_id)
-            else:
-                print(f"Event is not exhibition: event.main_category_id: '{event.main_category_id}'")
         except Exception as e:
             print("Error adding exhibition to DSN bot")
             print(e)
-
 
     def send_text(self, text: str, *, destination_id: Union[int, str]):
         return self._client.send_message(
@@ -275,7 +272,11 @@ class DevClient(Telegram):
 
 class Clients:
     def __init__(self):
-        self._clients = [cls() for cls in BaseClient.__subclasses__()]
+        from .settings.settings_loader import settings
+
+        self._clients = [Telegram()]
+        if settings.vk_posting_enabled:
+            self._clients.append(VKRequests())
 
     def send_post(self, *args, **kwargs):
         for client in self._clients:
@@ -283,7 +284,7 @@ class Clients:
 
 
 def _requests_get(url, params: Dict[str, Any], return_key: str = "response"):
-    return _check_response(requests.get(url=url, params=params), return_key=return_key)
+    return _check_response(requests.get(url=url, params=params, timeout=15), return_key=return_key)
 
 
 def _requests_post(
@@ -294,7 +295,7 @@ def _requests_post(
     return_key: str = "response",
 ):
     return _check_response(
-        requests.post(url=url, data=data, json=json, files=files), return_key=return_key
+        requests.post(url=url, data=data, json=json, files=files, timeout=30), return_key=return_key
     )
 
 

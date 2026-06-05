@@ -1,4 +1,4 @@
-FROM python:3.9-slim AS base
+FROM python:3.12-slim AS base
 
 WORKDIR /app
 
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \
+    libheif-dev \
     git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

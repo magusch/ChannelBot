@@ -39,10 +39,10 @@ def next_event_to_channel():
 def get_new_events(events: List[Event]) -> List[Event]:
     all_events = crud.get_events_from_all_tables()
     
-    # Получаем множество event_id из всех событий
+    # Build a set of event_id from all existing events
     existing_ids = set(event.event_id for event in all_events)
     
-    # Фильтруем события, оставляя только те, которых нет в базе
+    # Keep only events not already in the database
     new_events = [event for event in events if event.event_id not in existing_ids]
 
     return new_events

@@ -17,7 +17,7 @@ class DSNParameters:
         self.start()
 
     def start(self):
-        cached_site_params = redis_client.getex(f'parameters:dsn_site')
+        cached_site_params = redis_client.get(f'parameters:dsn_site')
         if not cached_site_params:
             self.update_parameters()
 
@@ -25,8 +25,8 @@ class DSNParameters:
 
     def _wait_for_parameters(self, timeout=15, interval=1):
         """
-        Ожидает появления параметров в Redis в течение timeout секунд.
-        Если параметры не появляются, работает с дефолтными.
+        Waits for parameters to appear in Redis for up to timeout seconds.
+        Falls back to defaults if parameters do not appear.
         """
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -75,12 +75,15 @@ class DSNParameters:
 
     def read_param(self, site):
         if site not in self.sites.keys() or self._is_stale(site):
-            cached_params = redis_client.getex(f'parameters:{site}')
+            cached_params = redis_client.get(f'parameters:{site}')
             if cached_params is None:
                 self.update_parameters()
                 self._wait_for_parameters()
-                cached_params = redis_client.getex(f'parameters:{site}')
+                cached_params = redis_client.get(f'parameters:{site}')
                 if cached_params is None:
+                    # Redis is empty but we have cached data in memory — use it
+                    if site in self.sites and self.sites[site].get("params"):
+                        return self.sites[site]["params"]
                     return {}
 
             self.sites[site] = {

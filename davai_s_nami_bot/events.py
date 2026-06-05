@@ -1,11 +1,17 @@
+import concurrent.futures
+import logging
+import re
 import time
 from collections import namedtuple
 from datetime import date, datetime, timedelta
 
+log = logging.getLogger(__name__)
+
 from typing import Any, Callable, Dict, List, NamedTuple
 
 import escraper
-from escraper.parsers import ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets, MTS, Culture
+from escraper.parsers import (ALL_EVENT_TAGS, Radario, Timepad, Ticketscloud, VK, QTickets,
+                              MTS, Culture, Telegram, ConfigScraper, Kassir)
 
 from . import utils
 from .logger import catch_exceptions
@@ -13,6 +19,9 @@ from .logger import catch_exceptions
 from .dsn_site_session import place_address
 
 from .helper.dsn_parameters import dsn_parameters
+from .settings.settings_loader import settings
+
+from . import crud
 
 
 STARTS_AT_MIN = "{year_month_day}T10:00:00"
@@ -20,21 +29,58 @@ STARTS_AT_MAX = "{year_month_day}T23:59:00"
 
 MAX_NEXT_DAYS = 30
 two_days = timedelta(days=2)
-
 ## PARSERS
-timepad_parser = Timepad()
-radario_parser = Radario()
-ticketscloud_parser = Ticketscloud()
-vk_parser = VK()
-qt_parser = QTickets()
-mts_parser = MTS()
-culture_parser = Culture()
+def _use_proxy(parser_name):
+    return settings.escraper_parameters.get(parser_name, {}).get('use_proxy', True)
+
+def _is_scraper_enabled(scraper_name):
+    return settings.escraper_parameters.get(scraper_name, {}).get('enabled', True)
+
+
+DEFAULT_SCRAPER_TIMEOUT_SEC = 300
+
+
+def _call_scraper(func, days, name):
+    """Run a scraper with a wall-clock timeout. Returns [] on timeout or error.
+
+    Timeout is read from settings.escraper_parameters.{name}.timeout_sec (default 300s).
+    Other-scraper results in the same batch are preserved by the caller; partial results
+    from THIS scraper are lost (escraper's get_events is all-or-nothing).
+    """
+    timeout = settings.escraper_parameters.get(name or '', {}).get(
+        'timeout_sec', DEFAULT_SCRAPER_TIMEOUT_SEC
+    )
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        try:
+            return executor.submit(func, days).result(timeout=timeout) or []
+        except concurrent.futures.TimeoutError:
+            log.warning(f"Scraper '{name}' exceeded {timeout}s timeout — skipping (site likely down)")
+            return []
+        except Exception as e:
+            log.error(f"Scraper '{name}' raised: {e}", exc_info=True)
+            return []
+    finally:
+        executor.shutdown(wait=False)
+
+timepad_parser = Timepad(use_proxy=_use_proxy('timepad'))
+timepad_parser.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+radario_parser = Radario(use_proxy=_use_proxy('radario'))
+ticketscloud_parser = Ticketscloud(use_proxy=_use_proxy('ticketscloud'))
+vk_parser = VK(use_proxy=_use_proxy('vk'))
+qt_parser = QTickets(use_proxy=_use_proxy('qtickets'))
+mts_parser = MTS(use_proxy=_use_proxy('mts'))
+culture_parser = Culture(use_proxy=_use_proxy('culture'))
+tg_parser = Telegram(use_proxy=_use_proxy('tg'))
+cfg_parser = ConfigScraper(use_proxy=_use_proxy('cfg'))
+kassir_parser = Kassir(use_proxy=_use_proxy('kassir'))
 
 PARSER_URLS = {
     'timepad.ru': timepad_parser, 'vk.': vk_parser,
     'ticketscloud.': ticketscloud_parser, 'radario.ru': radario_parser,
     'qtickets.events': qt_parser, 'live.mts.ru': mts_parser,
-    'culture.ru': culture_parser
+    'culture.ru': culture_parser, 't.me': tg_parser,
+    'kassir.ru': kassir_parser,
 }
 
 
@@ -44,7 +90,7 @@ def get_city_param():
     if cities:
         return cities[0]
     else:
-        return 'spb'
+        return settings.city
 
 
 ## ESCRAPER EVENTS PARSERS
@@ -100,7 +146,7 @@ def month_name(dt: datetime):
     return utils.MONTHNAMES[dt.month]
 
 
-def date_to_title(date_from: datetime, date_to: datetime):
+def date_to_title(date_from: datetime, date_to: datetime):  # deprecated: use PostHelper.date_to_title()
     title_date = ''
     if date_to is None:
         title_date = "{day} {month}".format(
@@ -134,7 +180,7 @@ def date_to_title(date_from: datetime, date_to: datetime):
     return title_date
 
 
-def date_to_post(date_from: datetime, date_to: datetime):
+def date_to_post(date_from: datetime, date_to: datetime):  # deprecated: use PostHelper.date_to_post()
     s_weekday = weekday_name(date_from)
     s_day = date_from.day
     s_month = month_name(date_from)
@@ -188,6 +234,10 @@ def _url(event: NamedTuple):
     return event.url
 
 
+def _ticket_url(event: NamedTuple):
+    return event.ticket_url
+
+
 def _from_date(event: NamedTuple):
     return event.date_from
 
@@ -210,6 +260,7 @@ def _image(event: NamedTuple):
 def _category(event: NamedTuple):
     return event.category
 
+
 def _event_id(event: NamedTuple):
     return event.id
 
@@ -218,8 +269,26 @@ def _price(event: NamedTuple):
     return event.price
 
 
+def _price_int(event: NamedTuple):
+    if 'бесплатн' in event.price.lower():
+        return 0
+    else:
+        prices = re.findall(r'\d+', event.price)
+        if len(prices) == 1:
+            return prices[0]
+        elif len(prices) > 1:
+            prices = [int(price) for price in prices if int(price) > 100 or int(price) == 0]
+            return min(prices)
+        else:
+            return -1
+
+
 def _address(event: NamedTuple):
     return f"{event.place_name}, {event.adress}"
+
+
+def _source(event: NamedTuple):
+    return event.source
 
 
 class Event:
@@ -228,35 +297,38 @@ class Event:
         post=_post,
         full_text=_full_text,
         url=_url,
+        ticket_url=_ticket_url,
         from_date=_from_date,
         to_date=_to_date,
         image=_image,
         event_id=_event_id,
         price=_price,
+        price_int=_price_int,
         category=_category,
         address=_address,
+        source=_source
     )
     _tags = list(_escraper_event_parsers)
 
     _additional_tags = [
-        'id', 'queue', 'prepared_text', 'status', 'post_url', 
-        'place_id', 'is_ready', 'explored_date', 'post_date', 
-        'main_category_id'
+        'id', 'queue', 'prepared_text', 'status', 'post_url',
+        'place_id', 'is_ready', 'explored_date', 'post_date',
+        'main_category_id', 'image_upload'
     ]
 
     _all_tags = _tags + _additional_tags
 
     def __new__(cls, **kwargs):
-        # Создаем namedtuple с основными полями
+        # Create namedtuple with core fields
         base_fields = {k: v for k, v in kwargs.items() if k in cls._tags}
         base_event = namedtuple("event", cls._tags)(**base_fields)
-        
-        # Создаем экземпляр класса
+
+        # Create class instance
         instance = super().__new__(cls)
         instance._base = base_event
         instance._additional = {}
-        
-        # Сохраняем дополнительные поля
+
+        # Store additional fields
         for tag in cls._additional_tags:
             if tag in kwargs:
                 instance._additional[tag] = kwargs[tag]
@@ -264,23 +336,23 @@ class Event:
         return instance
     
     def __getattr__(self, name):
-        # Пробуем получить атрибут из базового namedtuple
+        # Try to get attribute from the base namedtuple
         try:
             return getattr(self._base, name)
         except AttributeError:
-            # Если атрибут не найден в базовом namedtuple, пробуем получить из дополнительных полей
+            # If attribute not found in base namedtuple, try additional fields
             if name in self._additional:
                 return self._additional[name]
             raise
     
     def _asdict(self):
-        """Возвращает словарь с основными полями (для совместимости с namedtuple)"""
+        """Returns a dict of core fields (for namedtuple compatibility)."""
         return self._base._asdict()
-    
+
     def to_dict(self):
-        """Преобразует Event в словарь для сохранения в базу данных"""
+        """Converts Event to a dict for saving to the database."""
         result = self._asdict()
-        # Добавляем дополнительные поля
+        # Add additional fields
         result.update(self._additional)
         return result
 
@@ -296,31 +368,31 @@ class Event:
     @classmethod
     def from_database(cls, data, columns=None):
         """
-        Создание объекта `Event` из записи базы данных.
+        Create an `Event` object from a database record.
 
         Parameters
         ----------
         data : tuple or dict or SQLAlchemy model
-            Строчка данных из базы данных, словарь с данными или объект SQLAlchemy
+            A row from the database, a dict with data, or a SQLAlchemy object.
 
         columns : iterable
-            Список из параметров мероприятия
+            List of event field names.
 
         Returns
         -------
-        Event : Объект Event
+        Event : An Event object.
         """
-        # Если columns не указан, используем все теги
+        # If columns is not specified, use all tags
         if columns is None:
             columns = cls._all_tags
-            
+
         event_dict = {}
-        
-        # Обработка SQLAlchemy объекта
+
+        # Handle SQLAlchemy object
         if hasattr(data, '__table__'):
             for column in data.__table__.columns:
                 value = getattr(data, column.name)
-                # Преобразуем типы данных, если необходимо
+                # Convert data types if necessary
                 if column.name in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                     if isinstance(value, str):
                         try:
@@ -328,13 +400,13 @@ class Event:
                         except ValueError:
                             value = datetime.today()
                 event_dict[column.name] = value
-                
-        # Обработка словаря
+
+        # Handle dict
         elif isinstance(data, dict):
             for tag in columns:
                 if tag in data:
                     value = data[tag]
-                    # Преобразуем типы данных, если необходимо
+                    # Convert data types if necessary
                     if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                         if isinstance(value, str):
                             try:
@@ -343,7 +415,7 @@ class Event:
                                 value = datetime.today()
                     event_dict[tag] = value
                 else:
-                    # Устанавливаем значения по умолчанию
+                    # Set default values
                     if 'date' in tag:
                         event_dict[tag] = datetime.today()
                     elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -352,13 +424,13 @@ class Event:
                         event_dict[tag] = False
                     else:
                         event_dict[tag] = ''
-                        
-        # Обработка кортежа или другой последовательности
+
+        # Handle tuple or other sequence
         else:
             for i, tag in enumerate(columns):
                 if i < len(data):
                     value = data[i]
-                    # Преобразуем типы данных, если необходимо
+                    # Convert data types if necessary
                     if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                         if isinstance(value, str):
                             try:
@@ -367,7 +439,7 @@ class Event:
                                 value = datetime.today()
                     event_dict[tag] = value
                 else:
-                    # Устанавливаем значения по умолчанию
+                    # Set default values
                     if 'date' in tag:
                         event_dict[tag] = datetime.today()
                     elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -376,48 +448,47 @@ class Event:
                         event_dict[tag] = False
                     else:
                         event_dict[tag] = ''
-        
         return cls(**event_dict)
 
     @classmethod
     def from_dict(cls, data, columns=None):
         """
-        Создание объекта `Event` из словаря.
+        Create an `Event` object from a dict.
 
         Parameters
         ----------
         data : dict
-            Словарь с данными
+            Dict with event data.
 
         columns : iterable
-            Список из параметров мероприятия
+            List of event field names.
 
         Returns
         -------
-        Event : Объект Event
+        Event : An Event object.
         """
-        # Если columns не указан, используем все теги
+        # If columns is not specified, use all tags
         if columns is None:
             columns = cls._all_tags
-            
+
         event_dict = {}
-        
+
         for tag in columns:
             if tag in data:
-                # Преобразуем типы данных, если необходимо
+                # Convert data types if necessary
                 value = data[tag]
-                
-                # Обработка специальных типов данных
+
+                # Handle special data types
                 if tag in ['from_date', 'to_date', 'explored_date', 'post_date'] and value is not None:
                     if isinstance(value, str):
                         try:
                             value = datetime.fromisoformat(value.replace('Z', '+00:00'))
                         except ValueError:
                             value = datetime.today()
-                
+
                 event_dict[tag] = value
             else:
-                # Устанавливаем значения по умолчанию
+                # Set default values
                 if 'date' in tag:
                     event_dict[tag] = datetime.today()
                 elif tag in ['id', 'queue', 'place_id', 'main_category_id']:
@@ -426,7 +497,7 @@ class Event:
                     event_dict[tag] = False
                 else:
                     event_dict[tag] = ''
-        
+
         return cls(**event_dict)
 
 
@@ -441,10 +512,10 @@ def not_approved_organization_filter(events: List[Event]):
     for event in events:
         if (
             event is None
-            or (
-                event.to_date is not None and event.to_date - event.from_date > two_days
-            )
-            or event.image is None
+            # or (
+            #     event.to_date is not None and event.to_date - event.from_date > two_days
+            # )
+            # or event.image is None
         ):
             continue
 
@@ -482,49 +553,66 @@ def from_approved_organizations(days: int) -> List[Event]:
 
 
 def timepad_approved_organizations(days: int) -> List[Event]:
-    return get_timepad_events(
-        days,
-        timepad_request_params(approved=1),
-    )
+    weekday = date.today().weekday()
+    if weekday % 2 == 0:
+        return get_timepad_events(
+            days,
+            timepad_request_params(approved=1),
+
+        )
+    else:
+        return []
+
+
+def _run_scraper(events_list, func, days):
+    """Runs the scraper if it is enabled in settings."""
+    # Mapping of functions to scraper names in settings
+    scraper_names = {
+        'timepad': timepad_others_organizations,
+        'radario': radario_others_organizations,
+        'qtickets': qtickets_others_organizations,
+        'ticketscloud': ticketscloud_others_organizations,
+        'vk': vk_others_organizations,
+        'mts': mts_others_organization,
+        'culture': culture_others_organizations,
+        'kassir': kassir_others_organizations,
+    }
+    scraper_name = next((k for k, v in scraper_names.items() if v == func), None)
+    if scraper_name and not _is_scraper_enabled(scraper_name):
+        log.info(f"Scraper '{scraper_name}' is disabled in settings, skipping.")
+        return
+    events_list += _call_scraper(func, days, scraper_name or func.__name__)
 
 
 def from_not_approved_organizations(days: int) -> List[Event]:
     events = []
 
-    function_list = [
+    function_list_even = [
         timepad_others_organizations,
         radario_others_organizations,
-        ticketscloud_others_organizations,
     ]
 
-    for func in function_list:
-        try:
-            events += func(days)
-        except Exception as e:
-            print(f"An error occurred in {func.__name__}: {e}")
+    function_list_odd = [
+        qtickets_others_organizations,
+        ticketscloud_others_organizations
+    ]
 
     weekday = date.today().weekday()
+
+    if weekday % 2 == 1:
+        for func in function_list_odd:
+            _run_scraper(events, func, days*2)
+    else:
+        for func in function_list_even:
+            _run_scraper(events, func, days)
+
     if weekday == 6:
-        try:
-            events += vk_others_organizations(days)
-        except Exception as e:
-            print(f"An error occurred in vk_others_organizations: {e}")
-    elif weekday % 2 == 1:
-        try:
-            events += qtickets_others_organizations(days*2)
-        except Exception as e:
-            print(f"An error occurred in qtickets_others_organizations: {e}")
+        _run_scraper(events, vk_others_organizations, days)
 
     if weekday == 0 or weekday == 4:
-        try:
-            events += mts_others_organization(days)
-        except Exception as e:
-            print(f"An error occurred in mts_others_organization: {e}")
+        _run_scraper(events, mts_others_organization, days)
     elif weekday == 2 or weekday == 5:
-        try:
-            events += culture_others_organizations(days)
-        except Exception as e:
-            print(f"An error occurred in culture_organizations: {e}")
+        _run_scraper(events, culture_others_organizations, days)
 
     return events
 
@@ -547,20 +635,30 @@ def timepad_request_params(approved: bool = False) -> Dict:
         moderation_statuses="featured, shown",
     )
 
+    timepad_settings = settings.escraper_parameters.get('timepad', {})
+
     if timepad_params:
         if not approved:
             timepad_others_params['price_max'] = 5000
             if dsn_parameters.read_param('timepad')['city']:
                 timepad_others_params["cities"] = dsn_parameters.read_param('timepad')['city'][0]
+            elif timepad_settings:
+                timepad_others_params["cities"] = timepad_settings.get('city', 'Санкт-Петербург')
+
             if dsn_parameters.read_param('timepad')['price_max']:
                 timepad_others_params["price_max"] = dsn_parameters.read_param('timepad')['price_max'][0]
+            elif timepad_settings:
+                timepad_others_params["price_max"] = timepad_settings.get('price_max', 5000)
 
-            timepad_others_params["organization_ids_exclude"] = (
-                    ", ".join(
-                        timepad_params['approved_organization'] + timepad_params['boring_organization'])
-                )
-            timepad_others_params["category_ids_exclude"] = ", ".join(timepad_params['exclude_categories'])
-            timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
+            if timepad_params['approved_organization'] or timepad_params['boring_organization']:
+                timepad_others_params["organization_ids_exclude"] = (
+                        ", ".join(
+                            timepad_params['approved_organization'] + timepad_params['boring_organization'])
+                    )
+            if timepad_params['exclude_categories']:
+                timepad_others_params["category_ids_exclude"] = ", ".join(timepad_params['exclude_categories'])
+            if timepad_params['bad_keywords']:
+                timepad_others_params["keywords_exclude"] = ", ".join(timepad_params['bad_keywords'])
         else:
             timepad_others_params['organization_ids'] = timepad_params['approved_organization']
     elif approved:
@@ -605,6 +703,8 @@ def get_timepad_events(
     """
     Getting events.
     """
+    days = int(settings.escraper_parameters.get('timepad', {}).get('days', days))
+
     if days > MAX_NEXT_DAYS:
         raise ValueError(
             f"Too much days for getting events: {days}."
@@ -612,6 +712,7 @@ def get_timepad_events(
         )
     today = date.today() + timedelta(days=1)
 
+    # NOTE: existed_event_ids removed from the code because it's too big
     if request_params is None:
         request_params = timepad_request_params()
 
@@ -632,7 +733,6 @@ def get_timepad_events(
     new_count = 1
     while new_count > 0:
         request_params["skip"] = count
-
         _new = _get_events(
             timepad_parser,
             request_params=request_params,
@@ -640,7 +740,6 @@ def get_timepad_events(
         )
         new = [i for i in _new if i.event_id not in event_ids]
         event_ids.update([i.event_id for i in _new])
-
         new_count = len(new)
 
         new_events += new
@@ -650,7 +749,6 @@ def get_timepad_events(
 
     if events_filter:
         new_events = events_filter(new_events)
-
     return new_events
 
 
@@ -665,35 +763,57 @@ def get_radario_events(
         "kids",
         "show",
     ]
+
+    days = int(settings.escraper_parameters.get('radario', {}).get('days', days))
     today = date.today()
-    date_from = today.strftime(Radario.DATETIME_STRF)
+    date_from = (today + timedelta(days=1)).strftime(Radario.DATETIME_STRF)
     date_to = (today + timedelta(days=days)).strftime(Radario.DATETIME_STRF)
 
-    radario_city = 'spb'
+    radario_city = settings.escraper_parameters.get('radario', {}).get('city', 'spb')
 
-    radario_cities = dsn_parameters.read_param('radario').get('city_id')
+    radario_cities = dsn_parameters.read_param('radario').get('city')
     if radario_cities:
         radario_city = radario_cities[0]
+
+    categories = settings.escraper_parameters.get('radario', {}).get('categories', category)
 
     request_params = {
         "from": date_from,
         "to": date_to,
-        "category": category,
+        "category": categories,
         "city": radario_city,
     }
-
-    new_events = _get_events(radario_parser, request_params=request_params)
+    existed_event_ids = crud.get_event_id_by_prefix('RADARIO')
+    new_events = _get_events(radario_parser, request_params=request_params, existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
 
     return new_events
 
+
 def get_ticketscloud_events(
     days: int, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    tc_org_ids = dsn_parameters.read_param('ticketscloud')['org_id']
-    new_events = _get_events(ticketscloud_parser, org_ids=tc_org_ids, city=get_city_param(), tags=ALL_EVENT_TAGS)
+    tc_org_ids = dsn_parameters.read_param('ticketscloud').get('org_id', [])
+    tc_org_ids += settings.escraper_parameters.get('ticketscloud', {}).get('org_id', [])
+
+    ts_cities = dsn_parameters.read_param('ticketscloud').get('city')
+    ts_city = settings.escraper_parameters.get('ticketscloud', {}).get('city', 'Санкт-Петербург')
+    if ts_cities:
+        ts_city = ts_cities[0]
+
+    existed_event_ids = crud.get_event_id_by_prefix('TC')
+
+    request_params = {
+        'city': ts_city,
+        'days': settings.escraper_parameters.get('ticketscloud', {}).get('days', 10),
+    }
+    if tc_org_ids:
+        request_params['org_ids'] = list(set(tc_org_ids))
+
+    new_events = _get_events(ticketscloud_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                         existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -704,9 +824,10 @@ def get_ticketscloud_events(
 def get_vk_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
+    days = settings.escraper_parameters.get('vk', {}).get('days', days * 2)
 
-    vk_city_id = '2'
-    vk_city = 'Санкт-Петербург'
+    vk_city_id = settings.escraper_parameters.get('vk', {}).get('vk_city_id', '2')
+    vk_city = settings.escraper_parameters.get('vk', {}).get('vk_city', 'Санкт-Петербург')
 
     vk_param = dsn_parameters.read_param('vk')
     if vk_param:
@@ -717,12 +838,12 @@ def get_vk_events(
             vk_city = vk_param.get('city')[0]
 
     request_params = {
-        'days': days * 2,
+        'days': days,
         'city_id': vk_city_id,
         'city': vk_city
     }
-
-    new_events = _get_events(vk_parser, request_params=request_params)
+    existed_event_ids = crud.get_event_id_by_prefix('VK')
+    new_events = _get_events(vk_parser, request_params=request_params, existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -732,9 +853,10 @@ def get_qtickets_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    qt_city = 'spb'
+    days = settings.escraper_parameters.get('qtickets', {}).get('days', days)
 
-    qt_cities = dsn_parameters.read_param('qtickets').get('city_id')
+    qt_city = settings.escraper_parameters.get('qtickets', {}).get('city', 'spb')
+    qt_cities = dsn_parameters.read_param('qtickets').get('city')
     if qt_cities:
         qt_city = qt_cities[0]
 
@@ -742,8 +864,9 @@ def get_qtickets_events(
         "days": days,
         "city": qt_city
     }
-
-    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_prefix('QT')
+    new_events = _get_events(qt_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
@@ -752,20 +875,28 @@ def get_qtickets_events(
 def get_mts_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
-    mts_city = 'sankt-peterburg'
+    days = settings.escraper_parameters.get('mts', {}).get('days', days)
 
+    mts_city = settings.escraper_parameters.get('mts', {}).get('city', 'sankt-peterburg')
     mts_cities = dsn_parameters.read_param('mts').get('city')
     if mts_cities:
         mts_city = mts_cities[0]
 
-    categories = ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]
+    mts_categories = dsn_parameters.read_param('mts').get('category')
+    if not mts_categories:
+        mts_categories = (settings.escraper_parameters.get('mts', {})
+                          .get('categories', ["ribbon", "concerts", "theater", "musicals", "show", "exhibitions", "sport"]))
+
     request_params = {
             "city": mts_city,
-            "categories": categories,
+            "categories": mts_categories,
             "days": days
     }
 
-    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_prefix('MTS')
+
+    new_events = _get_events(mts_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
@@ -776,8 +907,9 @@ def get_culture_events(
     days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
 ) -> List[Event]:
 
-    culture_city = 'sankt-peterburg'
+    days = settings.escraper_parameters.get('culture', {}).get('days', days)
 
+    culture_city = settings.escraper_parameters.get('culture', {}).get('city', 'sankt-peterburg')
     culture_cities = dsn_parameters.read_param('culture').get('city')
     if culture_cities:
         culture_city = culture_cities[0]
@@ -787,12 +919,103 @@ def get_culture_events(
             "city": culture_city,
             "days": days
     }
-
-    new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,)
+    existed_event_ids = crud.get_event_id_by_prefix('CLTR')
+    new_events = _get_events(culture_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
 
     if events_filter:
         new_events = events_filter(new_events)
     return new_events
+
+
+def get_tg_posts(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    days = int(settings.escraper_parameters.get('tg', {}).get('days', days))
+    channels = settings.escraper_parameters.get('tg', {}).get('channels', [])
+    existed_event_ids = crud.get_event_id_by_prefix('TG')
+
+    request_params = {
+        "channels": channels,
+        "days": days,
+    }
+    new_events = _get_events(
+        tg_parser,
+        request_params=request_params,
+        tags=ALL_EVENT_TAGS,
+        existed_event_ids=existed_event_ids
+    )
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def get_cfg_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+
+    days = int(settings.escraper_parameters.get('cfg', {}).get('days', days))
+    sites = settings.escraper_parameters.get('cfg', {}).get('sites', ['sevcable', 'newholland', 'levashovsky', 'alexandrinsky'])
+    existed_event_ids = crud.get_event_id_by_prefix('CFG')
+
+    new_events = []
+
+    for site in sites:
+        request_params = {
+            "site": site,
+            "days": days,
+        }
+        try:
+            new_events += _get_events(
+                cfg_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids
+            )
+        except Exception as e:
+            print(f"An error occurred while getting events from {site}: {e}")
+
+        time.sleep(1)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+
+    return new_events
+
+
+def get_kassir_events(
+    days: int = None, events_filter: Callable[[List[Event]], List[Event]] = None
+) -> List[Event]:
+    days = settings.escraper_parameters.get('kassir', {}).get('days', days)
+
+    kassir_city_domain = settings.escraper_parameters.get('kassir', {}).get('city_domain', 'spb.kassir.ru')
+    kassir_cities = dsn_parameters.read_param('kassir').get('city_domain')
+    if kassir_cities:
+        kassir_city_domain = kassir_cities[0]
+
+    kassir_categories = dsn_parameters.read_param('kassir').get('categories')
+    if not kassir_categories:
+        kassir_categories = settings.escraper_parameters.get('kassir', {}).get(
+            'categories', ["koncert", "teatr", "shou", "festivali", "sport"])
+
+    request_params = {
+        "city_domain": kassir_city_domain,
+        "categories": kassir_categories,
+        "days": days,
+    }
+
+    existed_event_ids = crud.get_event_id_by_prefix('KASSIR')
+    new_events = _get_events(kassir_parser, request_params=request_params, tags=ALL_EVENT_TAGS,
+                             existed_event_ids=existed_event_ids)
+
+    if events_filter:
+        new_events = events_filter(new_events)
+    return new_events
+
+
+def kassir_others_organizations(days: int) -> List[Event]:
+    return get_kassir_events(days)
 
 
 escraper_sites = {
@@ -802,7 +1025,10 @@ escraper_sites = {
     'vk':           get_vk_events,
     'qtickets':     get_qtickets_events,
     'mts':          get_mts_events,
-    'culture':      get_culture_events
+    'culture':      get_culture_events,
+    'tg':           get_tg_posts,
+    'cfg':          get_cfg_events,
+    'kassir':       get_kassir_events,
 }
 
 

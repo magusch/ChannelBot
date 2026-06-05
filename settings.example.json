@@ -1,0 +1,123 @@
+{
+  "celery": {
+    "worker_enabled": true,
+    "beat_enabled": true
+  },
+  "features": {
+    "task_event_post":  true,
+    "task_digest_post": false,
+    "vk_posting_enabled": false,
+    "prepare_events_limit": 0,
+    "city": "spb",
+    "timezone": "Europe/Moscow",
+    "content_generator": {
+      "ai_model_name": "openai"
+    },
+    "auto_route_to_api": {
+      "enabled": false,
+      "min_score": 55,
+      "hard_min_score": 35,
+      "low_category_ids": [2, 14],
+      "far_days": 14,
+      "limit": 100,
+      "min_channel_queue": 20
+    },
+    "route_unschedulable": {
+      "enabled": false,
+      "protect_first": 5,
+      "weekday_slots": 4,
+      "weekend_slots": 3,
+      "min_runway_days": 1,
+      "limit": 0
+    },
+    "escraper_parameters": {
+      "timepad": {
+        "city": "Санкт-Петербург",
+        "days": 7
+      },
+      "radario": {"city": "spb"},
+      "qtickets": {"city": "spb"},
+      "ticketscloud": {
+        "city": "spb",
+        "channels": ["@example_ticketscloud_channel"],
+        "use_proxy": false
+      },
+      "culture": {"city": "spb", "enabled": false},
+      "mts": {"city": "spb", "days": 15, "timeout_sec": 180},
+      "vk": {"city": "spb", "days": 15},
+      "tg": {
+        "channels": ["@example_channel"],
+        "days": 4
+      },
+      "kassir": {
+        "city_domain": "spb.kassir.ru",
+        "categories": ["koncert", "teatr", "shou", "festivali"],
+        "days": 7,
+        "enabled": false
+      },
+      "cfg": {
+        "sites": [],
+        "days": 10
+      }
+    },
+    "scoring": {
+      "enabled": true,
+      "weights": {
+        "price": 15,
+        "place": 15,
+        "category": 20,
+        "keywords": 15,
+        "completeness": 15,
+        "source": 10
+      },
+      "repetition_penalty": -20,
+      "price_ranges": [
+        {"max": 0, "score": 100},
+        {"max": 500, "score": 80},
+        {"max": 1500, "score": 60},
+        {"max": 3000, "score": 40},
+        {"max": 99999, "score": 20}
+      ],
+      "category_scores": {
+        "1": 90, "8": 85, "6": 85,
+        "9": 85, "10": 80, "7": 70,
+        "11": 65, "3": 60, "4": 55,
+        "13": 55, "14": 50, "12": 50,
+        "5": 45, "2": 30
+      },
+      "source_scores": {
+        "timepad": 70, "radario": 70, "tc": 65,
+        "qt": 65, "mts": 60, "cltr": 60,
+        "cfg": 65, "other": 80,
+        "vk": 45, "tg": 40, "instagram": 40
+      },
+      "boost_keywords": [
+        "бесплатно", "премьера", "фестиваль", "открытие",
+        "вернисаж", "дискусси", "лауреат", "впервые",
+        "дебют", "импровизаци", "арт-резиденци", "арт-медиаци"
+      ],
+      "penalty_keywords": [
+        "реклама", "промо", "курс", "обучение", "вебинар", "конференци",
+        "тренинг", "нетворкинг", "розыгрыш", "бизнес", "инвестиц", "корпоратив", "интенсив"
+      ],
+      "repetition_window_days": 14,
+      "trusted_artists": [],
+      "trusted_organizers": [],
+      "trusted_boost": 25,
+      "place_reputation": {
+        "w_posted": 1.0,
+        "w_ready": 0.5,
+        "w_onlyapi": 0.3,
+        "w_rejected": 1.0,
+        "w_spam": 1.5,
+        "auto_reject_threshold": 39
+      },
+      "place_category_queue_limit": 6,
+      "place_category_queue_penalty": -15,
+      "date_scarcity_window_days": 10,
+      "date_scarcity_min_days": 2,
+      "date_scarcity_threshold": 5,
+      "date_scarcity_boost": 8
+    }
+  }
+}
