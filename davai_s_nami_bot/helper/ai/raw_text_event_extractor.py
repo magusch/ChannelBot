@@ -12,7 +12,7 @@ from ..dsn_parameters import DSNParameters
 
 @dataclass
 class ExtractedEvent:
-    """Структура извлечённого мероприятия."""
+    """Structure of an extracted event."""
     title: str
     full_text: Optional[str] = None
     prepared_text: Optional[str] = None
@@ -32,7 +32,7 @@ class ExtractedEvent:
 
 @dataclass
 class TokenUsage:
-    """Статистика использования токенов."""
+    """Token usage statistics."""
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
@@ -52,7 +52,7 @@ class TokenUsage:
 
 @dataclass
 class AnalysisResult:
-    """Результат анализа текста."""
+    """Text analysis result."""
     is_event: bool
     events_count: int
     events: List[ExtractedEvent]
@@ -74,8 +74,8 @@ class AnalysisResult:
 
 class RawTextEventExtractor:
     """
-    Анализатор сырого текста для извлечения информации о мероприятиях.
-    Работает с HTML и plain text из любых источников.
+    Raw text analyzer for extracting event information.
+    Works with HTML and plain text from any source.
     """
 
     CATEGORIES = [
@@ -91,19 +91,19 @@ class RawTextEventExtractor:
 
     def analyze_text(self, text: str, source: str = "unknown") -> AnalysisResult:
         """
-        Анализирует текст и извлекает мероприятия.
+        Analyzes text and extracts events.
 
         Parameters
         ----------
         text : str
-            Сырой текст (HTML или plain text).
+            Raw text (HTML or plain text).
         source : str
-            Источник текста (telegram, instagram, vk и т.д.).
+            Text source (telegram, instagram, vk, etc.).
 
         Returns
         -------
         AnalysisResult
-            Результат анализа с извлечёнными мероприятиями.
+            Analysis result with extracted events.
         """
         if not text or not text.strip():
             return AnalysisResult(
@@ -144,7 +144,7 @@ class RawTextEventExtractor:
             )
 
     def _get_system_message(self) -> str:
-        """Системное сообщение для Claude."""
+        """System message for Claude."""
         custom_message = self.dsn_param.site_parameters('raw_text_extractor_system', last=1)
         if custom_message:
             return custom_message
@@ -161,7 +161,7 @@ class RawTextEventExtractor:
 - Категорию выбирай строго из списка"""
 
     def _get_user_message(self, text: str, source: str) -> str:
-        """Формирует пользовательское сообщение."""
+        """Builds the user message."""
         current_year = datetime.date.today().year
         categories_str = ", ".join(self.CATEGORIES)
 
@@ -208,9 +208,9 @@ class RawTextEventExtractor:
 6. Отвечай ТОЛЬКО валидным JSON без markdown-обёртки."""
 
     def _parse_response(self, raw_response: str, original_text: str, tokens: TokenUsage = None) -> AnalysisResult:
-        """Парсит ответ Claude."""
+        """Parses the Claude response."""
         try:
-            # Убираем возможные markdown-обёртки
+            # Strip possible markdown wrappers
             cleaned = raw_response.strip()
             if cleaned.startswith("```json"):
                 cleaned = cleaned[7:]
@@ -254,7 +254,7 @@ class RawTextEventExtractor:
             return self._fallback_parse(raw_response, original_text, tokens)
 
     def _fallback_parse(self, raw_response: str, original_text: str, tokens: TokenUsage = None) -> AnalysisResult:
-        """Fallback парсинг если JSON невалидный."""
+        """Fallback parsing when JSON is invalid."""
         is_event = '"is_event": true' in raw_response.lower() or '"is_event":true' in raw_response.lower()
 
         return AnalysisResult(
@@ -267,7 +267,7 @@ class RawTextEventExtractor:
         )
 
     def extract_urls_from_html(self, html_text: str) -> List[str]:
-        """Извлекает все URL из HTML текста."""
+        """Extracts all URLs from HTML text."""
         pattern = r'href=[\'"]?([^\'" >]+)'
         urls = re.findall(pattern, html_text)
         return urls
@@ -278,24 +278,24 @@ class RawTextEventExtractor:
         source: str = "unknown"
     ) -> tuple:
         """
-        Анализирует несколько текстов в одном запросе к AI (экономия токенов).
+        Analyzes multiple texts in a single AI request (saves tokens).
 
         Parameters
         ----------
         texts : List[dict]
-            Список текстов: [{"id": 1, "text": "..."}, {"id": 2, "text": "..."}]
+            List of texts: [{"id": 1, "text": "..."}, {"id": 2, "text": "..."}]
         source : str
-            Источник текстов.
+            Source of the texts.
 
         Returns
         -------
         tuple
-            (List[AnalysisResult], TokenUsage) - результаты и общие токены батча.
+            (List[AnalysisResult], TokenUsage) - results and total batch token usage.
         """
         if not texts:
             return [], None
 
-        # Ограничиваем батч (чтобы не превысить контекст)
+        # Limit batch size (to avoid exceeding the context window)
         MAX_BATCH_SIZE = 10
         texts = texts[:MAX_BATCH_SIZE]
 
@@ -322,9 +322,9 @@ class RawTextEventExtractor:
 
         except Exception as e:
             print(f"Error in batch analysis: {e}")
-            # Fallback: анализируем по одному (токены будут в каждом результате)
+            # Fallback: analyze one by one (tokens will be in each individual result)
             results = [self.analyze_text(t["text"], source) for t in texts]
-            # Суммируем токены из fallback
+            # Sum tokens from fallback results
             total_tokens = TokenUsage(model=self.claude_model)
             for r in results:
                 if r.tokens:
@@ -333,7 +333,7 @@ class RawTextEventExtractor:
             return results, total_tokens
 
     def _get_batch_user_message(self, texts: List[dict], source: str) -> str:
-        """Формирует сообщение для батч-анализа."""
+        """Builds the message for batch analysis."""
         current_year = datetime.date.today().year
         categories_str = ", ".join(self.CATEGORIES)
 
@@ -384,7 +384,7 @@ class RawTextEventExtractor:
         raw_response: str,
         original_texts: List[dict]
     ) -> List[AnalysisResult]:
-        """Парсит ответ батч-запроса."""
+        """Parses the batch request response."""
         try:
             cleaned = raw_response.strip()
             if cleaned.startswith("```json"):
@@ -432,7 +432,7 @@ class RawTextEventExtractor:
             return results
 
         except json.JSONDecodeError:
-            # Fallback: возвращаем пустые результаты
+            # Fallback: return empty results
             return [
                 AnalysisResult(is_event=False, events_count=0, events=[], original_text=t["text"])
                 for t in original_texts
@@ -445,7 +445,7 @@ class RawTextEventExtractor:
         image: str = None
     ) -> List[int]:
         """
-        Сохраняет извлечённые мероприятия в таблицу EventsNotApproved.
+        Saves extracted events to the EventsNotApproved table.
         """
         if not result.is_event or not result.events:
             return []
@@ -485,21 +485,21 @@ class RawTextEventExtractor:
         image: str = None
     ) -> dict:
         """
-        Полный пайплайн: анализ текста и сохранение в БД.
+        Full pipeline: analyze text and save to the database.
 
         Parameters
         ----------
         text : str
-            Сырой текст для анализа.
+            Raw text to analyze.
         source : str
-            Источник текста.
+            Text source.
         image : str, optional
-            URL изображения.
+            Image URL.
 
         Returns
         -------
         dict
-            Результат с информацией о созданных записях.
+            Result with information about created records.
         """
         result = self.analyze_text(text, source)
 
@@ -529,7 +529,7 @@ class RawTextEventExtractor:
             }
 
     def _parse_datetime(self, date_str: Optional[str]) -> Optional[datetime.datetime]:
-        """Парсит дату из ISO строки."""
+        """Parses a datetime from an ISO string."""
         if not date_str:
             return None
 
@@ -556,7 +556,7 @@ class RawTextEventExtractor:
         status: str = "draft"
     ) -> List[int]:
         """
-        Сохраняет извлечённые мероприятия в таблицу Events2Posts.
+        Saves extracted events to the Events2Posts table.
         """
         if not result.is_event or not result.events:
             return []
@@ -596,23 +596,23 @@ class RawTextEventExtractor:
         status: str = "draft"
     ) -> dict:
         """
-        Полный пайплайн: анализ текста и сохранение в Events2Posts.
+        Full pipeline: analyze text and save to Events2Posts.
 
         Parameters
         ----------
         text : str
-            Сырой текст для анализа.
+            Raw text to analyze.
         source : str
-            Источник текста.
+            Text source.
         image : str, optional
-            URL изображения.
+            Image URL.
         status : str
-            Статус: 'draft', 'ReadyToPost'.
+            Status: 'draft', 'ReadyToPost'.
 
         Returns
         -------
         dict
-            Результат с информацией о созданных записях.
+            Result with information about created records.
         """
         result = self.analyze_text(text, source)
 
@@ -646,13 +646,13 @@ class RawTextEventExtractor:
 
     def process_not_approved_event(self, event_id: int) -> dict:
         """
-        Обрабатывает событие из EventsNotApproved:
-        - AI анализирует full_text
-        - Если мероприятие → обогащает запись (title, address, price, category)
-          и ставит status='extracted'. Остаётся в NotApproved.
-        - Если не мероприятие → status='not_event'.
+        Processes an event from EventsNotApproved:
+        - AI analyzes full_text
+        - If it is an event → enriches the record (title, address, price, category)
+          and sets status='extracted'. Stays in NotApproved.
+        - If not an event → status='not_event'.
 
-        Из NotApproved в Events2Posts переносится позже, общей логикой модерации.
+        Transfer from NotApproved to Events2Posts happens later via the common moderation logic.
         """
         from ... import crud
 
@@ -674,8 +674,8 @@ class RawTextEventExtractor:
                 "tokens": result.tokens.to_dict() if result.tokens else None,
             }
 
-        # Обогащаем исходную запись в NotApproved данными от AI
-        # Берём первое извлечённое мероприятие (основное)
+        # Enrich the original NotApproved record with data from AI
+        # Take the first extracted event (primary one)
         extracted = result.events[0]
         enriched_data = {
             "title": extracted.title,
@@ -692,8 +692,8 @@ class RawTextEventExtractor:
         crud.update_not_approved_event_status(event_id, "extracted")
         crud.recalculate_event_score(event_id, table="events_eventsnotapprovednew")
 
-        # Если AI нашёл несколько мероприятий в одном посте —
-        # создаём дополнительные записи в NotApproved
+        # If AI found multiple events in one post —
+        # create additional records in NotApproved
         extra_ids = []
         if len(result.events) > 1:
             extra_ids = self.save_events_to_db(

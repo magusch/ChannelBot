@@ -17,8 +17,8 @@ router = APIRouter(
 
 
 @router.post("/update-event/", response_model=TaskResponse,
-              summary="AI обновление события",
-              description="Обновление текстов мероприятия через AI (Claude/OpenAI).")
+              summary="AI event update",
+              description="Update event texts via AI (Claude/OpenAI).")
 async def ai_update_event(body: AiUpdateEventRequest):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.ai_update_event',
@@ -28,8 +28,8 @@ async def ai_update_event(body: AiUpdateEventRequest):
 
 
 @router.post("/moderate-events/",
-              summary="AI модерация событий",
-              description="Модерация списка мероприятий через AI. Опционально принимает примеры для few-shot.")
+              summary="AI moderation of events",
+              description="Moderate a list of events via AI. Optionally accepts examples for few-shot.")
 async def moderate_events(body: AiModerateEventsRequest):
     args = [body.events]
     if body.examples is not None:
@@ -43,8 +43,8 @@ async def moderate_events(body: AiModerateEventsRequest):
 
 
 @router.post("/moderate-not-approved-events/", response_model=TaskResponse,
-              summary="AI модерация необработанных",
-              description="Модерация мероприятий из EventsNotApproved через AI.")
+              summary="AI moderation of not-approved events",
+              description="Moderate events from EventsNotApproved via AI.")
 async def moderate_not_approved_events(request: Request):
     data = await request.json()
 
@@ -56,8 +56,8 @@ async def moderate_not_approved_events(request: Request):
 
 
 @router.post("/prepare-events/", response_model=TaskResponse,
-              summary="AI подготовка событий",
-              description="Подготовка текстов мероприятий для публикации через AI.")
+              summary="AI event preparation",
+              description="Prepare event texts for publication via AI.")
 async def prepare_events(request: Request):
     data = await request.json()
 
@@ -69,8 +69,8 @@ async def prepare_events(request: Request):
 
 
 @router.post("/new-event-from-sites/", response_model=TaskResponse,
-              summary="Скрапинг с сайтов",
-              description="Запуск скрапинга мероприятий с указанных сайтов-источников. Источники: timepad, radario, ticketscloud, qtickets, mts, kassir, culture, cfg, vk, telegram.")
+              summary="Scrape from sites",
+              description="Start scraping events from the specified source sites. Sources: timepad, radario, ticketscloud, qtickets, mts, kassir, culture, cfg, vk, telegram.")
 async def new_event_from_sites(body: NewEventFromSitesRequest):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_event_from_sites',

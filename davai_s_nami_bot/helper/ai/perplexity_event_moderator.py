@@ -31,7 +31,7 @@ class PerplexityEventModerator:
             :param example_events: Array with events for examples of good events.
             :return: Array with ID of events after moderation process.
         """
-        # Убедимся, что каждый элемент имеет ключ 'id'
+        # Ensure each element has the 'id' key
         filetered_event_list = [event for event in events_list if 'id' in event]
         if not filetered_event_list:
             raise ValueError("Список мероприятий пуст. Может быть в них отсутствовал ключ 'id'")

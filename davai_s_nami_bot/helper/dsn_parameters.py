@@ -25,8 +25,8 @@ class DSNParameters:
 
     def _wait_for_parameters(self, timeout=15, interval=1):
         """
-        Ожидает появления параметров в Redis в течение timeout секунд.
-        Если параметры не появляются, работает с дефолтными.
+        Waits for parameters to appear in Redis for up to timeout seconds.
+        Falls back to defaults if parameters do not appear.
         """
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -81,7 +81,7 @@ class DSNParameters:
                 self._wait_for_parameters()
                 cached_params = redis_client.get(f'parameters:{site}')
                 if cached_params is None:
-                    # Redis пуст, но в памяти есть старые данные — используем их
+                    # Redis is empty but we have cached data in memory — use it
                     if site in self.sites and self.sites[site].get("params"):
                         return self.sites[site]["params"]
                     return {}

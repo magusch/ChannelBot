@@ -14,7 +14,9 @@ router = APIRouter(
 )
 
 
-@router.post("/schedule-update-events/", response_model=TaskResponse)
+@router.post("/schedule-update-events/", response_model=TaskResponse,
+              summary="Update events",
+              description="Scrape and process events from approved and not_approved organizations.")
 async def update_events(request: Request):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_events',
@@ -22,7 +24,9 @@ async def update_events(request: Request):
     return TaskResponse(message='Task Update events added to queue', task_id=task.id)
 
 
-@router.post("/schedule-full-update/", response_model=TaskResponse)
+@router.post("/schedule-full-update/", response_model=TaskResponse,
+              summary="Full update",
+              description="Full cycle: scraping → scoring → processing. Calls subtasks: update_parameters, is_empty_check, move_approved, events_from_url, update_events.")
 async def full_update(request: Request):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.full_update',
@@ -30,7 +34,9 @@ async def full_update(request: Request):
     return TaskResponse(message='Task Full Update added to queue', task_id=task.id)
 
 
-@router.post("/get-event-from-url/", response_model=TaskResponse)
+@router.post("/get-event-from-url/", response_model=TaskResponse,
+              summary="Event by URL",
+              description="Scrape an event from a direct link to the source.")
 async def event_from_url(body: EventUrlRequest, request: Request):
     await log_api_request(request, body.model_dump())
 
@@ -41,7 +47,9 @@ async def event_from_url(body: EventUrlRequest, request: Request):
     return TaskResponse(message='Task updating from url added to queue', task_id=task.id)
 
 
-@router.get("/status/{task_id}")
+@router.get("/status/{task_id}",
+             summary="Task status",
+             description="Check the status of a Celery task. Returns: success (with result), failure (with error), or the current state (PENDING/STARTED).")
 async def get_status(task_id: str):
     params = redis_client.get(task_id)
     result = AsyncResult(task_id, app=celery_app)
@@ -56,14 +64,14 @@ async def get_status(task_id: str):
 
 
 @router.delete("/{task_id}",
-                summary="Отменить задачу",
+                summary="Cancel a task",
                 description=(
-                    "Отзывает Celery задачу. Если задача в PENDING/RETRY — она не "
-                    "будет выполнена. Если уже выполняется в воркере — текущий "
-                    "запуск завершится естественно (terminate=False), но "
-                    "дальнейшие автоматические retry не запустятся. "
-                    "Используется фронтом при fallback на локальную обработку, "
-                    "чтобы серверный retry не перезаписал локальный результат в БД."
+                    "Revokes a Celery task. If the task is in PENDING/RETRY — it will "
+                    "not be executed. If it is already running in a worker — the current "
+                    "run will finish naturally (terminate=False), but further "
+                    "automatic retries will not start. "
+                    "Used by the frontend during fallback to local processing, "
+                    "so that a server-side retry does not overwrite the local result in the DB."
                 ))
 async def cancel_task(task_id: str):
     celery_app.control.revoke(task_id)
@@ -71,8 +79,8 @@ async def cancel_task(task_id: str):
 
 
 @router.post("/param/", response_model=TaskResponse,
-              summary="Обновить параметры",
-              description="Обновление DSN параметров из Redis.")
+              summary="Update parameters",
+              description="Update DSN parameters from Redis.")
 async def update_parameters():
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_parameters',
@@ -80,7 +88,9 @@ async def update_parameters():
     return TaskResponse(message='Task PARAMETERS added to queue', task_id=task.id)
 
 
-@router.get("/check-ai-balance/", response_model=TaskResponse)
+@router.get("/check-ai-balance/", response_model=TaskResponse,
+             summary="Check AI balance",
+             description="Check the balance of AI providers (OpenAI, Anthropic).")
 async def check_ai_balance():
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.check_ai_balance',
@@ -88,7 +98,9 @@ async def check_ai_balance():
     return TaskResponse(message='Task check AI balance added to queue', task_id=task.id)
 
 
-@router.post("/get-exhibitions/", response_model=TaskResponse)
+@router.post("/get-exhibitions/", response_model=TaskResponse,
+              summary="Get exhibitions",
+              description="Trigger the task that retrieves the current exhibitions.")
 async def get_exhibitions(request: Request):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.get_exhibitions_celery',
@@ -125,7 +137,7 @@ async def update_adaptive_scoring(request: Request):
 
 @router.post("/prepare-unprepared-events/", response_model=TaskResponse)
 async def prepare_unprepared_events(request: Request):
-    """AI-подготовка событий с is_ready=NULL."""
+    """AI preparation of events with is_ready=NULL."""
     await log_api_request(request)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
@@ -136,7 +148,7 @@ async def prepare_unprepared_events(request: Request):
 
 @router.post("/auto-promote-by-score/", response_model=TaskResponse)
 async def auto_promote_by_score(request: Request):
-    """Перенос высокоскоринговых событий из NotApproved в Events2Posts."""
+    """Move high-scoring events from NotApproved to Events2Posts."""
     await log_api_request(request)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
@@ -147,7 +159,7 @@ async def auto_promote_by_score(request: Request):
 
 @router.post("/distribute-event-queue/", response_model=TaskResponse)
 async def distribute_event_queue(request: Request):
-    """Переупорядочить очередь публикации для разнообразия."""
+    """Reorder the publication queue for variety."""
     await log_api_request(request)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.distribute_event_queue',
@@ -158,7 +170,7 @@ async def distribute_event_queue(request: Request):
 
 @router.post("/auto-moderate-mid-score/", response_model=TaskResponse)
 async def auto_moderate_mid_score(request: Request):
-    """AI-модерация событий со средним score (40-69)."""
+    """AI moderation of mid-score events (40-69)."""
     await log_api_request(request)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',

@@ -65,7 +65,7 @@ def refresh_access_token(
     """Refreshes the access token using the provided refresh token."""
 
     if not refresh_token:
-        # Это может быть 401, если пользователь не авторизован
+        # May be 401 if the user is not authorized
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token not found in cookies"

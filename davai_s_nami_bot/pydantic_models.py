@@ -1,20 +1,21 @@
 from pydantic import BaseModel, EmailStr, Field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 
 class EventRequestParameters(BaseModel):
-    date_from: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    date_to: Optional[datetime] = None
-    category: Optional[List[int]] = None
-    place: Optional[List[int]] = None
-    fields: Optional[List[str]] = None
-    limit: Optional[int] = 20
-    page: Optional[int] = None
-    ids: Optional[List[int]] = None
-    status: Optional[str] = None
-    price_max: Optional[int] = None
-    order_by: Optional[str] = 'date-asc'
+    """Event request parameters with filters, pagination, and sorting."""
+    date_from: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Period start (defaults to now)")
+    date_to: Optional[datetime] = Field(None, description="Period end")
+    category: Optional[List[int]] = Field(None, description="Filter by category IDs")
+    place: Optional[List[int]] = Field(None, description="Filter by place IDs")
+    fields: Optional[List[str]] = Field(None, description="List of fields to return (defaults to all)")
+    limit: Optional[int] = Field(20, description="Number of results per page")
+    page: Optional[int] = Field(None, description="Page number")
+    ids: Optional[List[int]] = Field(None, description="Retrieve specific events by ID")
+    status: Optional[str] = Field(None, description="Filter by status: ReadyToPost, Posted")
+    price_max: Optional[int] = Field(None, description="Maximum price (RUB)")
+    order_by: Optional[str] = Field('date-asc', description="Sorting: date-asc, date-desc")
 
     def with_defaults(self):
         return self
@@ -52,12 +53,13 @@ class EventOut(BaseModel):
 
 
 class PlaceRequestParameters(BaseModel):
-    metro: Optional[str] = None
-    fields: Optional[List[str]] = None
-    limit: Optional[int] = 20
-    page: Optional[int] = None
-    order_by: Optional[str] = 'tt-asc'
-    ids: Optional[List[int]] = None
+    """Place request parameters."""
+    metro: Optional[str] = Field(None, description="Filter by metro")
+    fields: Optional[List[str]] = Field(None, description="List of fields to return")
+    limit: Optional[int] = Field(20, description="Number of results per page")
+    page: Optional[int] = Field(None, description="Page number")
+    order_by: Optional[str] = Field('tt-asc', description="Sorting")
+    ids: Optional[List[int]] = Field(None, description="Retrieve specific places by ID")
 
 
 class UpdatePostingRequest(BaseModel):

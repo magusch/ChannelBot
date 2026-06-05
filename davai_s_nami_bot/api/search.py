@@ -11,8 +11,8 @@ router = APIRouter(
 
 
 @router.get("/",
-             summary="Поиск событий и мест",
-             description="Полнотекстовый поиск. Параметр `type`: `event` (по умолчанию), `place`, или любое другое значение для поиска и по событиям, и по местам.")
+             summary="Search events and places",
+             description="Full-text search. Parameter `type`: `event` (default), `place`, or any other value to search across both events and places.")
 async def search(query: str, limit: int = 10, type: str = 'event', request: Request = None):
     events, places = [], []
     if type == 'event':

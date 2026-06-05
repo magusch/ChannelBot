@@ -12,8 +12,8 @@ router = APIRouter(
 
 
 @router.post("/upload-to-s3/", response_model=TaskResponse,
-              summary="Загрузить изображение в S3",
-              description="Загрузка одного изображения по URL в AWS S3.")
+              summary="Upload an image to S3",
+              description="Upload a single image by URL to AWS S3.")
 async def upload_image_to_s3(body: UploadImageRequest):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.upload_image_to_s3',
@@ -23,8 +23,8 @@ async def upload_image_to_s3(body: UploadImageRequest):
 
 
 @router.post("/upload-event-images-to-s3/", response_model=TaskResponse,
-              summary="Загрузить изображения событий в S3",
-              description="Массовая загрузка изображений мероприятий по списку ID в AWS S3.")
+              summary="Upload event images to S3",
+              description="Bulk upload of event images to AWS S3 by a list of IDs.")
 async def upload_event_images_to_s3(body: UploadEventImagesRequest):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.upload_event_images_to_s3',

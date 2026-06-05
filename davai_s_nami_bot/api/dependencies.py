@@ -27,7 +27,7 @@ def get_cache_key(params: dict):
 
 
 def serialize_datetime(obj):
-    """Функция для сериализации datetime в строку"""
+    """Serialize datetime to a string."""
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")

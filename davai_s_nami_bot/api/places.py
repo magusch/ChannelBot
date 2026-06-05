@@ -15,8 +15,8 @@ router = APIRouter(
 
 
 @router.post("/",
-              summary="Список площадок",
-              description="Получение площадок с фильтрацией по метро, пагинацией. Кеш 10 мин.")
+              summary="List places",
+              description="Retrieve places with metro filtering and pagination. Cached for 10 min.")
 async def get_places(body: PlaceRequestParameters, request: Request):
     data = body.model_dump(mode='json')
     await log_api_request(request, data)
@@ -37,8 +37,8 @@ async def get_places(body: PlaceRequestParameters, request: Request):
 
 
 @router.post("/{place_id}",
-              summary="Площадка по ID",
-              description="Получение площадки по ID. Кеш 10 мин.")
+              summary="Place by ID",
+              description="Retrieve a place by ID. Cached for 10 min.")
 async def get_place_by_id(place_id: int, request: Request):
     await log_api_request(request, {'place_id': place_id})
     cached_data = redis_client.get(f"place_{place_id}")
