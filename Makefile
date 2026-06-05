@@ -1,6 +1,6 @@
 install:
 	pip install --upgrade pip
-	pip install pytest autoflake black isort -e .
+	pip install -r requirements-dev.txt
 
 lint_inplace:
 	isort --project davai_s_nami_bot .
@@ -17,5 +17,4 @@ test:
 	pytest --verbose
 
 deploy:
-	chmod +x build.sh
 	sudo systemctl restart channelbot.service
