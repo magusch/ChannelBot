@@ -191,7 +191,7 @@ def test_telegram_login_success(client, valid_telegram_init_data):
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert "access_token" in data
-    assert "refresh_token" in data
+    assert "refresh_token" in response.cookies
 
 
 def test_telegram_login_invalid_hash(client, valid_telegram_init_data):

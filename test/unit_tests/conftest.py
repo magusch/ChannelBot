@@ -1,6 +1,7 @@
 import os
 import sys
 import pytest
+from contextlib import contextmanager
 from unittest.mock import patch
 import fakeredis
 import json
@@ -36,12 +37,27 @@ def mock_redis():
     """Fixture for fake redis"""
     return fake_redis
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, JSON
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 from fastapi.testclient import TestClient
 from main import app
 from davai_s_nami_bot.database.models import Base, DsnUser, Events2Posts
 from davai_s_nami_bot.database import database_orm
+
+# SQLite не поддерживает JSONB — маппим на JSON
+from sqlalchemy.ext.compiler import compiles
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+# SQLite не поддерживает pgvector — маппим в BLOB чтобы create_all не падал.
+# Семантику similarity-запросов так не покрыть; для этого нужен integration-тест на Postgres.
+@compiles(Vector, "sqlite")
+def compile_vector_sqlite(type_, compiler, **kw):
+    return "BLOB"
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -65,7 +81,15 @@ def db_session_fixture():
 
 
     original_session_local = database_orm.SessionLocal
+    original_get_db_session = database_orm.get_db_session
     database_orm.SessionLocal = lambda: db  # Подменяем на тестовую сессию
+
+    @contextmanager
+    def _test_get_db_session():
+        """get_db_session без commit/close — тестовая сессия управляется фикстурой."""
+        yield db
+
+    database_orm.get_db_session = _test_get_db_session
 
     try:
         yield db
@@ -74,6 +98,7 @@ def db_session_fixture():
         db.close()
         connection.close()
         database_orm.SessionLocal = original_session_local
+        database_orm.get_db_session = original_get_db_session
 
 
 @pytest.fixture()
