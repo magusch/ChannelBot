@@ -38,7 +38,7 @@ def format_text(text: str, style: str = None):
 
 class BaseClient(ABC):
     constants: Dict[str, Dict[str, Union[str, int]]]
-    name: ""
+    name: str = ""
     formatter_style = ""
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):

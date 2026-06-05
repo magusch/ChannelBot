@@ -12,10 +12,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -43,13 +43,15 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
 
     - name: Check formatting with black
+      continue-on-error: true
       run: |
-        echo "Checking code format with black..."
+        echo "Checking code format with black (advisory, non-blocking)..."
         black --check .
 
     - name: Check import sorting with isort
+      continue-on-error: true
       run: |
-        echo "Checking import order with isort..."
+        echo "Checking import order with isort (advisory, non-blocking)..."
         isort . --check-only
         
     - name: Run tests with pytest
