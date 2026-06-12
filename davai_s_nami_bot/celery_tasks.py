@@ -15,7 +15,7 @@ from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
 from . import crud
 from . import clients
-from . import events
+from . import events_new as events
 from . import utils
 from . import dsn_site
 from . import dsn_site_session
@@ -352,14 +352,11 @@ def update_events():
     approved_events = events.from_approved_organizations(days=7)
     log.info(f"Collected {len(approved_events)} approved events.")
 
-    inserted_ids = _update_events(
+    _update_events(
         approved_events,
         table="events_events2post",
         msk_today=msk_today
     )
-
-    if inserted_ids is not None:
-        dsn_site_session.make_post_text(inserted_ids)
 
     log.info("Getting new events from other organizations for next 7 days")
     other_events = events.from_not_approved_organizations(days=7)
@@ -468,9 +465,7 @@ def events_from_url(event_url=None):
     if list_event_id:
         crud.delete_events2post_by_event_id(list_event_id)
 
-    inserted_ids = crud.add_events_to_post(events_from_urls, explored_date=msk_today)
-    if inserted_ids is not None:
-        dsn_site_session.make_post_text(inserted_ids)
+    crud.add_events_to_post(events_from_urls, explored_date=msk_today)
 
 
 @celery_app.task
@@ -501,9 +496,7 @@ def ai_update_event(self, event={}, is_new=0):
     if is_new == 1:
         ai_event['event_id'] = 'AI-' + str(datetime.today().timestamp())[0:10]
         new_event_tuple = events.Event.from_dict(ai_event)
-        inserted_ids = crud.add_events_to_post([new_event_tuple], explored_date=msk_today)
-        if inserted_ids is not None:
-            dsn_site_session.make_post_text(inserted_ids)
+        crud.add_events_to_post([new_event_tuple], explored_date=msk_today)
     return ai_event
 
 
@@ -884,28 +877,18 @@ def update_event(new_event_data, event_id):
     if new_event_data.get('prepared_text'):
         new_event_data['is_ready'] = True
         if crud.update_approved_event(event_id, new_event_data):
+            crud.remake_event_post(event_id, save=True)
             return {**new_event_data, "event_id": event_id}
 
     return {"message": f"Skipping event {event_id}, no update data"}
 
 
 @celery_app.task
-def remake_event(*event):
-    full_event = {}
-    for e in event:
-        if isinstance(e, dict):
-            full_event.update(e)
-
-    if 'id' in full_event.keys():
-        dsn_site_session.make_post_text([full_event['id']])
-
-
-@celery_app.task
 def remake_events(events):
+    # Post regeneration now happens locally inside update_event via
+    # crud.remake_event_post; this chord callback only collects the ids.
     event_ids = [event.get('id') or event.get('event_id') for event in events if event.get('id') or event.get('event_id')]
-
-    if event_ids:
-        dsn_site_session.make_post_text(event_ids)
+    return {"remade_ids": event_ids, "count": len(event_ids)}
 
 
 @celery_app.task

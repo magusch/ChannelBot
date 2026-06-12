@@ -313,7 +313,7 @@ async def prepare_events(request: Request, token: str = Depends(verify_token), )
     return {'message': 'Task prepare events added to queue', 'task_id': task.id}
 
 
-@app.post('/api/new_event_from_sites/', tags=["AI (legacy)"],
+@app.post('/api/new_event_from_sites/', tags=["Tasks (legacy)"],
            summary="Scrape from sites",
            description="Start scraping events from the specified source sites.")
 async def new_event_from_sites(request: Request, token: str = Depends(verify_token)):

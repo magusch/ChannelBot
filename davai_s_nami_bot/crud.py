@@ -671,6 +671,8 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
     List[int]
         List of added events IDs.
     """
+    from .helper.post_helper import PostHelper
+
     value = int(get_last_queue_value(db))
 
     def func(value=value, queue_increase=queue_increase):
@@ -717,6 +719,13 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
         )
         if dup_id:
             continue
+
+        place_view = _resolve_place_view(db, event_dict, place_keywords)
+        if place_view:
+            event_dict['place_id'] = place_view.id
+        event_dict['prepared_text'] = event_dict.get('post')
+        helper = PostHelper(event_dict, place=place_view)
+        event_dict['post'] = helper.post_markdown()
 
         new_event = create_event(db, event_dict, Events2Posts)
         if new_event and 'id' in new_event:
