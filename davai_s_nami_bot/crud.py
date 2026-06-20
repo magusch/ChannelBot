@@ -1994,7 +1994,6 @@ def create_event_to_post(db, event_data: dict) -> int:
         last_q = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
         event_data["queue"] = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
     event_data.setdefault("status", "draft")
-    event_data.setdefault("is_ready", event_data["status"] == "ReadyToPost")
     if not event_data.get("place_id"):
         event_data["place_id"] = find_place_by_address(
             address=event_data.get("address"),
@@ -2022,7 +2021,6 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
     for event_data in events_data:
         event_data.setdefault("queue", queue_value)
         event_data.setdefault("status", "draft")
-        event_data.setdefault("is_ready", event_data["status"] == "ReadyToPost")
         main_category_id = resolve_main_category_id(
             db,
             category_str=event_data.get("category"),
@@ -2240,8 +2238,8 @@ def bulk_make_and_save_posts(
 
     Per event runs _make_post_pipeline (same as the single-item endpoint).
     If save=True — also inserts a row into Events2Posts (queue auto-assigned,
-    is_ready derived from status). Per-event errors are captured and reported
-    without aborting the batch.
+    is_ready left NULL unless explicitly provided, so AI prep picks the event up).
+    Per-event errors are captured and reported without aborting the batch.
 
     Args:
         events_data: list of event dicts.
@@ -2287,7 +2285,6 @@ def bulk_make_and_save_posts(
                     row_data['price_int'] = pipeline['price_int']
                 row_data.setdefault('status', status)
                 row_data.setdefault('queue', queue_value)
-                row_data.setdefault('is_ready', row_data['status'] == 'ReadyToPost')
                 queue_value = (queue_value or 0) + 2
 
                 new_event = Events2Posts(**row_data)
