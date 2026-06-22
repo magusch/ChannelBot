@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -82,18 +82,39 @@ class BulkCreatePostRequest(BaseModel):
 
 class ContentGeneratorGeneratePostAIRequest(BaseModel):
     """Request to AI-generate a post."""
+
     event_selection_id: Optional[int] = Field(None, description="Event selection ID (or event_ids)")
-    event_ids: Optional[List[int]] = Field(None, description="List of event IDs (alternative to event_selection_id)")
-    post_template_id: Optional[int] = Field(None, description="Post template ID (optional for AI)")
+    event_ids: Optional[List[int]] = Field(None, description="Event IDs (alt to selection)")
+    post_template_id: Optional[int] = Field(None, description="Post template ID (optional)")
     title: Optional[str] = Field(None, description="Post title (optional)")
 
 
 # Similar events (embedding-based)
 class SimilarEventsResult(BaseModel):
     """Envelope shared between the hot (success) and cold (pending) responses."""
-    events: List[dict] = Field(..., description="Similar events, ordered by ascending cosine distance. Each event includes a `distance` field.")
+
+    events: List[dict] = Field(...,
+        description="Similar events by ascending cosine distance; each has a `distance` field"
+    )
     total_count: int = Field(..., description="Number of similar events returned")
-    request: dict = Field(..., description="Echo of the request + diagnostics (embedding_model, or 'reason' on miss)")
+    request: dict = Field(...,
+        description="Request echo + diagnostics (embedding_model / 'reason' on miss)"
+    )
+
+
+class SemanticSearchRequest(BaseModel):
+    """Natural-language event search via POST /search/semantic."""
+
+    message: str = Field(..., description="Free-text query, e.g. 'джазовый концерт в выходные'")
+    limit: int = Field(5, ge=1, le=50, description="Max events to return")
+    max_distance: Optional[float] = Field(
+        None, description="Cosine-distance cutoff (0=identical, 2=opposite); omit for none"
+    )
+    history: Optional[List[Union[str, dict]]] = Field(
+        None,
+        description="Prior turns (oldest→newest) for follow-ups; str or "
+        "{'role': 'user'|'assistant', 'content': ...}. Only the last few are used.",
+    )
 
 
 class SimilarEventsResponse(BaseModel):
@@ -104,7 +125,8 @@ class SimilarEventsResponse(BaseModel):
     /tasks/status/{task_id} and retry. Result envelope is still present with
     events=[] so the client can use a uniform shape.
     """
+
     status: str = Field(..., description="'success' (200) or 'pending' (202)")
     result: SimilarEventsResult
-    task_id: Optional[str] = Field(None, description="Celery task id for the embed job (only when status='pending')")
-    message: Optional[str] = Field(None, description="Human-readable hint (e.g. retry instructions on pending)")
+    task_id: Optional[str] = Field(None, description="Embed-job task id (only status='pending')")
+    message: Optional[str] = Field(None, description="Human-readable hint (e.g. retry on pending)")

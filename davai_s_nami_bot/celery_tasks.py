@@ -23,11 +23,19 @@ from .datetime_utils import get_msk_today, STRFTIME
 from .logger import get_logger, LOG_FILE, log_task
 
 from .helper.ai_helper import AIHelper
+
 # from .helper.open_ai_event_moderator import OpenAIEventModerator as EventModerator
 # from .helper.claude_event_moderator import ClaudeEventModerator as EventModerator
 # from .helper.ai.perplexity_event_moderator import PerplexityEventModerator as EventModerator
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
+from .helper.ai.query_analyzer import QueryAnalyzer
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
+from .helper.dsn_parameters import DSNParameters
+from .helper.embeddings import (
+    EmbeddingClient,
+    build_embedding_input,
+    current_embedding_model_label,
+)
 
 from .content_generator.services import GeneratorPost, Posting
 
@@ -744,6 +752,104 @@ def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str
 
     log.info(f"embed_unembedded_events done: {total} rows (table={table}).")
     return {"embedded": total, "table": table}
+
+
+_WEEKDAYS_RU = [
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+]
+
+
+@celery_app.task(
+    bind=True,
+    autoretry_for=(OpenAIError,),
+    max_retries=3,
+    retry_backoff=60,
+    retry_backoff_max=600,
+    rate_limit='2/m',
+)
+def semantic_event_search(self, message, limit=5, max_distance=None, history=None):
+    """Natural-language event search: LLM intent → embedding → filtered vector search.
+
+    1. QueryAnalyzer (Gemini) turns the free-text message into a semantic query
+       plus hard filters (dates/categories/price), resolving relative dates
+       against today's MSK date.
+    2. EmbeddingClient embeds the semantic query (same provider events use).
+    3. crud.search_events_by_embedding ranks publicly-valid events by cosine
+       distance with those filters applied.
+
+    rate_limit/retry mirror ai_update_event because Gemini free tier is tight.
+    Result is JSON-safe (crud returns ISO date strings) for the Redis backend.
+    """
+    msk_now = get_msk_today()
+    today = msk_now.date()
+
+    analyzer = QueryAnalyzer(DSNParameters())
+    analysis = analyzer.analyze(
+        message,
+        today=today,
+        weekday_ru=_WEEKDAYS_RU[today.weekday()],
+        history=history,
+    )
+
+    query_info = {
+        "message": message,
+        "semantic_query": analysis["semantic_query"],
+        "filters": {
+            "category_ids": analysis["category_ids"],
+            "date_from": (
+                analysis["date_from"].isoformat() if analysis["date_from"] else None
+            ),
+            "date_to": analysis["date_to"].isoformat() if analysis["date_to"] else None,
+            "price_max": analysis["price_max"],
+            "free_only": analysis["free_only"],
+            "keywords": analysis["keywords"],
+        },
+    }
+
+    if not analysis["is_event_search"]:
+        log.info(f"semantic_event_search: not an event search ({message!r})")
+        return {
+            "status": "not_event_search",
+            "query": query_info,
+            "result": {"events": [], "total_count": 0, "request": {}},
+        }
+
+    vector = EmbeddingClient().embed_batch([analysis["semantic_query"]])[0]
+
+    # Make the date range inclusive of whole days: from_date at 00:00, to_date at
+    # end of day, in MSK (UTC+3). The DB columns are tz-aware UTC.
+    msk_tz = timezone(timedelta(hours=3))
+    date_from = (
+        datetime.combine(analysis["date_from"], datetime.min.time(), tzinfo=msk_tz)
+        if analysis["date_from"]
+        else None
+    )
+    date_to = (
+        datetime.combine(analysis["date_to"], datetime.max.time(), tzinfo=msk_tz)
+        if analysis["date_to"]
+        else None
+    )
+
+    result = crud.search_events_by_embedding(
+        vector,
+        current_embedding_model_label(),
+        date_from=date_from,
+        date_to=date_to,
+        category_ids=analysis["category_ids"],
+        price_max=analysis["price_max"],
+        free_only=analysis["free_only"],
+        limit=limit,
+        max_distance=max_distance,
+    )
+
+    log.info(f"semantic_event_search: {result['total_count']} events for {message!r}")
+    return {"status": "success", "query": query_info, "result": result}
 
 
 @celery_app.task

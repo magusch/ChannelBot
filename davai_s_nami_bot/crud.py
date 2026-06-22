@@ -241,6 +241,106 @@ def find_similar_events(db, event_id: int, limit: int = 10):
 
 
 @db_session
+def search_events_by_embedding(
+    db, query_vector, embedding_model, *,
+    date_from=None, date_to=None, category_ids=None,
+    price_max=None, free_only=False, limit=10, max_distance=None,
+):
+    """Vector search over Events2Posts with hard filters layered on top.
+
+    Mirrors ``find_similar_events`` but ranks against an externally-supplied
+    query vector (e.g. an embedded user query) instead of an event's own vector,
+    and adds date/category/price filters the LLM extracted from the query.
+
+    Only events embedded by ``embedding_model`` are compared — cross-provider
+    vectors are not semantically comparable. Status filter matches the
+    publicly-valid predicate used in ``get_events_by_date_and_category``.
+
+    Date semantics match ``get_events_by_date_and_category``:
+      - default (no ``date_from``): ``to_date >= now`` (drop already-finished).
+      - ``date_from``: ``to_date >= date_from`` (event still running on/after it).
+      - ``date_to``: ``from_date <= date_to`` (event starts on/before it).
+
+    ``max_distance`` (optional) drops the trailing "nearest garbage" — an
+    embedding always returns *something*, so a soft cutoff keeps results honest.
+
+    Datetimes in the returned event dicts are ISO strings: the caller is a Celery
+    task whose result is JSON-serialized into the Redis backend.
+    """
+    distance = Events2Posts.embedding.cosine_distance(query_vector).label('distance')
+
+    query = (
+        db.query(Events2Posts, distance)
+        .options(joinedload(Events2Posts.place))
+        .filter(
+            Events2Posts.embedding.isnot(None),
+            Events2Posts.embedding_model == embedding_model,
+            Events2Posts.status.in_(('Posted', 'OnlyApi'))
+            | (
+                (Events2Posts.status == 'ReadyToPost')
+                & Events2Posts.is_ready
+            ),
+        )
+    )
+
+    if date_from is not None:
+        query = query.filter(Events2Posts.to_date >= date_from)
+    else:
+        query = query.filter(Events2Posts.to_date >= datetime.now(timezone.utc))
+    if date_to is not None:
+        query = query.filter(Events2Posts.from_date <= date_to)
+
+    if category_ids:
+        query = query.filter(Events2Posts.main_category_id.in_(category_ids))
+
+    if free_only:
+        query = query.filter(Events2Posts.price_int == 0)
+    elif price_max is not None:
+        query = query.filter(Events2Posts.price_int <= price_max)
+
+    if max_distance is not None:
+        query = query.filter(distance <= max_distance)
+
+    rows = query.order_by(distance.asc()).limit(limit).all()
+
+    default_fields = _default_event_fields(Events2Posts)
+    events = []
+    for event, dist in rows:
+        event_data = {}
+        for field in default_fields:
+            value = getattr(event, field)
+            event_data[field] = value.isoformat() if isinstance(value, datetime) else value
+        event_data['distance'] = float(dist)
+        if event.place:
+            event_data['address'] = (
+                f"{event.place.place_name}, {event.place.place_address}, "
+                f"м.{event.place.place_metro}"
+            )
+            event_data['place'] = {
+                'id': event.place.id,
+                'place_name': event.place.place_name,
+                'place_address': event.place.place_address,
+                'place_metro': event.place.place_metro,
+            }
+        events.append(event_data)
+
+    return {
+        'events': events,
+        'total_count': len(events),
+        'request': {
+            'limit': limit,
+            'embedding_model': embedding_model,
+            'date_from': date_from.isoformat() if date_from is not None else None,
+            'date_to': date_to.isoformat() if date_to is not None else None,
+            'category_ids': category_ids or [],
+            'price_max': price_max,
+            'free_only': free_only,
+            'max_distance': max_distance,
+        },
+    }
+
+
+@db_session
 def get_places(db, params):
     sort_order = order_maping(Place, params.order_by)
     query = db.query(Place).order_by(sort_order)
