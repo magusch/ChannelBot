@@ -1,19 +1,16 @@
-import os, json
 import hashlib
+import json
+import os
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Depends, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.middleware.cors import CORSMiddleware
-
-from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery.result import AsyncResult
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from davai_s_nami_bot.api import auth, users, tasks, content_generator
-from davai_s_nami_bot.api import event as event_api, ai as ai_api, images as images_api
-from davai_s_nami_bot.api import places as places_api, search as search_api
 from davai_s_nami_bot import crud
-
+from davai_s_nami_bot.api import register_routers
+from davai_s_nami_bot.celery_app import celery_app, redis_client
 from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
 
 OPENAPI_TAGS = [
@@ -105,15 +102,7 @@ app = FastAPI(
     openapi_tags=OPENAPI_TAGS,
 )
 
-app.include_router(auth.router, prefix="/api")
-app.include_router(users.router, prefix="/api")
-app.include_router(event_api.router, prefix="/api")
-app.include_router(tasks.router, prefix="/api")
-app.include_router(ai_api.router, prefix="/api")
-app.include_router(images_api.router, prefix="/api")
-app.include_router(content_generator.router, prefix="/api")
-app.include_router(places_api.router, prefix="/api")
-app.include_router(search_api.router, prefix="/api")
+register_routers(app, prefix="/api")
 
 origins = [
     "http://example.com",
@@ -163,15 +152,17 @@ async def log_api_request(request: Request, data=None):
     """
     celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.log_api_request',
-        args=[{
-            'ip': request.client.host,
-            'endpoint': str(request.url),
-            'method': request.method,
-            'status_code': 200,
-            'timestamp': datetime.now().isoformat(),
-            'user_agent': request.headers.get('User-Agent'),
-            'request_data': json.dumps(data) if data is not None else None,
-        }]
+        args=[
+            {
+                'ip': request.client.host,
+                'endpoint': str(request.url),
+                'method': request.method,
+                'status_code': 200,
+                'timestamp': datetime.now().isoformat(),
+                'user_agent': request.headers.get('User-Agent'),
+                'request_data': json.dumps(data) if data is not None else None,
+            }
+        ],
     )
 
 
