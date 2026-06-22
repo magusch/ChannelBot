@@ -807,6 +807,15 @@ class ScrapeEvents:
             "categories": mts_categories,
             "days": days,
         }
+
+        start_offset = int(
+            settings.escraper_parameters.get("mts", {}).get("start_offset_days", 0)
+        )
+        if start_offset:
+            request_params["date_from"] = (
+                date.today() + timedelta(days=start_offset)
+            ).strftime("%Y-%m-%d")
+
         existed_event_ids = crud.get_event_id_by_prefix("MTS")
         yield from _apply_filter(
             _iter_events(
