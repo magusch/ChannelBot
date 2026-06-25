@@ -5,12 +5,10 @@ Turns a free-text user message ("джазовый концерт в выходн
 search intent: a clean semantic query for the embedding model plus hard filters
 (dates, categories, price) that the LLM cannot express through similarity alone.
 
-Uses Gemini via its OpenAI-compatible endpoint — same client pattern as
-``GeminiHelper`` and ``EmbeddingClient`` so the whole RAG path stays on one
-provider. The model does NOT know the current date, so the caller passes today's
-date and weekday and we ask it to resolve relative phrases ("в выходные",
-"завтра", "на следующей неделе") into concrete ISO dates. Everything the model
-returns is validated/normalized in Python before it reaches the DB query.
+The model does NOT know the current date, so the caller passes today's date and
+weekday and we ask it to resolve relative phrases ("в выходные", "завтра", "на
+следующей неделе") into concrete ISO dates. Everything the model returns is
+validated/normalized in Python before it reaches the DB query.
 """
 
 import datetime
@@ -46,6 +44,35 @@ _SYSTEM_FALLBACK = (
     "Пользователь пишет свободный текст, ты превращаешь его в структуру для "
     "семантического поиска. Возвращай только JSON, без пояснений."
 )
+
+# --- Providers --------------------------------------------------------------
+# Both reachable through the OpenAI SDK; Gemini via its OpenAI-compatible endpoint.
+
+PROVIDER_OPENAI = "openai"
+PROVIDER_GEMINI = "gemini"
+
+PROVIDER_CONFIGS = {
+    PROVIDER_OPENAI: {
+        "model": "gpt-4o-mini",
+        "base_url": None,
+        "api_key_env": "OPENAI_API_KEY",
+    },
+    PROVIDER_GEMINI: {
+        "model": "gemini-2.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API",
+    },
+}
+
+
+def _settings_query_analyzer():
+    """``features.query_analyzer`` from settings.json, or {} if unavailable."""
+    try:
+        from ...settings.settings_loader import settings
+
+        return getattr(settings, "query_analyzer", {}) or {}
+    except Exception:
+        return {}
 
 
 # Keep follow-up context bounded so a long chat can't blow up the token budget.
@@ -92,20 +119,41 @@ def _build_user_prompt(message, today, weekday_ru, has_history=False):
 class QueryAnalyzer:
     """Parse a free-text query into a structured, validated search intent."""
 
-    def __init__(self, dsn_param):
-        api_key = os.environ.get("GEMINI_API")
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        )
+    def __init__(self, dsn_param, provider=None, model=None):
+        sett = _settings_query_analyzer()
+        # Resolution order: explicit arg → settings.json → env → default.
+        provider = (
+            provider
+            or sett.get("provider")
+            or os.environ.get("QUERY_ANALYZER_PROVIDER")
+            or PROVIDER_OPENAI
+        ).lower()
+        if provider not in PROVIDER_CONFIGS:
+            raise ValueError(
+                f"Unknown query_analyzer provider {provider!r}, "
+                f"expected one of {list(PROVIDER_CONFIGS)}"
+            )
+        cfg = PROVIDER_CONFIGS[provider]
+        self.provider = provider
+
+        api_key = os.environ.get(cfg["api_key_env"])
+        client_kwargs = {"api_key": api_key}
+        if cfg["base_url"]:
+            client_kwargs["base_url"] = cfg["base_url"]
+        self.client = OpenAI(**client_kwargs)
+
+        # System prompt stays a Redis param (Django-editable); falls back to the
+        # hardcoded default when nothing is seeded.
         self.system_message = (
             dsn_param.site_parameters("query_analyzer_system_message", last=1)
             or _SYSTEM_FALLBACK
         )
-        self.model = (
-            dsn_param.site_parameters("query_analyzer_model", last=1)
-            or "gemini-2.5-flash"
-        )
+        # Model: explicit arg → settings.json → chosen provider's default. The
+        # settings model only applies to its own provider, so overriding the
+        # provider (via arg/env) can't accidentally pin another provider's model.
+        sett_provider = (sett.get("provider") or "").lower()
+        sett_model = sett.get("model") if sett_provider in ("", provider) else None
+        self.model = model or sett_model or cfg["model"]
 
     def analyze(self, message, *, today=None, weekday_ru=None, history=None):
         """message -> validated dict (see _RESULT_SCHEMA).

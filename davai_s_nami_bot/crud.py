@@ -14,15 +14,14 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 
 from .events import Event
-from .scoring import calculate_score, resolve_category_id
+from .scoring import calculate_score, resolve_category_id, CATEGORY_ID_TO_NAME
 from .adaptive_scoring import merge_adaptive_config, load_from_redis
 from .settings.settings_loader import settings
-
 
 MODEL_REGISTRY = {
     "events_events2post": Events2Posts,
     "events_eventsnotapprovednew": EventsNotApproved,
-    #"events_eventsnotapprovedproposed": EventsNotApprovedProposed,
+    # "events_eventsnotapprovedproposed": EventsNotApprovedProposed,
     "events_event": Event,
     'exhibitions': Exhibitions,
 }
@@ -30,13 +29,16 @@ MODEL_REGISTRY = {
 # Heavy / non-JSON-serializable columns excluded from default API responses.
 # pgvector returns numpy.ndarray which json.dumps cannot encode.
 _EVENT_EXCLUDED_DEFAULT_FIELDS = {
-    'embedding', 'embedding_model', 'embedding_updated_at',
+    'embedding',
+    'embedding_model',
+    'embedding_updated_at',
 }
 
 
 def _default_event_fields(model):
     return [
-        c for c in model.__table__.columns.keys()
+        c
+        for c in model.__table__.columns.keys()
         if c not in _EVENT_EXCLUDED_DEFAULT_FIELDS
     ]
 
@@ -46,7 +48,7 @@ def order_maping(model, order_by):
         order_mapping = {
             'title': Place.place_name,
             'metro': Place.place_metro,
-            'id': Place.id
+            'id': Place.id,
         }
         try:
             field, direction = order_by.split('-')
@@ -60,7 +62,7 @@ def order_maping(model, order_by):
             'date': Events2Posts.to_date,
             'price': Events2Posts.price_int,
             'ad': Events2Posts.price,
-            'id': Events2Posts.id
+            'id': Events2Posts.id,
         }
 
         try:
@@ -1754,13 +1756,40 @@ def resolve_main_category_id(
 ######–----START----–######
 
 
+_CATEGORY_NAME_TO_ID = {name.lower(): cid for cid, name in CATEGORY_ID_TO_NAME.items()}
+
+
 @db_session
 def search_events_by_string(db, string: str, limit: int):
-    columns = [Events2Posts.id, Events2Posts.title, Events2Posts.place_id, Events2Posts.image,
-               Events2Posts.main_category_id, Events2Posts.from_date, Events2Posts.to_date]
-    events = db.query(*columns)\
-        .filter((Events2Posts.title.ilike(f"%{string}%")) | (Events2Posts.category.ilike(f"%{string}%")))\
+    columns = [
+        Events2Posts.id, Events2Posts.title, Events2Posts.place_id,
+        Events2Posts.image, Events2Posts.main_category_id, Events2Posts.from_date, Events2Posts.to_date,
+    ]
+
+    query = db.query(*columns)
+
+    # If the query is exactly a category name ("Концерты"), filter by
+    # main_category_id; otherwise fall back to a title substring match.
+    category_id = _CATEGORY_NAME_TO_ID.get(string.strip().lower())
+    if category_id is not None:
+        query = query.filter(Events2Posts.main_category_id == category_id)
+    else:
+        query = query.filter(Events2Posts.title.ilike(f"%{string}%"))
+
+    # Only events still worth showing: publicly-valid status and not yet ended
+    # (to_date so ongoing exhibitions still surface). Mirrors
+    # get_events_by_date_and_category's predicate.
+    today = datetime.now(timezone(timedelta(hours=3))).date()
+    query = query.filter(
+        Events2Posts.status.in_(('Posted', 'OnlyApi'))
+        | ((Events2Posts.status == 'ReadyToPost') & Events2Posts.is_ready)
+    ).filter(func.date(Events2Posts.to_date) >= today)
+
+    # Soonest first; tie-break by editorial score so same-day picks the best.
+    events = (
+        query.order_by(Events2Posts.from_date.asc(), Events2Posts.score.desc())
         .limit(limit).all()
+    )
     return [dict(zip([column.name for column in columns], event)) for event in events]
 
 

@@ -13,6 +13,10 @@
     "content_generator": {
       "ai_model_name": "openai"
     },
+    "query_analyzer": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
     "auto_route_to_api": {
       "enabled": false,
       "min_score": 55,

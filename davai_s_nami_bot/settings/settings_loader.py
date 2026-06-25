@@ -4,7 +4,9 @@ import os
 
 class Settings:
     def __init__(self):
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
         config_path = os.path.join(base_dir, os.getenv("CONFIG_PATH", "settings.json"))
         with open(config_path, 'r') as f:
             self.raw = json.load(f)
@@ -23,6 +25,7 @@ class Settings:
         self.prepare_events_limit = self.raw['features'].get('prepare_events_limit', 0)
         self.auto_route_to_api = self.raw['features'].get('auto_route_to_api', {})
         self.route_unschedulable = self.raw['features'].get('route_unschedulable', {})
+        self.query_analyzer = self.raw['features'].get('query_analyzer', {})
 
 
 settings = Settings()
