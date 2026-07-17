@@ -62,14 +62,15 @@ def _daily_task_schedule():
     from davai_s_nami_bot.settings.settings_loader import settings
 
     schedule = [
-        ('davai_s_nami_bot.celery_tasks.full_update',
-         4, 40, None, {}),
+        ('davai_s_nami_bot.celery_tasks.full_update', 4, 40, None, {}),
         ('davai_s_nami_bot.celery_tasks.auto_promote_by_score',
          5, 0, None, {'min_score': 70, 'limit': 20}),
         ('davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
          5, 10, {1, 3, 5}, {'min_score': 40, 'max_score': 69, 'sample_size': 10}),
         ('davai_s_nami_bot.celery_tasks.embed_unembedded_events',
          5, 45, None, {'limit': 100, 'table': 'both'}),
+        ('davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
+         5, 50, None, {}),
         ('davai_s_nami_bot.celery_tasks.distribute_event_queue',
          6, 0, None, {'protect_first': 8}),
     ]
@@ -258,12 +259,17 @@ def schedule_posting_tasks():
             task_alive = task_result.state in ('PENDING', 'RETRY')
 
         if not task_alive:
-            log.info(f"Stored task {current_task_id} is no longer alive (state: {task_result.state if current_task_id else 'empty'}), rescheduling")
+            log.info(
+                f"Stored task {current_task_id} is no longer alive (state: {task_result.state if current_task_id else 'empty'}), rescheduling"
+            )
             need_schedule = True
         else:
-            current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+            current_scheduled_time = datetime.strptime(
+                current_scheduled_time_str, '%Y-%m-%d %H:%M:%S'
+            )
             current_scheduled_time_good = msk_today.replace(
-                hour=current_scheduled_time.hour, minute=current_scheduled_time.minute, second=0, microsecond=0
+                hour=current_scheduled_time.hour, minute=current_scheduled_time.minute,
+                second=0, microsecond=0,
             )
             if abs(current_scheduled_time_good - event_time) > timedelta(minutes=4):
                 log.info(f"Time changed from {current_scheduled_time_str} to {event_time_str}, rescheduling")
@@ -340,8 +346,8 @@ def work_with_expired_events():
     msk_today = get_msk_today()
     expired_stats = crud.update_expired_events(msk_today + timedelta(hours=1))
     log.info(
-        f"Expired ReadyToPost: posted={expired_stats.get('posted', 0)} "
-        f"(is_ready=True), expired={expired_stats.get('expired', 0)} (is_ready=False/NULL)"
+        f"Expired ReadyToPost: to_api={expired_stats.get('to_api', 0)} "
+        f"(is_ready=True → OnlyApi), expired={expired_stats.get('expired', 0)} (is_ready=False/NULL)"
     )
     crud.remove_event_from_dsn_bot(msk_today + timedelta(hours=1))
     crud.remove_old_not_approved_events(msk_today + timedelta(hours=1))
@@ -394,6 +400,7 @@ def _update_events(events, table, msk_today):
             inserted_ids = crud.add_events(new_events, explored_date=msk_today, table=table)
 
         return inserted_ids
+
 
 @celery_app.task(soft_time_limit=1800, time_limit=1920)
 def update_event_from_sites(sites=None, days=7):
@@ -451,7 +458,8 @@ def events_from_url(event_url=None):
     events_to_parse = crud.get_scrape_it_events()
     list_event_to_parse = [event.url for event in events_to_parse]
 
-    if event_url is not None: list_event_to_parse.append(event_url)
+    if event_url is not None:
+        list_event_to_parse.append(event_url)
 
     not_existed_parser_event = []
 
@@ -609,11 +617,11 @@ def prepare_events(parameters: dict):
         return {"message": "No events to remake posts."}
 
     update_tasks = chord(
-        (chain(
-            ai_update_event.s(event),
-            update_event.s(event['id'])
-        ) for event in events),
-        remake_events.s()
+        (
+            chain(ai_update_event.s(event), update_event.s(event['id']))
+            for event in events
+        ),
+        remake_events.s(),
     )
 
     task_group = update_tasks.apply_async()
@@ -639,11 +647,11 @@ def prepare_unprepared_events(limit: int = 15):
     )
 
     update_tasks = chord(
-        (chain(
-            ai_update_event.s(event),
-            update_event.s(event['id'])
-        ) for event in events),
-        remake_events.s()
+        (
+            chain(ai_update_event.s(event), update_event.s(event['id']))
+            for event in events
+        ),
+        remake_events.s(),
     )
 
     task_group = update_tasks.apply_async()
@@ -662,9 +670,10 @@ def embed_single_event(event_id: int, table: str = "events2posts"):
     """
     from .database.database_orm import get_db_session
     from .database.models import Events2Posts, EventsNotApproved
-    from .helper.embeddings import EmbeddingClient, build_embedding_input
 
-    model_cls = {"events2posts": Events2Posts, "not_approved": EventsNotApproved}.get(table)
+    model_cls = {"events2posts": Events2Posts, "not_approved": EventsNotApproved}.get(
+        table
+    )
     if model_cls is None:
         raise ValueError(f"Unknown table {table!r}")
 
@@ -688,20 +697,27 @@ def embed_single_event(event_id: int, table: str = "events2posts"):
 
 
 @celery_app.task
-def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str = None):
+def embed_unembedded_events(
+    limit: int = 100,
+    table: str = "both",
+    provider: str = None,
+    min_score: int = None,
+    only_future: bool = False,
+):
     """Backfill / refresh embeddings for Events2Posts and EventsNotApproved.
 
     Picks rows where embedding IS NULL OR embedding_model != current model_label.
     Changing provider/model regenerates on the next run automatically.
     table ∈ {"both", "events2posts", "not_approved"}.
     provider: None → uses EMBEDDING_PROVIDER env var (default "gemini"), or pass "openai".
+    min_score / only_future: optional filters used by auto_promote_by_score to
+    embed exactly the promotion candidates before the dedup gate runs.
     """
     from sqlalchemy import or_
     from sqlalchemy.orm import joinedload
 
     from .database.database_orm import get_db_session
     from .database.models import Events2Posts, EventsNotApproved
-    from .helper.embeddings import EmbeddingClient, build_embedding_input
 
     tables_map = {
         "events2posts": [Events2Posts],
@@ -717,7 +733,7 @@ def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str
 
     for model_cls in tables_map[table]:
         with get_db_session() as db:
-            rows = (
+            query = (
                 db.query(model_cls)
                 .options(joinedload(model_cls.place))
                 .filter(
@@ -726,10 +742,13 @@ def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str
                         model_cls.embedding_model != model_label,
                     )
                 )
-                .order_by(model_cls.id.desc())
-                .limit(limit)
-                .all()
             )
+            if min_score is not None:
+                query = query.filter(model_cls.score >= min_score)
+            if only_future:
+                msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
+                query = query.filter(model_cls.from_date > msk_now)
+            rows = query.order_by(model_cls.id.desc()).limit(limit).all()
             if not rows:
                 continue
 
@@ -737,7 +756,9 @@ def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str
             # Empty input would 400 from the API. Skip those rows for this run.
             valid = [(r, t) for r, t in zip(rows, texts) if t]
             if not valid:
-                log.info(f"{model_cls.__tablename__}: {len(rows)} rows have empty embedding input, skipping.")
+                log.info(
+                    f"{model_cls.__tablename__}: {len(rows)} rows have empty embedding input, skipping."
+                )
                 continue
 
             vectors = client.embed_batch([t for _, t in valid])
@@ -752,6 +773,30 @@ def embed_unembedded_events(limit: int = 100, table: str = "both", provider: str
 
     log.info(f"embed_unembedded_events done: {total} rows (table={table}).")
     return {"embedded": total, "table": table}
+
+
+@celery_app.task
+def dedupe_channel_queue(dry_run: bool = False):
+    """Sweep the ReadyToPost queue for embedding near-duplicates.
+
+    Safety net behind the promote-time gate: catches duplicates from every
+    inflow (approved orgs, manual adds, promote runs that predate embeddings).
+    Scheduled after embed_unembedded_events so fresh rows have vectors.
+    Thresholds come from settings.scoring (embedding_dedup_*).
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    scoring_cfg = getattr(settings, "scoring", {}) or {}
+    result = crud.dedupe_ready_queue(
+        max_distance=scoring_cfg.get("embedding_dedup_max_distance", 0.08),
+        lookup_days=scoring_cfg.get("embedding_dedup_lookup_days", 180),
+        dry_run=dry_run,
+    )
+    log.info(
+        f"dedupe_channel_queue: checked {result['checked']} ReadyToPost, "
+        f"demoted {len(result['decisions'])} (dry_run={dry_run}): {result['decisions']}"
+    )
+    return result
 
 
 _WEEKDAYS_RU = [
@@ -860,6 +905,16 @@ def auto_promote_by_score(
     social_min_score: int = 80,
 ):
     """Move high-scoring events from NotApproved to Events2Posts."""
+    # Embed promotion candidates first so the embedding dedup gate inside
+    # auto_promote_high_score_events has vectors to compare (the nightly
+    # embed_unembedded_events run happens later, at 05:45).
+    try:
+        embed_unembedded_events(
+            limit=100, table="not_approved", min_score=min_score, only_future=True
+        )
+    except Exception as e:
+        log.warning(f"Pre-promote embedding failed, gate will be partial: {e}")
+
     promoted_ids = crud.auto_promote_high_score_events(
         min_score=min_score,
         limit=limit,
@@ -993,7 +1048,11 @@ def update_event(new_event_data, event_id):
 def remake_events(events):
     # Post regeneration now happens locally inside update_event via
     # crud.remake_event_post; this chord callback only collects the ids.
-    event_ids = [event.get('id') or event.get('event_id') for event in events if event.get('id') or event.get('event_id')]
+    event_ids = [
+        event.get('id') or event.get('event_id')
+        for event in events
+        if event.get('id') or event.get('event_id')
+    ]
     return {"remade_ids": event_ids, "count": len(event_ids)}
 
 
@@ -1002,10 +1061,7 @@ def get_posted_events(parameters: dict):
     params = EventRequestParameters(**parameters).with_defaults()
 
     events = crud.get_events_by_date_and_category(params)
-    result = {
-        'request': parameters,
-        'events': events
-    }
+    result = {'request': parameters, 'events': events}
     return result
 
 
@@ -1082,7 +1138,9 @@ def event_reminder():
         text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
         remind_datetime = reminder['remind_datetime']
 
-        send_message_to_telegram.apply_async(args=[text_message, reminder['telegram_id']], eta=remind_datetime)
+        send_message_to_telegram.apply_async(
+            args=[text_message, reminder['telegram_id']], eta=remind_datetime
+        )
 
 
 @celery_app.task
@@ -1104,14 +1162,25 @@ def content_generator_event_selection(filter_set_id: int):
     event_selection = generator_post.event_selection(filter_set_id)
     return event_selection
 
-@celery_app.task
-def content_generator_generate_post(post_template_id: int, event_selection_id: int, generated_by_id: int):
-    generator_post = GeneratorPost()
-    post = generator_post.generate_post_by_template(post_template_id, event_selection_id, generated_by_id)
-    return post
 
 @celery_app.task
-def content_generator_generate_post_ai(event_selection_id: int = None, event_ids: list = None, post_template_id: int = None, title: str = None):
+def content_generator_generate_post(
+    post_template_id: int, event_selection_id: int, generated_by_id: int
+):
+    generator_post = GeneratorPost()
+    post = generator_post.generate_post_by_template(
+        post_template_id, event_selection_id, generated_by_id
+    )
+    return post
+
+
+@celery_app.task
+def content_generator_generate_post_ai(
+    event_selection_id: int = None,
+    event_ids: list = None,
+    post_template_id: int = None,
+    title: str = None,
+):
     generator_post = GeneratorPost()
     post = generator_post.generate_post_by_ai(
         event_selection_id=event_selection_id,
@@ -1134,7 +1203,8 @@ def upload_event_images_to_s3(event_ids: list = []):
 
     for event in events:
         image_url = event.get('image', None)
-        if not image_url: continue
+        if not image_url:
+            continue
 
         result = utils.process_image_from_url(image_url=image_url)
         crud.update_image_events(event['id'], result['url'], s3_key=result.get('key'))
@@ -1143,6 +1213,7 @@ def upload_event_images_to_s3(event_ids: list = []):
 # =============================================================================
 # RAW TEXT EVENT EXTRACTION TASKS
 # =============================================================================
+
 
 @celery_app.task
 def extract_events_from_text(text: str, source: str, image: str = None):
@@ -1172,9 +1243,11 @@ def extract_events_from_text(text: str, source: str, image: str = None):
     for eid in result.get("created_ids", []):
         crud.recalculate_event_score(eid, table="events_eventsnotapprovednew")
 
-    log.info(f"Extraction result: is_event={result.get('is_event')}, "
-             f"events_count={result.get('events_count', 0)}, "
-             f"created_ids={result.get('created_ids', [])}")
+    log.info(
+        f"Extraction result: is_event={result.get('is_event')}, "
+        f"events_count={result.get('events_count', 0)}, "
+        f"created_ids={result.get('created_ids', [])}"
+    )
 
     return result
 
@@ -1281,7 +1354,9 @@ def analyze_text_only(text: str, source: str = "unknown"):
 
 
 @celery_app.task
-def batch_process_not_approved_events_optimized(limit: int = 50, source: str = None, batch_size: int = 10):
+def batch_process_not_approved_events_optimized(
+    limit: int = 50, source: str = None, batch_size: int = 10
+):
     """
     Optimized batch processing — sends multiple texts in a single AI request.
     Saves tokens by using one system message per batch.
@@ -1301,7 +1376,9 @@ def batch_process_not_approved_events_optimized(limit: int = 50, source: str = N
     dict
         Processing statistics.
     """
-    log.info(f"Optimized batch processing, limit={limit}, source={source}, batch_size={batch_size}")
+    log.info(
+        f"Optimized batch processing, limit={limit}, source={source}, batch_size={batch_size}"
+    )
 
     events_data = crud.get_not_approved_events_for_processing(limit=limit, source=source)
 
@@ -1321,13 +1398,21 @@ def batch_process_not_approved_events_optimized(limit: int = 50, source: str = N
 
         # Analyze the batch in a single request
         texts_for_ai = [{"id": e["id"], "text": e["text"]} for e in batch]
-        results, batch_tokens = extractor.analyze_texts_batch(texts_for_ai, source=source or "mixed")
+        results, batch_tokens = extractor.analyze_texts_batch(
+            texts_for_ai, source=source or "mixed"
+        )
 
         # Log tokens
         if batch_tokens:
-            stats["input_tokens"] = stats.get("input_tokens", 0) + batch_tokens.input_tokens
-            stats["output_tokens"] = stats.get("output_tokens", 0) + batch_tokens.output_tokens
-            log.info(f"Batch tokens: input={batch_tokens.input_tokens}, output={batch_tokens.output_tokens}")
+            stats["input_tokens"] = (
+                stats.get("input_tokens", 0) + batch_tokens.input_tokens
+            )
+            stats["output_tokens"] = (
+                stats.get("output_tokens", 0) + batch_tokens.output_tokens
+            )
+            log.info(
+                f"Batch tokens: input={batch_tokens.input_tokens}, output={batch_tokens.output_tokens}"
+            )
 
         # Save results
         status_updates = []
@@ -1350,11 +1435,13 @@ def batch_process_not_approved_events_optimized(limit: int = 50, source: str = N
                         "url": extracted.url,
                         "ticket_url": extracted.ticket_url,
                     }
-                    status_updates.append({
-                        "id": event_data["id"],
-                        "status": "extracted",
-                        "enriched": enriched,
-                    })
+                    status_updates.append(
+                        {
+                            "id": event_data["id"],
+                            "status": "extracted",
+                            "enriched": enriched,
+                        }
+                    )
                     stats["success"] += 1
                     log.info(f"Event {event_data['id']} enriched with AI data")
                 except Exception as e:
@@ -1380,7 +1467,9 @@ def batch_process_not_approved_events_optimized(limit: int = 50, source: str = N
 
 
 @celery_app.task
-def recalculate_scores_bulk(table: str = "events_eventsnotapprovednew", ids: list = None, force: bool = False):
+def recalculate_scores_bulk(
+    table: str = "events_eventsnotapprovednew", ids: list = None, force: bool = False
+):
     """Resolve place_id (if missing) and recalculate score for events.
 
     - ids given              → recalculate those IDs (score always updated)
@@ -1420,15 +1509,21 @@ def update_adaptive_scoring(days: int = 30):
 
     if pos_count < 10 or neg_count < 10:
         log.warning("Not enough data for adaptive scoring, skipping")
-        return {"status": "skipped", "reason": "insufficient_data",
-                "positive": pos_count, "negative": neg_count}
+        return {
+            "status": "skipped",
+            "reason": "insufficient_data",
+            "positive": pos_count,
+            "negative": neg_count,
+        }
 
     base_config = getattr(settings, "scoring", {})
     adaptive = calculate_adaptive_config(data["positive"], data["negative"], base_config)
     save_to_redis(redis_client, adaptive)
 
-    log.info(f"update_adaptive_scoring done: {adaptive.get('source_scores', {})} sources, "
-             f"{adaptive.get('category_scores', {})} categories")
+    log.info(
+        f"update_adaptive_scoring done: {adaptive.get('source_scores', {})} sources, "
+        f"{adaptive.get('category_scores', {})} categories"
+    )
     return {
         "status": "ok",
         "positive": pos_count,
@@ -1460,16 +1555,12 @@ def catch_up_daily_tasks():
     for task_name, hour, minute, weekdays, task_kwargs in _daily_task_schedule():
         if weekdays is not None and now_msk.isoweekday() not in weekdays:
             continue
-        scheduled = now_msk.replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
+        scheduled = now_msk.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if now_msk < scheduled:
             continue
 
         key = _daily_marker_key(task_name, today)
-        claimed = redis_client.set(
-            key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True
-        )
+        claimed = redis_client.set(key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True)
         if not claimed:
             skipped.append(task_name)
             continue

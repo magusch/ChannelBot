@@ -6,78 +6,86 @@ from pydantic import BaseModel, Field
 # Celery tasks
 class EventUrlRequest(BaseModel):
     """Request to scrape an event by URL."""
-    event_url: Optional[str] = Field(None, description="URL of the event on the source site")
+    event_url: Optional[str] = Field(None, description="Event URL on the source site")
 
 
 class TaskResponse(BaseModel):
     """Standard response when a Celery task is queued."""
-    message: str = Field(..., description="Description of the queued task")
-    task_id: str = Field(..., description="Celery task ID for tracking the status via GET /api/tasks/status/{task_id}")
+    message: str = Field(..., description="Queued task description")
+    task_id: str = Field(..., description="Poll via GET /api/tasks/status/{task_id}")
 
 
 # AI
 class AiUpdateEventRequest(BaseModel):
     """Request to update an event via AI."""
-    event: dict = Field(..., description="Event data (dict with fields from Events2Posts)")
-    is_new: int = Field(0, description="1 — new event, 0 — update of an existing one")
+
+    event: dict = Field(..., description="Event dict (Events2Posts fields)")
+    is_new: int = Field(0, description="1=new, 0=update")
 
 
 class AiModerateEventsRequest(BaseModel):
     """Request to AI-moderate a list of events."""
-    events: List[dict] = Field(..., description="List of events to moderate")
-    examples: Optional[List[dict]] = Field(None, description="Examples for few-shot moderation (optional)")
+
+    events: List[dict] = Field(..., description="Events to moderate")
+    examples: Optional[List[dict]] = Field(None, description="Few-shot examples")
 
 
 # Scraping
 class NewEventFromSitesRequest(BaseModel):
     """Request to scrape events from the specified sites."""
-    sites: List[str] = Field(
-        ...,
-        description="List of sources: timepad, radario, ticketscloud, qtickets, mts, kassir, culture, cfg, vk, telegram",
-    )
-    days: int = Field(7, description="Scraping depth in days from the current date")
+
+    sites: List[str] = Field(..., description="Source names (timepad, radario, vk, telegram, …)")
+    days: int = Field(7, description="Scraping depth in days")
 
 
 # Images
 class UploadImageRequest(BaseModel):
     """Request to upload an image to S3."""
-    img_url: Optional[str] = Field(None, description="Direct link to the image")
+
+    img_url: Optional[str] = Field(None, description="Image URL")
 
 
 class UploadEventImagesRequest(BaseModel):
     """Request to bulk-upload event images."""
-    event_ids: List[int] = Field(..., description="List of event IDs from Events2Posts")
+
+    event_ids: List[int] = Field(..., description="Events2Posts IDs")
 
 
 # Scoring
 class RecalculateScoresRequest(BaseModel):
     """Request to recalculate event scoring."""
-    ids: Optional[List[int]] = Field(None, description="Event IDs. NULL — all rows where score IS NULL")
+
+    ids: Optional[List[int]] = Field(None, description="Event IDs (NULL = all where score IS NULL)")
     table: str = Field(
         "events_eventsnotapprovednew",
-        description="Table: events_eventsnotapprovednew or events_events2post",
+        description="events_eventsnotapprovednew or events_events2post",
     )
-    force: bool = Field(False, description="True — recalculate even if the score is already set")
+    force: bool = Field(False, description="Recalculate even if score is set")
 
 
 # Content generator
 class ContentGeneratorEventSelectionRequest(BaseModel):
     """Request to create an event selection by filter."""
-    filter_set_id: int = Field(..., description="ID of the filter configuration (ContentGeneratorFilterSet)")
+
+    filter_set_id: int = Field(..., description="ContentGeneratorFilterSet ID")
 
 
 class ContentGeneratorGeneratePostRequest(BaseModel):
     """Request to generate a post from a template."""
+
     event_selection_id: int = Field(..., description="Event selection ID")
     post_template_id: int = Field(..., description="Post template ID")
-    generated_by_id: Optional[int] = Field(None, description="ID of a previously generated post (for regeneration)")
+    generated_by_id: Optional[int] = Field(None, description="Source post ID (for regeneration)")
 
 
 class BulkCreatePostRequest(BaseModel):
     """Bulk make-post (and optional save) request."""
-    events: List[dict] = Field(..., description="List of event dicts (same shape as /events/make_post)")
-    save: bool = Field(False, description="True — insert rows into Events2Posts; False — preview only")
-    status: str = Field('ReadyToPost', description="Target status when save=true (e.g. 'ReadyToPost', 'OnlyApi', 'draft')")
+
+    events: List[dict] = Field(..., description="Event dicts (as /events/make_post)")
+    save: bool = Field(False, description="Insert into Events2Posts; else preview")
+    status: str = Field(
+        'ReadyToPost', description="Status when save=true (ReadyToPost/OnlyApi/draft)"
+    )
 
 
 class ContentGeneratorGeneratePostAIRequest(BaseModel):

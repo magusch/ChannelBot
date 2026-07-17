@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -134,6 +135,67 @@ def title_similarity(a: str, b: str) -> float:
     intersection = words_a & words_b
     union = words_a | words_b
     return len(intersection) / len(union)
+
+
+_TITLE_NOISE_WORDS = frozenset({
+    # ticket/entry boilerplate
+    "входной", "билет", "билеты", "вход", "абонемент", "запись", "бесплатный",
+    # prepositions / conjunctions / particles
+    "в", "во", "на", "и", "а", "с", "со", "к", "ко", "о", "об", "обо", "от",
+    "до", "по", "за", "из", "изо", "у", "не", "для", "при", "под", "над",
+    "про", "без", "или", "же", "то", "как",
+    # month names (event dates inside titles: "Большой стендап 14 июня")
+    "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+    "сентября", "октября", "ноября", "декабря",
+    "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август",
+    "сентябрь", "октябрь", "ноябрь", "декабрь",
+})
+
+# Common Russian case/plural endings, trimmed once from tokens longer than 4
+# chars so that "выставка"/"выставку"/"выставке" all collapse to "выставк".
+_STEM_ENDING_RE = re.compile(
+    r"(ами|ями|ого|его|ому|ему|ыми|ими|ах|ях|ов|ев|ой|ей|ом|ем|ы|и|а|я|у|ю|е|о|ь)$"
+)
+
+# Anything that is not a letter: emoji, digits, punctuation, quotes.
+_NON_LETTER_RE = re.compile(r"[^a-zа-яё]+")
+
+
+def _light_stem(token: str) -> str:
+    if len(token) > 4:
+        return _STEM_ENDING_RE.sub("", token)
+    return token
+
+
+def normalize_title_tokens(title: Optional[str]) -> frozenset:
+    """Title → set of stemmed core tokens (no emoji/digits/punctuation/noise words).
+
+    AI prep adds emoji prefixes and scrapers add boilerplate ("Входной билет
+    на ..."), so raw word comparison misses even identical titles. This strips
+    all of that down to the words that actually identify the event.
+    """
+    if not title:
+        return frozenset()
+    cleaned = _NON_LETTER_RE.sub(" ", title.lower().replace("ё", "е"))
+    return frozenset(
+        _light_stem(tok)
+        for tok in cleaned.split()
+        if len(tok) > 1 and tok not in _TITLE_NOISE_WORDS
+    )
+
+
+def title_containment(a: Optional[str], b: Optional[str]) -> float:
+    """Overlap of normalized title cores relative to the SHORTER one.
+
+    1.0 when one core is a subset of the other — catches "Входной билет на
+    выставку «Тело»" vs "Выставка Тело", unlike Jaccard which is diluted by
+    the boilerplate words.
+    """
+    tokens_a = normalize_title_tokens(a)
+    tokens_b = normalize_title_tokens(b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
 
 
 def _score_price(price_int, price_ranges: list) -> int:
@@ -326,8 +388,20 @@ def _check_repetition(
     existing_titles: List[str],
     threshold: float = 0.8,
 ) -> bool:
+    # Containment on normalized cores: catches date-suffixed series
+    # ("Большой стендап 14 июня" vs "... 21 июня") and emoji-prefixed
+    # prepared titles that word-level Jaccard misses.
+    tokens = normalize_title_tokens(title)
+    if not tokens:
+        return False
     for existing in existing_titles:
-        if title_similarity(title, existing) > threshold:
+        existing_tokens = normalize_title_tokens(existing)
+        if not existing_tokens:
+            continue
+        containment = len(tokens & existing_tokens) / min(
+            len(tokens), len(existing_tokens)
+        )
+        if containment > threshold:
             return True
     return False
 
