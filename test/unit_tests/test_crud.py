@@ -243,6 +243,58 @@ def test_find_exhibition_duplicate_ignores_rejected_status(db_session_fixture):
     ) == 0
 
 
+def test_find_exhibition_duplicate_sees_through_emoji_and_boilerplate(db_session_fixture):
+    """The stored title carries an AI-added emoji, the incoming one — Timepad's
+    "Входной билет на ..." wrapper. Both must still match the same core."""
+    db = db_session_fixture
+    db.add(_exhibition(1, title='💭 Выставка «Так не бывает»', place_id=42))
+    db.commit()
+
+    dup = crud_module.find_exhibition_duplicate(
+        title='Входной билет на выставку «Так не бывает»',
+        place_id=42, main_category_id=11,
+    )
+    assert dup != 0
+
+
+# --- embedding dedup helpers ----------------------------------------------
+
+
+def test_dates_overlap():
+    d = lambda day: datetime(2026, 7, day)
+    # Intersecting ranges
+    assert crud_module._dates_overlap(d(1), d(10), d(5), d(15)) is True
+    # Touching boundaries count as overlap
+    assert crud_module._dates_overlap(d(1), d(5), d(5), d(9)) is True
+    # Disjoint ranges
+    assert crud_module._dates_overlap(d(1), d(4), d(5), d(9)) is False
+    # Missing to_date falls back to from_date
+    assert crud_module._dates_overlap(d(3), None, d(1), d(5)) is True
+    assert crud_module._dates_overlap(d(7), None, d(1), d(5)) is False
+    # Missing from_date → no overlap claim
+    assert crud_module._dates_overlap(None, None, d(1), d(5)) is False
+
+
+def test_enrich_event_from_duplicate_fills_only_empty_fields(db_session_fixture):
+    db = db_session_fixture
+    survivor = _exhibition(1, title='Выставка Тело', place_id=42)
+    survivor.image = ''
+    survivor.price = '500₽'  # already set — must not be overwritten
+    db.add(survivor)
+    db.commit()
+
+    updated = crud_module._enrich_event_from_duplicate(
+        db,
+        survivor.id,
+        {'image': 'https://img.example/1.jpg', 'price': '300₽', 'ticket_url': 'https://t.example'},
+    )
+
+    assert 'image' in updated and 'ticket_url' in updated
+    assert 'price' not in updated
+    assert survivor.image == 'https://img.example/1.jpg'
+    assert survivor.price == '500₽'
+
+
 # --- Place category override --------------------------------------------------
 
 def _place(db, place_id, *, name='Standup Club', category=None):

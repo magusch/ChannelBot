@@ -1,3 +1,4 @@
+import json
 import random
 
 from sqlalchemy import func, asc, desc, exc, or_, and_
@@ -157,11 +158,14 @@ def get_events_by_date_and_category(db, params):
         }
 
         if event.place:
-            event_data['address'] = f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+            event_data['address'] = (
+                f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+            )
             event_data["place"] = {
-                "id": event.place.id, "place_name": event.place.place_name,
+                "id": event.place.id,
+                "place_name": event.place.place_name,
                 "place_address": event.place.place_address,
-                "place_metro": event.place.place_metro
+                "place_metro": event.place.place_metro,
             }
 
         event_dict_list.append(event_data)
@@ -212,10 +216,7 @@ def find_similar_events(db, event_id: int, limit: int = 10):
             Events2Posts.to_date >= datetime.now(timezone.utc),
             Events2Posts.embedding_model == source.embedding_model,
             Events2Posts.status.in_(('Posted', 'OnlyApi'))
-            | (
-                (Events2Posts.status == 'ReadyToPost')
-                & Events2Posts.is_ready
-            ),
+            | ((Events2Posts.status == 'ReadyToPost') & Events2Posts.is_ready),
         )
         .order_by(distance.asc())
         .limit(limit)
@@ -929,9 +930,13 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
     window = scoring_cfg.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(db, days=window)
     place_counts = get_place_post_counts(db)
-    place_rep = get_place_reputation(db, auto_reject_threshold=_auto_reject_threshold(scoring_cfg))
+    place_rep = get_place_reputation(
+        db, auto_reject_threshold=_auto_reject_threshold(scoring_cfg)
+    )
     place_cat_queue = get_place_category_queue_counts(db)
-    date_counts = get_date_event_counts(db, days=scoring_cfg.get("date_scarcity_window_days", 10))
+    date_counts = get_date_event_counts(
+        db, days=scoring_cfg.get("date_scarcity_window_days", 10)
+    )
 
     list_inserted_ids = []
     for event in events:
@@ -951,7 +956,10 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
 
         _apply_place_category_override(event_dict, place_category_overrides)
 
-        _apply_scoring(event_dict, event_dict.get('place_id'), recent_titles, place_counts, place_cat_queue, date_counts, place_reputation=place_rep)
+        _apply_scoring(
+            event_dict, event_dict.get('place_id'), recent_titles,
+            place_counts, place_cat_queue, date_counts, place_reputation=place_rep,
+        )
 
         new_event = create_event(db, event_dict, model)
         if new_event and 'id' in new_event:
@@ -989,7 +997,11 @@ def set_status(db: object, event_id: str, status: str, error_message: str = None
             existing = {}
             if event.score_breakdown:
                 try:
-                    existing = _json.loads(event.score_breakdown) if isinstance(event.score_breakdown, str) else dict(event.score_breakdown)
+                    existing = (
+                        _json.loads(event.score_breakdown)
+                        if isinstance(event.score_breakdown, str)
+                        else dict(event.score_breakdown)
+                    )
                 except Exception:
                     pass
             existing['error'] = {'message': error_message, 'status': status}
@@ -1003,7 +1015,12 @@ def set_post_url(db: object, event_id: str, post_url: str) -> None:
 
 @db_session
 def get_last_queue_value(db) -> int:
-    result = db.query(Events2Posts.queue).filter_by(status='ReadyToPost').order_by(Events2Posts.queue.desc()).first()
+    result = (
+        db.query(Events2Posts.queue)
+        .filter_by(status='ReadyToPost')
+        .order_by(Events2Posts.queue.desc())
+        .first()
+    )
     last_queue_value = result[0] if result and result[0] is not None else 0
     return last_queue_value
 
@@ -1040,6 +1057,7 @@ def update_image_events(db, event_id: str, image_url: str, s3_key: str = None) -
         update_fields["image_upload"] = s3_key
     db.query(Events2Posts).filter_by(id=event_id).update(update_fields)
 
+
 @db_session
 def save_api_request_log(db, request_info: dict):
     api_request_log = ApiRequestLog(**request_info)
@@ -1048,6 +1066,7 @@ def save_api_request_log(db, request_info: dict):
 
 ######## DSN BOT ########
 ####––––––START––––––####
+
 
 @db_session
 def add_posted_event_to_dsn_bot(db, event, post_id):
@@ -1081,11 +1100,12 @@ def event_reminder(db):
     now = datetime.now(timezone.utc)
 
     future_reminds = (
-        db.query(DsnBotUserEvents).options(
-            joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event)
-                                           ).filter(
+        db.query(DsnBotUserEvents)
+        .options(joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event))
+        .filter(
             DsnBotUserEvents.is_remind == True, DsnBotUserEvents.remind_datetime > now
-        ).all()
+        )
+        .all()
     )
 
     result = []
@@ -1187,6 +1207,142 @@ def find_exhibition_duplicate(
         if existing_title and title_containment(title, existing_title) > threshold:
             return existing_id
     return 0
+
+
+@db_session
+def compute_taste_score(
+    db,
+    embedding,
+    embedding_model: str,
+    k: int = 10,
+    max_distance: float = 0.3,
+    min_neighbors: int = 3,
+) -> Optional[int]:
+    """kNN "taste" component: how similar is this event to what we really post?
+
+    Looks at the k nearest labeled events (same embedding model) within
+    max_distance: really-posted (Posted with post_url) count as positive,
+    manually killed (Spam) as negative. Returns a 0-100 score from the
+    distance-weighted positive share.
+
+    Returns None when there's no embedding or fewer than min_neighbors close
+    labeled events — a NOVEL event gets no taste component (and no penalty),
+    it is scored by the base formula alone. Evidence moves the score, absence
+    of evidence doesn't.
+    """
+    if embedding is None or not embedding_model:
+        return None
+
+    distance = Events2Posts.embedding.cosine_distance(embedding).label('distance')
+    is_posted = and_(
+        Events2Posts.status == 'Posted',
+        Events2Posts.post_url.isnot(None),
+        Events2Posts.post_url != '',
+    )
+    rows = (
+        db.query(Events2Posts.status, distance)
+        .filter(
+            Events2Posts.embedding.isnot(None),
+            Events2Posts.embedding_model == embedding_model,
+            or_(is_posted, Events2Posts.status == 'Spam'),
+        )
+        .order_by(distance)
+        .limit(k)
+        .all()
+    )
+
+    neighbors = [(status, dist) for status, dist in rows if dist is not None and dist <= max_distance]
+    if len(neighbors) < min_neighbors:
+        return None
+
+    # Closer neighbours weigh more; at max_distance the weight reaches 0.
+    weighted_pos = 0.0
+    weight_sum = 0.0
+    for status, dist in neighbors:
+        weight = 1.0 - (dist / max_distance)
+        weight_sum += weight
+        if status == 'Posted':
+            weighted_pos += weight
+    if weight_sum <= 0:
+        return None
+    return int(round(100 * weighted_pos / weight_sum))
+
+
+@db_session
+def apply_taste_to_promote_candidates(
+    db,
+    pool_min_score: int = 60,
+    limit: int = 200,
+) -> dict:
+    """Recompute NotApproved candidate scores with the kNN taste component.
+
+    Runs right before auto-promotion (after candidates got embeddings):
+    good-taste events just below the promote threshold are rescued, bad-taste
+    ones above it are demoted — both BEFORE the threshold selection.
+
+    Idempotent: the base components stay as stored, taste is recomputed fresh
+    and the total is rebuilt from scratch each run.
+    """
+    from .scoring import apply_taste_to_breakdown
+
+    scoring_cfg = getattr(settings, "scoring", {}) or {}
+    k = scoring_cfg.get("taste_k", 10)
+    max_distance = scoring_cfg.get("taste_max_neighbor_distance", 0.3)
+    min_neighbors = scoring_cfg.get("taste_min_neighbors", 3)
+
+    msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
+    candidates = (
+        db.query(EventsNotApproved)
+        .filter(
+            EventsNotApproved.status.in_(['new', 'extracted']),
+            EventsNotApproved.from_date > msk_now,
+            EventsNotApproved.score >= pool_min_score,
+            EventsNotApproved.embedding.isnot(None),
+            EventsNotApproved.score_breakdown.isnot(None),
+        )
+        .order_by(EventsNotApproved.score.desc())
+        .limit(limit)
+        .all()
+    )
+
+    updated, novel, score_ups, score_downs = 0, 0, 0, 0
+    for event in candidates:
+        taste = compute_taste_score(
+            db=db,
+            embedding=event.embedding,
+            embedding_model=event.embedding_model,
+            k=k,
+            max_distance=max_distance,
+            min_neighbors=min_neighbors,
+        )
+        if taste is None:
+            novel += 1
+            continue
+        breakdown = apply_taste_to_breakdown(
+            event.score_breakdown, taste, scoring_cfg
+        )
+        if breakdown is None:
+            continue
+        new_total = breakdown["total"]
+        if event.score is not None:
+            if new_total > event.score:
+                score_ups += 1
+            elif new_total < event.score:
+                score_downs += 1
+        event.score = new_total
+        event.score_breakdown = json.dumps(breakdown, ensure_ascii=False)
+        updated += 1
+
+    if updated:
+        db.commit()
+
+    return {
+        'candidates': len(candidates),
+        'updated': updated,
+        'novel_skipped': novel,
+        'score_ups': score_ups,
+        'score_downs': score_downs,
+    }
 
 
 def _dates_overlap(a_from, a_to, b_from, b_to) -> bool:
@@ -1542,6 +1698,7 @@ def _get_scoring_config() -> dict:
     base = getattr(settings, "scoring", {})
     try:
         from .celery_app import redis_client
+
         adaptive = load_from_redis(redis_client)
         return merge_adaptive_config(base, adaptive)
     except Exception:
@@ -1599,9 +1756,7 @@ def recalculate_event_score(db, event_id: int, table: str = "events_events2post"
     if not event:
         return None
 
-    event_dict = {
-        col.name: getattr(event, col.name) for col in event.__table__.columns
-    }
+    event_dict = {col.name: getattr(event, col.name) for col in event.__table__.columns}
 
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
@@ -1725,6 +1880,7 @@ def reject_event_by_ai(db, event_id: int, reason: str = None):
     Stores the rejection reason in score_breakdown JSONB and sets status to 'rejected'.
     """
     import json as _json
+
     event = db.query(Events2Posts).filter_by(id=event_id).first()
     if not event:
         return False
@@ -1733,7 +1889,11 @@ def reject_event_by_ai(db, event_id: int, reason: str = None):
     existing = {}
     if event.score_breakdown:
         try:
-            existing = _json.loads(event.score_breakdown) if isinstance(event.score_breakdown, str) else dict(event.score_breakdown)
+            existing = (
+                _json.loads(event.score_breakdown)
+                if isinstance(event.score_breakdown, str)
+                else dict(event.score_breakdown)
+            )
         except Exception:
             pass
     existing['ai_review'] = {'relevant': False, 'reason': reason or ''}
@@ -1888,7 +2048,9 @@ def _resolve_place(db, event_data: dict, place_keywords=None):
         if place:
             return place
 
-    search_text = ' '.join(filter(None, [event_data.get('address'), event_data.get('title')]))
+    search_text = ' '.join(
+        filter(None, [event_data.get('address'), event_data.get('title')])
+    )
     if not search_text:
         return None
 
@@ -1903,6 +2065,7 @@ def _resolve_place(db, event_data: dict, place_keywords=None):
 def _place_to_view(place):
     """Convert an ORM Place to a PlaceView for PostHelper."""
     from .helper.post_helper import PlaceView
+
     if place is None:
         return None
     return PlaceView(
@@ -1959,7 +2122,10 @@ def resolve_main_category_id(
 
     Returns: category_id or None.
     """
-    if current_main_category_id is not None and current_main_category_id != UNCATEGORIZED_CATEGORY_ID:
+    if (
+        current_main_category_id is not None
+        and current_main_category_id != UNCATEGORIZED_CATEGORY_ID
+    ):
         return current_main_category_id
 
     name = (category_str or "").strip()
@@ -2047,18 +2213,27 @@ def search_events_by_string(db, string: str, limit: int):
 @db_session
 def search_places_by_name(db, name: str, limit: int):
     columns = Place.id, Place.place_name, Place.place_metro
-    places = db.query(*columns)\
-        .filter(Place.place_name.ilike(f"%{name}%")).limit(limit).all()
+    places = (
+        db.query(*columns).filter(Place.place_name.ilike(f"%{name}%")).limit(limit).all()
+    )
     result = [dict(zip([column.name for column in columns], place)) for place in places]
     return result
 
+
 ####––––––FINISH––––––####
+
 
 ### USER AUTH function ###
 ######–----START----–######
 @db_session
 def register_user(db, user_data: UserCreate):
-    db_user = db.query(DsnUser).filter(or_(DsnUser.nickname == user_data.nickname, DsnUser.email == user_data.email)).first()
+    db_user = (
+        db.query(DsnUser)
+        .filter(
+            or_(DsnUser.nickname == user_data.nickname, DsnUser.email == user_data.email)
+        )
+        .first()
+    )
     if db_user:
         return None  # User already exists
 

@@ -908,12 +908,24 @@ def auto_promote_by_score(
     # Embed promotion candidates first so the embedding dedup gate inside
     # auto_promote_high_score_events has vectors to compare (the nightly
     # embed_unembedded_events run happens later, at 05:45).
+    taste_pool_min = min_score - 10
     try:
         embed_unembedded_events(
-            limit=100, table="not_approved", min_score=min_score, only_future=True
+            limit=150, table="not_approved", min_score=taste_pool_min, only_future=True
         )
     except Exception as e:
         log.warning(f"Pre-promote embedding failed, gate will be partial: {e}")
+
+    # Fold the kNN taste component into candidate scores BEFORE the threshold
+    # selection: similar-to-posted events get lifted, similar-to-spam demoted,
+    # novel events (no close neighbours) keep their base score untouched.
+    try:
+        taste_stats = crud.apply_taste_to_promote_candidates(
+            pool_min_score=taste_pool_min
+        )
+        log.info(f"Taste rescoring before promote: {taste_stats}")
+    except Exception as e:
+        log.warning(f"Taste rescoring failed, promoting on base scores: {e}")
 
     promoted_ids = crud.auto_promote_high_score_events(
         min_score=min_score,
@@ -1391,7 +1403,7 @@ def batch_process_not_approved_events_optimized(
 
     # Split into batches
     for i in range(0, len(events_data), batch_size):
-        batch = events_data[i:i + batch_size]
+        batch = events_data[i : i + batch_size]
         stats["batches"] += 1
 
         log.info(f"Processing batch {stats['batches']}, size={len(batch)}")
