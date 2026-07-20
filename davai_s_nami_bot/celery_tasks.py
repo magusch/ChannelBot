@@ -30,7 +30,7 @@ from .helper.ai_helper import AIHelper
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
 from .helper.ai.query_analyzer import QueryAnalyzer
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
-from .helper.dsn_parameters import DSNParameters
+from .helper.dsn_parameters import DSNParameters, fetch_and_store_parameters
 from .helper.embeddings import (
     EmbeddingClient,
     build_embedding_input,
@@ -580,32 +580,21 @@ def full_update():
         log.warning(f"Failed to send dev message: {e}")
 
 
-@celery_app.task
-def update_parameters(parameters={}):
-    response_parameters = dsn_site_session.parameter_for_dsn_channel(parameters)
-    dsn_parameters = {}
-    for param in response_parameters.json():
-
-        value = param["value"]
-
-        full_value = str(param.get("full_value", "") or "").strip()
-        if full_value:
-            value += f"\n{full_value}"
-
-        if param["site"] not in dsn_parameters.keys():
-            dsn_parameters[param["site"]] = {
-                param["parameter_name"]: [value]
-            }
-        elif param['parameter_name'] not in dsn_parameters[param["site"]].keys():
-            dsn_parameters[param["site"]][param['parameter_name']] = [
-                value
-            ]
-        else:
-            dsn_parameters[param["site"]][param['parameter_name']].append(param["value"])
+@celery_app.task(
+    bind=True,
+    autoretry_for=(requests.RequestException, ValueError),
+    max_retries=3, retry_backoff=30, retry_backoff_max=300,
+)
+def update_parameters(self, parameters={}):
+    """Refresh AI prompts and other DSN parameters from Django into Redis.
 
 
-    for site, params in dsn_parameters.items():
-        redis_client.setex(f'parameters:{site}', 36000, json.dumps(params))
+
+    Parsing, TTL and the Redis write live in
+    ``dsn_parameters.fetch_and_store_parameters`` so the reactive synchronous
+    refresh in ``DSNParameters.read_param`` shares exactly the same logic.
+    """
+    fetch_and_store_parameters(parameters)
 
 
 @celery_app.task

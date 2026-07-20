@@ -1,4 +1,5 @@
 import logging
+import re
 
 from .ai.perplexity_helper import PerplexityHelper
 from .ai.open_ai_helper import OpenAIHelper
@@ -8,6 +9,29 @@ from .ai.gemini_helper import GeminiHelper
 from .dsn_parameters import DSNParameters
 
 log = logging.getLogger(__name__)
+
+_CLICHE_PATTERN = re.compile(
+    r"уникальн\w*|невероятн\w*|незабываем\w*|восхитительн\w*|потрясающ\w*",
+    re.IGNORECASE,
+)
+_IMPERATIVE_PATTERN = re.compile(
+    r"\bприготовьт\w*|\bприходи\w*|\bне пропусти\w*|\bпосети\w*|\bузнай\w*",
+    re.IGNORECASE,
+)
+
+
+def lint_prepared_text(text: str) -> list[str]:
+    """Return a list of violated-rule descriptions, or [] if text is clean."""
+    if not text:
+        return []
+    issues = []
+    cliches = set(m.group(0).lower() for m in _CLICHE_PATTERN.finditer(text))
+    if cliches:
+        issues.append(f"ad clichés: {sorted(cliches)}")
+    imperatives = set(m.group(0).lower() for m in _IMPERATIVE_PATTERN.finditer(text))
+    if imperatives:
+        issues.append(f"imperative mood: {sorted(imperatives)}")
+    return issues
 
 
 class AIHelper:
@@ -62,7 +86,15 @@ class AIHelper:
         return self.current_model.parse_ai_answer()
     
     def new_event_data(self, event):
-        return self.current_model.new_event_data(event)
+        ai_event = self.current_model.new_event_data(event)
+        issues = lint_prepared_text(ai_event.get('prepared_text'))
+        if issues:
+            model_name = self.models[self.current_model_index][0]
+            log.warning(
+                f"new_event_data: prepared_text for event_id={event.get('event_id')} "
+                f"(model={model_name}) violates prompt rules: {issues}"
+            )
+        return ai_event
 
     def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """Universal text generation using the current model.

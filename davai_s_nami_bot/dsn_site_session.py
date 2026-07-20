@@ -1,6 +1,10 @@
+import logging
 import os
 import requests
 
+log = logging.getLogger(__name__)
+
+_REQUEST_TIMEOUT = 15
 
 BASE_URL = os.environ.get("BASE_URL")
 CHECK_EVENT_STATUS_URL = BASE_URL + "events/check_event_status/"
@@ -13,10 +17,10 @@ PLACE_ADDRESS = BASE_URL + "place/place_address/"
 CSRFTOKEN = None
 SESSION_ID = None
 
-def create_session():
+def create_session(force: bool = False):
     global CSRFTOKEN
     global SESSION_ID
-    if CSRFTOKEN is not None and SESSION_ID is not None: return
+    if not force and CSRFTOKEN is not None and SESSION_ID is not None: return
 
     login_url = BASE_URL + "login/"
     login_data = dict(
@@ -26,10 +30,12 @@ def create_session():
     )
     session = requests.session()
 
-    response = session.get(login_url, headers=_headers())
+    response = session.get(login_url, headers=_headers(), timeout=_REQUEST_TIMEOUT)
     CSRFTOKEN = response.cookies.get('csrftoken') or session.cookies.get('csrftoken')
     login_data["csrfmiddlewaretoken"] = CSRFTOKEN
-    response = session.post(login_url, data=login_data, headers=_headers())
+    response = session.post(
+        login_url, data=login_data, headers=_headers(), timeout=_REQUEST_TIMEOUT
+    )
     SESSION_ID = response.cookies.get("sessionid") or session.cookies.get("sessionid")
     #assert response.ok
 
@@ -43,13 +49,43 @@ def _headers():
 
 
 def _current_session_get(url):
-    session = requests.session()
-    if CSRFTOKEN is None or SESSION_ID is None: create_session()
+    """GET with the cached Django session, retried once with a forced
+    re-login if the cached session turns out to be stale.
 
-    session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
-    session.cookies["sessionid"] = SESSION_ID
-    session.cookies["csrftoken"] = CSRFTOKEN
-    return session.get(url, headers=_headers())
+    CSRFTOKEN/SESSION_ID are module-level and only fetched once per process,
+    so if Django invalidates the session later (restart, secret rotation,
+    natural expiry) every subsequent call would otherwise keep sending the
+    dead cookies forever and silently get redirected to the login page —
+    parameter_for_dsn_channel would then fail .json() parsing on HTML, and
+    callers relying on it (e.g. DSNParameters) would fall back to defaults
+    with no visibility into why.
+    """
+    if CSRFTOKEN is None or SESSION_ID is None:
+        create_session()
+
+    for attempt in range(2):
+        session = requests.session()
+        session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
+        session.cookies["sessionid"] = SESSION_ID
+        session.cookies["csrftoken"] = CSRFTOKEN
+        response = session.get(url, headers=_headers(), timeout=_REQUEST_TIMEOUT)
+
+        if response.status_code not in (401, 403) and "login" not in response.url:
+            return response
+
+        if attempt == 0:
+            log.warning(
+                f"dsn_site_session: stale session detected on {url} "
+                f"(status={response.status_code}), forcing re-login and retrying once."
+            )
+            create_session(force=True)
+        else:
+            log.error(
+                f"dsn_site_session: {url} still unauthenticated after re-login."
+            )
+            return response
+
+    return response
 
 
 def check_event_status():

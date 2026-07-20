@@ -220,6 +220,7 @@ async def get_status(task_id: str, token: str = Depends(verify_token)):
     else:
         return {"status": result.state}
 
+
 @app.get("/", tags=["Health"], summary="Health check")
 async def index():
     return {'message': 'Hello. How are you?'}
@@ -342,10 +343,10 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
            summary="Event by ID",
            description="Retrieve an event by ID. Cached for 10 min.")
 async def get_valid_event_by_id(
-        event_id: int,
-        request: Request,
-        token: str = Depends(verify_token),
-    ):
+    event_id: int,
+    request: Request,
+    token: str = Depends(verify_token),
+):
     await log_api_request(request, {"ids": [event_id]})
 
     cached_data = redis_client.get(f"event_{event_id}")
@@ -365,9 +366,9 @@ async def get_valid_event_by_id(
            summary="List places",
            description="Retrieve places with metro filtering. Cached for 10 min.")
 async def get_places(
-        request: Request,
-        token: str = Depends(verify_token),
-    ):
+    request: Request,
+    token: str = Depends(verify_token),
+):
     data = await request.json()
     await log_api_request(request, data)
     cache_key = get_cache_key(data)
@@ -378,24 +379,21 @@ async def get_places(
     params = PlaceRequestParameters(**data)
     places = crud.get_places(params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(places, default=serialize_datetime))
-    result = {
-        "status": "success",
-        "result": {
-            'request': data,
-            'places': places
-        }
-    }
+    result = {"status": "success", "result": {'request': data, 'places': places}}
     return result
 
 
-@app.post("/api/get_place/{place_id}", tags=["Places (legacy)"],
-           summary="Place by ID",
-           description="Retrieve a place by ID. Cached for 10 min.")
+@app.post(
+    "/api/get_place/{place_id}",
+    tags=["Places (legacy)"],
+    summary="Place by ID",
+    description="Retrieve a place by ID. Cached for 10 min.",
+)
 async def get_place_by_id(
-        place_id: int,
-        request: Request,
-        token: str = Depends(verify_token),
-    ):
+    place_id: int,
+    request: Request,
+    token: str = Depends(verify_token),
+):
 
     await log_api_request(request, {'place_id': place_id})
     cached_data = redis_client.get(f"place_{place_id}")
@@ -407,13 +405,7 @@ async def get_place_by_id(
     params = PlaceRequestParameters(**data)
     places = crud.get_places(params)
     redis_client.setex(f"place_{place_id}", 60 * 10, json.dumps(places, default=serialize_datetime))
-    result = {
-        "status": "success",
-        "result": {
-            'request': data,
-            'places': places
-        }
-    }
+    result = {"status": "success", "result": {'request': data, 'places': places}}
     return result
 
 
@@ -453,7 +445,6 @@ async def upload_image_to_s3(request: Request = None, token: str = Depends(verif
     img_url = None
     if 'img_url' in data.keys():
         img_url = data['img_url']
-
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.upload_image_to_s3',
