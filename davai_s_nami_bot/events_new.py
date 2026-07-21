@@ -18,6 +18,7 @@ from escraper.parsers import (
     ALL_EVENT_TAGS,
     MTS,
     VK,
+    Afisha,
     ConfigScraper,
     Culture,
     Kassir,
@@ -408,6 +409,7 @@ culture_parser = Culture(use_proxy=_use_proxy("culture"))
 tg_parser = Telegram(use_proxy=_use_proxy("tg"))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy("cfg"))
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
+afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +443,7 @@ class ScrapeEvents:
     _tg_parser = tg_parser
     _cfg_parser = cfg_parser
     _kassir_parser = kassir_parser
+    _afisha_parser = afisha_parser
 
     PARSER_URLS = {
         "timepad.ru": _timepad_parser,
@@ -452,6 +455,7 @@ class ScrapeEvents:
         "culture.ru": _culture_parser,
         "t.me": _tg_parser,
         "kassir.ru": _kassir_parser,
+        "afisha.ru": _afisha_parser,
     }
 
     def __init__(self, session=None):
@@ -467,6 +471,7 @@ class ScrapeEvents:
             "tg": self.get_tg_posts,
             "cfg": self.get_cfg_events,
             "kassir": self.get_kassir_events,
+            "afisha": self.get_afisha_events,
         }
 
     # ------------------------------------------------------------------
@@ -518,6 +523,8 @@ class ScrapeEvents:
             events_list += self.run_scraper("mts", days)
         elif weekday == 2 or weekday == 5:
             events_list += self.run_scraper("culture", days)
+        elif weekday == 3 or weekday == 6:
+            events_list += self.run_scraper("afisha", days)
 
         return events_list
 
@@ -940,6 +947,41 @@ class ScrapeEvents:
         yield from _apply_filter(
             _iter_events(
                 self._kassir_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids,
+            ),
+            events_filter,
+        )
+
+    # ------------------------------------------------------------------
+    # Afisha.ru
+    # ------------------------------------------------------------------
+
+    def get_afisha_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        afisha_settings = settings.escraper_parameters.get("afisha", {})
+        days = int(afisha_settings.get("days", days))
+
+        afisha_city = afisha_settings.get("city", "spb")
+        afisha_cities = dsn_parameters.read_param("afisha").get("city")
+        if afisha_cities:
+            afisha_city = afisha_cities[0]
+
+        request_params = {
+            "city": afisha_city,
+            "date_from": date.today().strftime("%Y-%m-%d"),
+            "days": days,
+        }
+        afisha_categories = afisha_settings.get("categories")
+        if afisha_categories:
+            request_params["categories"] = afisha_categories
+
+        existed_event_ids = crud.get_event_id_by_prefix("AFISHA")
+        yield from _apply_filter(
+            _iter_events(
+                self._afisha_parser,
                 request_params=request_params,
                 tags=ALL_EVENT_TAGS,
                 existed_event_ids=existed_event_ids,

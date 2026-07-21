@@ -62,6 +62,11 @@
       "cfg": {
         "sites": [],
         "days": 10
+      },
+      "afisha": {
+        "city": "spb",
+        "categories": ["concerts", "theatre", "exhibitions", "standup", "festivals", "musicals", "party"],
+        "days": 30
       }
     },
     "scoring": {
@@ -69,10 +74,11 @@
       "weights": {
         "price": 15,
         "place": 15,
-        "category": 20,
+        "category": 10,
         "keywords": 15,
         "completeness": 15,
-        "source": 10
+        "source": 10,
+        "taste": 20
       },
       "repetition_penalty": -20,
       "price_ranges": [
@@ -92,7 +98,7 @@
       "source_scores": {
         "timepad": 70, "radario": 70, "tc": 65,
         "qt": 65, "mts": 60, "cltr": 60,
-        "cfg": 65, "other": 80,
+        "cfg": 65, "kassir": 60, "afisha": 55, "other": 80,
         "vk": 45, "tg": 40, "instagram": 40
       },
       "boost_keywords": [
@@ -121,7 +127,12 @@
       "date_scarcity_window_days": 10,
       "date_scarcity_min_days": 2,
       "date_scarcity_threshold": 5,
-      "date_scarcity_boost": 8
+      "date_scarcity_boost": 8,
+      "taste_k": 10,
+      "taste_min_neighbors": 3,
+      "taste_max_neighbor_distance": 0.3,
+      "embedding_dedup_max_distance": 0.08,
+      "embedding_dedup_lookup_days": 180
     }
   }
 }
