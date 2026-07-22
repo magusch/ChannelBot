@@ -32,17 +32,29 @@ _RESULT_SCHEMA = {
     "is_event_search": True,
     "semantic_query": "<очищенный запрос для семантического поиска>",
     "categories": ["<название категории>"],
+    "relative_range": "<today|tomorrow|this_weekend|next_weekend|this_week|next_week|none>",
     "date_from": "<YYYY-MM-DD или null>",
     "date_to": "<YYYY-MM-DD или null>",
     "price_max": "<число или null>",
     "free_only": False,
     "keywords": ["<ключевое слово>"],
+    "reply": "<короткий дружелюбный ответ, только если is_event_search=false>",
 }
+
+_RELATIVE_RANGES = frozenset(
+    {"today", "tomorrow", "this_weekend", "next_weekend", "this_week", "next_week"}
+)
 
 _SYSTEM_FALLBACK = (
     "Ты — анализатор поисковых запросов для афиши мероприятий Санкт-Петербурга. "
     "Пользователь пишет свободный текст, ты превращаешь его в структуру для "
     "семантического поиска. Возвращай только JSON, без пояснений."
+)
+
+_REPLY_SYSTEM = (
+    "Ты — дружелюбный помощник телеграм-афиши мероприятий Санкт-Петербурга для "
+    "молодой аудитории. Пиши живо, тепло и по-русски, коротко и по теме афиши. "
+    "Отвечай обычным текстом, без Markdown."
 )
 
 # --- Providers --------------------------------------------------------------
@@ -86,8 +98,14 @@ def _build_user_prompt(message, today, weekday_ru, has_history=False):
         "Выше — предыдущие сообщения этого же диалога. Если текущий запрос — "
         'уточнение к ним (например «подешевле», «а в субботу?», «только '
         'бесплатные»), пойми из контекста, о чём шла речь, и дополни/измени '
-        "фильтры соответственно. Если это новый самостоятельный запрос — "
-        "игнорируй предыдущие сообщения.\n\n"
+        "фильтры соответственно.\n"
+        "ВАЖНО: если пользователь просто просит другие/следующие варианты того "
+        'же («а ещё?», «что-то другое», «ещё варианты», «покажи ещё»), СОХРАНИ '
+        "ранее понятые фильтры без изменений (тот же relative_range/даты, ту же "
+        "категорию, ту же цену) — НЕ расширяй окно дат и НЕ сбрасывай категорию. "
+        "Меняй фильтр только если пользователь явно об этом просит (например «а "
+        'на следующей неделе», «подешевле»). Если это новый самостоятельный '
+        "запрос — игнорируй предыдущие сообщения.\n\n"
         if has_history
         else ""
     )
@@ -102,14 +120,26 @@ def _build_user_prompt(message, today, weekday_ru, has_history=False):
 
 Правила:
 - is_event_search: false, если это не запрос на поиск мероприятия (приветствие,
-  болтовня, бессмыслица). В этом случае остальные поля можно оставить пустыми.
+  болтовня, бессмыслица). В этом случае остальные поля можно оставить пустыми,
+  но заполни поле reply.
+- reply: заполняй ТОЛЬКО когда is_event_search=false — короткий (1-2 фразы),
+  живой, дружелюбный ответ на реплику пользователя, по теме афиши/мероприятий,
+  можно с 1 эмодзи, без Markdown. Не уводи разговор далеко от темы. Когда
+  is_event_search=true — оставь reply пустым (подводку к найденному система
+  сгенерит сама).
 - semantic_query: суть запроса для векторного поиска. Убери служебные слова про
   дату/цену/город, оставь тему и характер мероприятия. Можно слегка расширить
   синонимами ("джазовый концерт" → "джазовый концерт живая музыка").
 - categories: ноль или несколько названий ТОЛЬКО из этого списка: {categories}.
   Если категория не очевидна — верни пустой список.
-- date_from / date_to: диапазон дат (YYYY-MM-DD) или null. "в выходные" —
-  ближайшие суббота и воскресенье; "завтра" — date_from=date_to=завтра.
+- relative_range: если в запросе есть относительное выражение времени, верни
+  ОДИН из токенов: "today" (сегодня), "tomorrow" (завтра), "this_weekend"
+  (в выходные / на этих выходных), "next_weekend" (в следующие выходные),
+  "this_week" (на этой неделе), "next_week" (на следующей неделе). Конкретные
+  даты при этом НЕ вычисляй — их посчитает система. Если время указано явной
+  датой ("31 июля", "в августе") или не указано вовсе — верни "none".
+- date_from / date_to: заполняй ТОЛЬКО когда relative_range = "none" и в запросе
+  явные даты (YYYY-MM-DD); иначе оставь null.
 - price_max: верхний предел цены в рублях, если упомянут ("до 1000 рублей"),
   иначе null. free_only: true только если просят бесплатное.
 - keywords: важные слова из запроса (тема, жанр), которые стоит учесть.
@@ -194,10 +224,57 @@ class QueryAnalyzer:
             log.warning(f"QueryAnalyzer LLM call failed: {e}")
             # Degrade gracefully: treat the raw message as the semantic query.
             return self._normalize(
-                {"is_event_search": True, "semantic_query": message}, message
+                {"is_event_search": True, "semantic_query": message}, message, today
             )
 
-        return self._normalize(self._parse(raw), message)
+        return self._normalize(self._parse(raw), message, today)
+
+    def generate_reply(self, *, message, analysis, events, relaxed_notes=None):
+        """Warm 1–2 sentence intro to event-search results (a second LLM call).
+
+        Grounded in what was actually found (count, sample titles, date range,
+        price). Returns a plain string, or ``None`` on any LLM failure — the
+        caller (a Celery task with ``autoretry_for=(OpenAIError,)``) must not let
+        a reply-generation error retry the whole search, so we swallow it here.
+
+        ``relaxed_notes`` (list of RU phrases) — filters that were loosened to
+        find anything (e.g. "без ограничения по цене"); mentioned gently so the
+        user knows the results drifted from their exact ask.
+
+        Chit-chat turns (``is_event_search=false``) do NOT go through here — their
+        reply is produced inline by :meth:`analyze` to save a request.
+        """
+        summary = _summarize_events_for_reply(events, analysis)
+        relax_note = ""
+        if relaxed_notes:
+            relax_note = (
+                "\nПод точный запрос ничего не было, поэтому искали шире: "
+                + ", ".join(relaxed_notes)
+                + ". Мягко предупреди об этом."
+            )
+        prompt = (
+            f'Пользователь искал: "{message}".\n'
+            f"Результат поиска по афише: {summary}{relax_note}\n\n"
+            "Напиши короткую (1-2 предложения) живую дружелюбную подводку к этой "
+            "выдаче на русском. Опирайся на то, что реально нашлось (количество, "
+            "тему, даты, цену). Можно 1 эмодзи. Без Markdown, без списка событий "
+            "(его покажут отдельно). Если ничего не нашлось — мягко предложи "
+            "переформулировать запрос."
+        )
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                temperature=0.7,
+                messages=[
+                    {"role": "system", "content": _REPLY_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            reply = (completion.choices[0].message.content or "").strip()
+            return reply or None
+        except OpenAIError as e:
+            log.warning(f"QueryAnalyzer.generate_reply failed: {e}")
+            return None
 
     @staticmethod
     def _parse(raw):
@@ -213,9 +290,14 @@ class QueryAnalyzer:
             log.warning("QueryAnalyzer: failed to parse JSON, using empty result")
             return {}
 
-    def _normalize(self, data, original_message):
+    def _normalize(self, data, original_message, today):
         """Validate model output: clamp categories to known ids, parse ISO dates,
         coerce numeric/bool fields. Returns a dict safe to feed to the DB query.
+
+        ``today`` anchors relative date resolution: when the model returns a
+        symbolic ``relative_range`` token, we compute the concrete date window in
+        Python (it overrides any explicit dates), instead of trusting the model's
+        error-prone week arithmetic.
         """
         is_event_search = bool(data.get("is_event_search", True))
 
@@ -228,8 +310,11 @@ class QueryAnalyzer:
             if cid is not None and cid not in category_ids:
                 category_ids.append(cid)
 
-        date_from = _parse_iso_date(data.get("date_from"))
-        date_to = _parse_iso_date(data.get("date_to"))
+        range_key = str(data.get("relative_range") or "").strip().lower()
+        date_from, date_to = _resolve_relative_range(range_key, today)
+        if date_from is None and date_to is None:
+            date_from = _parse_iso_date(data.get("date_from"))
+            date_to = _parse_iso_date(data.get("date_to"))
 
         price_max = data.get("price_max")
         try:
@@ -243,6 +328,10 @@ class QueryAnalyzer:
             str(k).strip() for k in (data.get("keywords") or []) if str(k).strip()
         ]
 
+        # Chit-chat reply is only meaningful for non-search turns; for event
+        # searches the warm intro is generated later from the actual results.
+        reply = (data.get("reply") or "").strip() if not is_event_search else ""
+
         return {
             "is_event_search": is_event_search,
             "semantic_query": semantic_query,
@@ -252,6 +341,7 @@ class QueryAnalyzer:
             "price_max": price_max,
             "free_only": bool(data.get("free_only", False)),
             "keywords": keywords,
+            "reply": reply or None,
         }
 
 
@@ -291,6 +381,116 @@ def _history_to_messages(history):
         if content:
             messages.append({"role": role, "content": content})
     return messages
+
+
+def _summarize_events_for_reply(events, analysis):
+    """Compact, LLM-friendly summary of search results for reply generation.
+
+    Kept short (count, up to 5 titles, human date range, price hint) so the
+    reply call stays cheap. ``events`` are the dicts returned by
+    ``crud.search_events_by_embedding`` (dates are ISO strings).
+    """
+    if not events:
+        return "ничего не найдено (0 событий)."
+
+    titles = [str(e.get("title") or "").strip() for e in events if e.get("title")]
+    titles = titles[:5]
+    date_human = format_date_range_ru(analysis.get("date_from"), analysis.get("date_to"))
+
+    prices = [e.get("price_int") for e in events if isinstance(e.get("price_int"), int)]
+    if prices and all(p == 0 for p in prices):
+        price_hint = "все бесплатные"
+    elif prices and min(prices) == 0:
+        price_hint = "есть бесплатные"
+    else:
+        price_hint = None
+
+    parts = [f"найдено {len(events)} событий"]
+    if date_human:
+        parts.append(f"даты: {date_human}")
+    if price_hint:
+        parts.append(price_hint)
+    summary = "; ".join(parts) + "."
+    if titles:
+        summary += " Примеры: " + "; ".join(titles) + "."
+    return summary
+
+
+def _resolve_relative_range(range_key, today):
+    """Symbolic relative-date token → (date_from, date_to), anchored on ``today``.
+
+    Returns ``(None, None)`` for ``"none"``/unknown tokens so the caller can fall
+    back to explicit model-supplied dates. Weekday: Mon=0 … Sun=6.
+    """
+    if range_key not in _RELATIVE_RANGES:
+        return None, None
+
+    day = datetime.timedelta(days=1)
+    weekday = today.weekday()
+
+    if range_key == "today":
+        return today, today
+    if range_key == "tomorrow":
+        return today + day, today + day
+
+    # Saturday of the *current* weekend: upcoming Sat on weekdays; the ongoing
+    # weekend's Sat when today is already Sat/Sun.
+    if weekday >= 5:  # Sat or Sun
+        this_saturday = today - datetime.timedelta(days=weekday - 5)
+    else:
+        this_saturday = today + datetime.timedelta(days=5 - weekday)
+
+    if range_key == "this_weekend":
+        return this_saturday, this_saturday + day
+    if range_key == "next_weekend":
+        next_saturday = this_saturday + datetime.timedelta(days=7)
+        return next_saturday, next_saturday + day
+    if range_key == "this_week":
+        sunday = today + datetime.timedelta(days=(6 - weekday) % 7)
+        return today, sunday
+    if range_key == "next_week":
+        next_monday = today + datetime.timedelta(days=7 - weekday)
+        return next_monday, next_monday + datetime.timedelta(days=6)
+
+    return None, None
+
+
+_MONTHS_RU_GEN = [
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+]
+
+
+def format_date_range_ru(date_from, date_to):
+    """Human-readable Russian date range, e.g. "25–26 июля" / "31 июля".
+
+    Returns None when no dates are set. Collapses a same-day range to one date
+    and shares the month when both dates fall in it ("25–26 июля").
+    """
+    if not date_from and not date_to:
+        return None
+    if date_from and date_to:
+        if date_from == date_to:
+            return f"{date_from.day} {_MONTHS_RU_GEN[date_from.month - 1]}"
+        if date_from.month == date_to.month:
+            return f"{date_from.day}–{date_to.day} {_MONTHS_RU_GEN[date_to.month - 1]}"
+        return (
+            f"{date_from.day} {_MONTHS_RU_GEN[date_from.month - 1]} – "
+            f"{date_to.day} {_MONTHS_RU_GEN[date_to.month - 1]}"
+        )
+    single = date_from or date_to
+    prefix = "с" if date_from else "до"
+    return f"{prefix} {single.day} {_MONTHS_RU_GEN[single.month - 1]}"
 
 
 def _parse_iso_date(value):

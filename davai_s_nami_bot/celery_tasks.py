@@ -28,7 +28,7 @@ from .helper.ai_helper import AIHelper
 # from .helper.claude_event_moderator import ClaudeEventModerator as EventModerator
 # from .helper.ai.perplexity_event_moderator import PerplexityEventModerator as EventModerator
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
-from .helper.ai.query_analyzer import QueryAnalyzer
+from .helper.ai.query_analyzer import QueryAnalyzer, format_date_range_ru
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
 from .helper.dsn_parameters import DSNParameters, fetch_and_store_parameters
 from .helper.embeddings import (
@@ -799,6 +799,31 @@ _WEEKDAYS_RU = [
 ]
 
 
+_DEFAULT_SEMANTIC_MAX_DISTANCE = 1.0
+
+
+def _relaxation_notes(base, winner):
+    """Human-readable (RU) diff of how ``winner`` filters loosened ``base``.
+
+    Returns an empty list when nothing was relaxed (the strict search hit).
+    """
+    notes = []
+    price_relaxed = (base["free_only"] and not winner["free_only"]) or (
+        base["price_max"] is not None and winner["price_max"] is None
+    )
+    if price_relaxed:
+        notes.append("без ограничения по цене")
+    if (base["date_from"] or base["date_to"]) and not (
+        winner["date_from"] or winner["date_to"]
+    ):
+        notes.append("по ближайшим датам")
+    elif base["date_to"] and winner["date_to"] and winner["date_to"] > base["date_to"]:
+        notes.append("с расширенными датами")
+    if base["category_ids"] and not winner["category_ids"]:
+        notes.append("по всем категориям")
+    return notes
+
+
 @celery_app.task(
     bind=True,
     autoretry_for=(OpenAIError,),
@@ -810,15 +835,18 @@ _WEEKDAYS_RU = [
 def semantic_event_search(self, message, limit=5, max_distance=None, history=None):
     """Natural-language event search: LLM intent → embedding → filtered vector search.
 
-    1. QueryAnalyzer (Gemini) turns the free-text message into a semantic query
-       plus hard filters (dates/categories/price), resolving relative dates
-       against today's MSK date.
+    1. QueryAnalyzer (OpenAI gpt-4o-mini by default) turns the free-text message
+       into a semantic query plus hard filters (dates/categories/price). Relative
+       dates are resolved deterministically in Python against today's MSK date.
     2. EmbeddingClient embeds the semantic query (same provider events use).
     3. crud.search_events_by_embedding ranks publicly-valid events by cosine
        distance with those filters applied.
+    4. A second cheap LLM call writes a warm ``reply`` grounded in the results
+       (chit-chat turns get their reply inline from step 1 instead).
 
-    rate_limit/retry mirror ai_update_event because Gemini free tier is tight.
-    Result is JSON-safe (crud returns ISO date strings) for the Redis backend.
+    rate_limit/retry mirror ai_update_event because embeddings still run on
+    Gemini's tight free tier. Result is JSON-safe (crud returns ISO date
+    strings) for the Redis backend.
     """
     msk_now = get_msk_today()
     today = msk_now.date()
@@ -834,6 +862,7 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
     query_info = {
         "message": message,
         "semantic_query": analysis["semantic_query"],
+        "date_human": format_date_range_ru(analysis["date_from"], analysis["date_to"]),
         "filters": {
             "category_ids": analysis["category_ids"],
             "date_from": (
@@ -848,42 +877,109 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
 
     if not analysis["is_event_search"]:
         log.info(f"semantic_event_search: not an event search ({message!r})")
+        # Chit-chat reply came inline from the analyzer — no extra LLM call.
         return {
             "status": "not_event_search",
             "query": query_info,
+            "reply": analysis.get("reply"),
             "result": {"events": [], "total_count": 0, "request": {}},
         }
 
+    # Guard direct callers that omit max_distance; the bot already sends ~1.0.
+    if max_distance is None:
+        max_distance = _DEFAULT_SEMANTIC_MAX_DISTANCE
+
     vector = EmbeddingClient().embed_batch([analysis["semantic_query"]])[0]
+    model_label = current_embedding_model_label()
 
-    # Make the date range inclusive of whole days: from_date at 00:00, to_date at
-    # end of day, in MSK (UTC+3). The DB columns are tz-aware UTC.
+    # The date range is made inclusive of whole days: from_date at 00:00, to_date
+    # at end of day, in MSK (UTC+3). The DB columns are tz-aware UTC.
     msk_tz = timezone(timedelta(hours=3))
-    date_from = (
-        datetime.combine(analysis["date_from"], datetime.min.time(), tzinfo=msk_tz)
-        if analysis["date_from"]
-        else None
+
+    def _run(filters):
+        date_from = (
+            datetime.combine(filters["date_from"], datetime.min.time(), tzinfo=msk_tz)
+            if filters["date_from"]
+            else None
+        )
+        date_to = (
+            datetime.combine(filters["date_to"], datetime.max.time(), tzinfo=msk_tz)
+            if filters["date_to"]
+            else None
+        )
+        return crud.search_events_by_embedding(
+            vector,
+            model_label,
+            date_from=date_from,
+            date_to=date_to,
+            category_ids=filters["category_ids"],
+            price_max=filters["price_max"],
+            free_only=filters["free_only"],
+            limit=limit,
+            max_distance=max_distance,
+            keywords=analysis["keywords"],
+        )
+
+    base = {
+        "category_ids": analysis["category_ids"],
+        "price_max": analysis["price_max"],
+        "free_only": analysis["free_only"],
+        "date_from": analysis["date_from"],
+        "date_to": analysis["date_to"],
+    }
+    attempts = [dict(base)]
+    cur = dict(base)
+    if cur["free_only"] or cur["price_max"] is not None:
+        cur = {**cur, "free_only": False, "price_max": None}
+        attempts.append(dict(cur))
+    if cur["date_from"] or cur["date_to"]:
+        window_end = cur["date_to"] or cur["date_from"]
+        cur = {**cur, "date_to": window_end + timedelta(days=14)}
+        attempts.append(dict(cur))
+        cur = {**cur, "date_from": None, "date_to": None}
+        attempts.append(dict(cur))
+    if cur["category_ids"]:
+        cur = {**cur, "category_ids": []}
+        attempts.append(dict(cur))
+
+    result, winner = None, attempts[0]
+    for winner in attempts:
+        result = _run(winner)
+        if result["total_count"] > 0:
+            break
+
+    relaxed_notes = _relaxation_notes(base, winner)
+
+    query_info["relaxed"] = relaxed_notes
+    query_info["date_human"] = format_date_range_ru(
+        winner["date_from"], winner["date_to"]
     )
-    date_to = (
-        datetime.combine(analysis["date_to"], datetime.max.time(), tzinfo=msk_tz)
-        if analysis["date_to"]
-        else None
+    query_info["filters"].update(
+        {
+            "category_ids": winner["category_ids"],
+            "price_max": winner["price_max"],
+            "free_only": winner["free_only"],
+            "date_from": (
+                winner["date_from"].isoformat() if winner["date_from"] else None
+            ),
+            "date_to": winner["date_to"].isoformat() if winner["date_to"] else None,
+        }
     )
 
-    result = crud.search_events_by_embedding(
-        vector,
-        current_embedding_model_label(),
-        date_from=date_from,
-        date_to=date_to,
-        category_ids=analysis["category_ids"],
-        price_max=analysis["price_max"],
-        free_only=analysis["free_only"],
-        limit=limit,
-        max_distance=max_distance,
+    log.info(
+        f"semantic_event_search: {result['total_count']} events for {message!r}"
+        + (f" (relaxed: {relaxed_notes})" if relaxed_notes else "")
     )
 
-    log.info(f"semantic_event_search: {result['total_count']} events for {message!r}")
-    return {"status": "success", "query": query_info, "result": result}
+    # Warm intro grounded in the actual results (second, cheap mini-model call;
+    # returns None on failure so the bot falls back to its own header).
+    reply = analyzer.generate_reply(
+        message=message,
+        analysis=analysis,
+        events=result["events"],
+        relaxed_notes=relaxed_notes,
+    )
+    return {"status": "success", "query": query_info, "reply": reply, "result": result}
 
 
 @celery_app.task

@@ -252,11 +252,60 @@ def find_similar_events(db, event_id: int, limit: int = 10):
     }
 
 
+def _semantic_rerank_config():
+    """Re-rank weights from ``features.scoring.semantic_rerank`` (+ defaults).
+
+    Weights need not sum to 1 — they define a ranking score, not a probability.
+    """
+    scoring_cfg = getattr(settings, "scoring", {}) or {}
+    rr = scoring_cfg.get("semantic_rerank", {}) or {}
+    return {
+        "w_semantic": rr.get("w_semantic", 0.6),
+        "w_quality": rr.get("w_quality", 0.25),
+        "w_date": rr.get("w_date", 0.15),
+        "w_keyword": rr.get("w_keyword", 0.1),
+        "pool_multiplier": rr.get("pool_multiplier", 4),
+        "date_halflife_days": rr.get("date_halflife_days", 14),
+    }
+
+
+def _keyword_hit(title, keywords):
+    """True if any keyword (>=3 chars) appears as a substring of the title."""
+    if not title or not keywords:
+        return False
+    low = title.lower()
+    return any(len(k) >= 3 and k.lower() in low for k in keywords)
+
+
+def _semantic_relevance(dist, score, from_date, title, keywords, now, cfg):
+    """Blended relevance for re-ranking: semantic + quality + date + keyword.
+
+    Pure function (no ORM/DB) so it's unit-testable. Weights come from ``cfg``
+    (see :func:`_semantic_rerank_config`); they need not sum to 1.
+    """
+    semantic = max(0.0, 1.0 - dist / 2.0)  # cosine 0..2 → closeness 1..0
+    quality = min(max((score or 0) / 100.0, 0.0), 1.0)  # score 0..100 → 0..1
+    if from_date is not None:
+        halflife = max(1, cfg["date_halflife_days"])
+        days = max(0, (from_date - now).days)  # today→0, decays after
+        date_prox = 1.0 / (1.0 + days / halflife)
+    else:
+        date_prox = 0.0
+    keyword = 1.0 if _keyword_hit(title, keywords) else 0.0
+    return (
+        cfg["w_semantic"] * semantic
+        + cfg["w_quality"] * quality
+        + cfg["w_date"] * date_prox
+        + cfg["w_keyword"] * keyword
+    )
+
+
 @db_session
 def search_events_by_embedding(
     db, query_vector, embedding_model, *,
     date_from=None, date_to=None, category_ids=None,
     price_max=None, free_only=False, limit=10, max_distance=None,
+    keywords=None, rerank=True,
 ):
     """Vector search over Events2Posts with hard filters layered on top.
 
@@ -275,6 +324,15 @@ def search_events_by_embedding(
 
     ``max_distance`` (optional) drops the trailing "nearest garbage" — an
     embedding always returns *something*, so a soft cutoff keeps results honest.
+
+    Re-ranking (``rerank=True``, default): instead of returning the ``limit``
+    nearest vectors, we pull a larger candidate pool (``pool_multiplier × limit``)
+    within the same filters and re-order it by a blended relevance score —
+    semantic closeness + event quality (``score``) + date proximity (sooner is
+    livelier) + a keyword-in-title bonus. This surfaces a livelier set than raw
+    cosine order. ``keywords`` feeds only that bonus; it never filters, so the
+    result contract is unchanged. Weights come from
+    ``features.scoring.semantic_rerank``.
 
     Datetimes in the returned event dicts are ISO strings: the caller is a Celery
     task whose result is JSON-serialized into the Redis backend.
@@ -310,16 +368,33 @@ def search_events_by_embedding(
     if max_distance is not None:
         query = query.filter(distance <= max_distance)
 
-    rows = query.order_by(distance.asc()).limit(limit).all()
+    cfg = _semantic_rerank_config()
+    fetch_n = max(limit, limit * cfg["pool_multiplier"]) if rerank else limit
+    rows = query.order_by(distance.asc()).limit(fetch_n).all()
+
+    now = datetime.now(timezone.utc)
+    scored = []
+    for event, dist in rows:
+        dist = float(dist)
+        relevance = _semantic_relevance(
+            dist, event.score, event.from_date, event.title, keywords, now, cfg
+        )
+        scored.append((event, dist, relevance))
+
+    if rerank:
+        # Higher relevance first; nearer vector breaks ties.
+        scored.sort(key=lambda r: (-r[2], r[1]))
+    scored = scored[:limit]
 
     default_fields = _default_event_fields(Events2Posts)
     events = []
-    for event, dist in rows:
+    for event, dist, relevance in scored:
         event_data = {}
         for field in default_fields:
             value = getattr(event, field)
             event_data[field] = value.isoformat() if isinstance(value, datetime) else value
-        event_data['distance'] = float(dist)
+        event_data['distance'] = dist
+        event_data['relevance'] = round(relevance, 4)
         if event.place:
             event_data['address'] = (
                 f"{event.place.place_name}, {event.place.place_address}, "
@@ -345,6 +420,7 @@ def search_events_by_embedding(
             'price_max': price_max,
             'free_only': free_only,
             'max_distance': max_distance,
+            'rerank': rerank,
         },
     }
 
