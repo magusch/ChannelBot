@@ -38,6 +38,8 @@ _RESULT_SCHEMA = {
     "price_max": "<число или null>",
     "free_only": False,
     "keywords": ["<ключевое слово>"],
+    "location": "<название места/района или null>",
+    "location_scope": "<venue|area>",
     "reply": "<короткий дружелюбный ответ, только если is_event_search=false>",
 }
 
@@ -45,17 +47,44 @@ _RELATIVE_RANGES = frozenset(
     {"today", "tomorrow", "this_weekend", "next_weekend", "this_week", "next_week"}
 )
 
-_SYSTEM_FALLBACK = (
-    "Ты — анализатор поисковых запросов для афиши мероприятий Санкт-Петербурга. "
-    "Пользователь пишет свободный текст, ты превращаешь его в структуру для "
-    "семантического поиска. Возвращай только JSON, без пояснений."
-)
 
-_REPLY_SYSTEM = (
-    "Ты — дружелюбный помощник телеграм-афиши мероприятий Санкт-Петербурга для "
-    "молодой аудитории. Пиши живо, тепло и по-русски, коротко и по теме афиши. "
-    "Отвечай обычным текстом, без Markdown."
-)
+def _city_name(case="nom"):
+    """Configured city name in the given grammatical case (from settings).
+
+    ``case`` — "nom" | "gen" | "loc". Defaults to Санкт-Петербург forms if
+    settings can't be read.
+    """
+    attr = {"nom": "city_name", "gen": "city_name_gen", "loc": "city_name_loc"}[case]
+    fallback = {
+        "nom": "Санкт-Петербург",
+        "gen": "Санкт-Петербурга",
+        "loc": "Санкт-Петербурге",
+    }
+    try:
+        from ...settings.settings_loader import settings
+
+        return getattr(settings, attr, None) or fallback[case]
+    except Exception:
+        return fallback[case]
+
+
+def _system_fallback():
+    """Analyzer system prompt used when the Redis param is unset (city-aware)."""
+    return (
+        f"Ты — анализатор поисковых запросов для афиши мероприятий {_city_name('gen')}. "
+        "Пользователь пишет свободный текст, ты превращаешь его в структуру для "
+        "семантического поиска. Возвращай только JSON, без пояснений."
+    )
+
+
+def _reply_system():
+    """System prompt for warm/chit-chat reply generation (city-aware)."""
+    return (
+        f"Ты — дружелюбный помощник телеграм-афиши мероприятий {_city_name('gen')} "
+        "для молодой аудитории. Пиши живо, тепло и по-русски, коротко и по теме "
+        "афиши. Отвечай обычным текстом, без Markdown."
+    )
+
 
 # --- Providers --------------------------------------------------------------
 # Both reachable through the OpenAI SDK; Gemini via its OpenAI-compatible endpoint.
@@ -143,6 +172,14 @@ def _build_user_prompt(message, today, weekday_ru, has_history=False):
 - price_max: верхний предел цены в рублях, если упомянут ("до 1000 рублей"),
   иначе null. free_only: true только если просят бесплатное.
 - keywords: важные слова из запроса (тема, жанр), которые стоит учесть.
+- location: если упомянуто конкретное место, площадка, пространство, район или
+  станция метро ("в Севкабеле", "в Новой Голландии", "у Спортивной", "в центре")
+  — верни это название как есть (без предлогов), иначе null. Название места НЕ
+  дублируй в semantic_query.
+- location_scope: "venue" — если ищут в самом месте ("в Севкабеле", "в Новой
+  Голландии"); "area" — если ищут ВОКРУГ/рядом/в районе ("в районе Новой
+  Голландии", "рядом с Сенной", "около Спортивной", "в центре"). Если location
+  = null — верни "venue".
 """
 
 
@@ -176,7 +213,7 @@ class QueryAnalyzer:
         # hardcoded default when nothing is seeded.
         self.system_message = (
             dsn_param.site_parameters("query_analyzer_system_message", last=1)
-            or _SYSTEM_FALLBACK
+            or _system_fallback()
         )
         # Model: explicit arg → settings.json → chosen provider's default. The
         # settings model only applies to its own provider, so overriding the
@@ -266,7 +303,7 @@ class QueryAnalyzer:
                 model=self.model,
                 temperature=0.7,
                 messages=[
-                    {"role": "system", "content": _REPLY_SYSTEM},
+                    {"role": "system", "content": _reply_system()},
                     {"role": "user", "content": prompt},
                 ],
             )
@@ -332,6 +369,11 @@ class QueryAnalyzer:
         # searches the warm intro is generated later from the actual results.
         reply = (data.get("reply") or "").strip() if not is_event_search else ""
 
+        location = (data.get("location") or "").strip() or None
+        location_scope = str(data.get("location_scope") or "venue").strip().lower()
+        if location_scope not in ("venue", "area"):
+            location_scope = "venue"
+
         return {
             "is_event_search": is_event_search,
             "semantic_query": semantic_query,
@@ -341,6 +383,8 @@ class QueryAnalyzer:
             "price_max": price_max,
             "free_only": bool(data.get("free_only", False)),
             "keywords": keywords,
+            "location": location,
+            "location_scope": location_scope,
             "reply": reply or None,
         }
 

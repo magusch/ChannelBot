@@ -5,17 +5,27 @@ from typing import List, Optional
 
 class EventRequestParameters(BaseModel):
     """Event request parameters with filters, pagination, and sorting."""
-    date_from: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Period start (defaults to now)")
+
+    date_from: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Period start (defaults to now)",
+    )
     date_to: Optional[datetime] = Field(None, description="Period end")
     category: Optional[List[int]] = Field(None, description="Filter by category IDs")
     place: Optional[List[int]] = Field(None, description="Filter by place IDs")
-    fields: Optional[List[str]] = Field(None, description="List of fields to return (defaults to all)")
+    fields: Optional[List[str]] = Field(
+        None, description="List of fields to return (defaults to all)"
+    )
     limit: Optional[int] = Field(20, description="Number of results per page")
     page: Optional[int] = Field(None, description="Page number")
     ids: Optional[List[int]] = Field(None, description="Retrieve specific events by ID")
-    status: Optional[str] = Field(None, description="Filter by status: ReadyToPost, Posted")
+    status: Optional[str] = Field(
+        None, description="Filter by status: ReadyToPost, Posted"
+    )
     price_max: Optional[int] = Field(None, description="Maximum price (RUB)")
-    order_by: Optional[str] = Field('date-asc', description="Sorting: date-asc, date-desc")
+    order_by: Optional[str] = Field(
+        'date-asc', description="Sorting: date-asc, date-desc"
+    )
 
     def with_defaults(self):
         return self
@@ -29,9 +39,24 @@ class EventRequestParameters(BaseModel):
             'fields': self.fields,
             'limit': self.limit,
             'page': self.page,
-            'ids':  self.ids,
-            'status': self.status
+            'ids': self.ids,
+            'status': self.status,
         }
+
+
+class EventFeedParameters(EventRequestParameters):
+    """Parameters for the diversified event feed (POST /api/events/feed/).
+
+    Same filters as EventRequestParameters, plus diversity caps. The pool is
+    always ranked by score desc; ``order_by`` is ignored here.
+    """
+
+    per_category: Optional[int] = Field(
+        None, description="Max events per category (None = no cap)"
+    )
+    per_day: Optional[int] = Field(
+        None, description="Max events per calendar day (None = auto: ceil(limit/days))"
+    )
 
 
 class EventOut(BaseModel):
@@ -54,6 +79,7 @@ class EventOut(BaseModel):
 
 class PlaceRequestParameters(BaseModel):
     """Place request parameters."""
+
     metro: Optional[str] = Field(None, description="Filter by metro")
     fields: Optional[List[str]] = Field(None, description="List of fields to return")
     limit: Optional[int] = Field(20, description="Number of results per page")
@@ -97,7 +123,7 @@ class UserLogin(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    #password: str = Field(..., min_length=8)
+    # password: str = Field(..., min_length=8)
     full_name: Optional[str] = None
     weekend_guide: Optional[bool] = False
 

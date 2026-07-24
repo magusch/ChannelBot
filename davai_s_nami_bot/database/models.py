@@ -45,9 +45,14 @@ class Place(Base):
     # scraper's guessed category (e.g. a standup club tagged 'Стэндап' fixes
     # shows that escraper labels 'Концерты'). Empty/NULL = no override.
     category = Column(String(500), nullable=True)
+    main_place_id = Column(Integer, ForeignKey('place_place.id'), nullable=True)
+    district_id = Column(Integer, ForeignKey('place_district.id'), nullable=True)
+    district_raw = Column(String, nullable=False, default='')
     events = relationship("Events2Posts", back_populates="place")
     keywords = relationship("PlaceKeyword", back_populates="place")
     schedules = relationship("PlaceSchedule", back_populates="place")
+    main_place = relationship("Place", remote_side=[id], backref="children")
+    district = relationship("District")
 
     def get_schedule_str(self):
         schedules = sorted(
@@ -116,6 +121,38 @@ class PlaceKeyword(Base):
 
     def __repr__(self):
         return f"<PlaceKeyword keyword={self.place_keyword!r} place_id={self.place_id}>"
+
+
+class District(Base):
+    """Neighborhood/area, the source of truth for location (city-agnostic, unlike
+    metro). ``parent_id`` gives район → округ/область nesting. Managed on the
+    Django side; the bot only reads it for semantic-search location resolution."""
+
+    __tablename__ = 'place_district'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    place_city = Column(String, nullable=False)
+    parent_id = Column(Integer, ForeignKey('place_district.id'), nullable=True)
+
+    keywords = relationship("DistrictKeyword", back_populates="district")
+    parent = relationship("District", remote_side=[id], backref="children")
+
+    def __repr__(self):
+        return f"<District {self.name!r} city={self.place_city!r}>"
+
+
+class DistrictKeyword(Base):
+    __tablename__ = 'place_districtkeyword'
+
+    id = Column(Integer, primary_key=True, index=True)
+    district_keyword = Column(String, nullable=False)
+    district_id = Column(Integer, ForeignKey('place_district.id'), nullable=False)
+
+    district = relationship("District", back_populates="keywords")
+
+    def __repr__(self):
+        return f"<DistrictKeyword {self.district_keyword!r} district_id={self.district_id}>"
 
 
 class Events2Posts(Base):

@@ -1,35 +1,38 @@
 import json
+import logging
+import math
 import random
-
-from sqlalchemy import func, asc, desc, exc, or_, and_
-from sqlalchemy.orm import joinedload
-
-from .database.models import (
-    Events2Posts,
-    EventsNotApproved,
-    Exhibitions,
-    DsnBotEvents,
-    Place,
-    PlaceKeyword,
-    ApiRequestLog,
-    DsnBotUserEvents,
-    DsnUser,
-    DsnUserEvent,
-    Category,
-    SubCategory,
-)
-from .database.database_orm import db_session, orm_to_dict
-
-from .pydantic_models import UserCreate, UserUpdate
-from .core.security import get_password_hash, verify_password
-
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from sqlalchemy import and_, asc, desc, exc, func, or_
+from sqlalchemy.orm import joinedload
+
+from .adaptive_scoring import load_from_redis, merge_adaptive_config
+from .core.security import get_password_hash, verify_password
+from .database.database_orm import db_session, orm_to_dict
+from .database.models import (
+    ApiRequestLog,
+    Category,
+    District,
+    DistrictKeyword,
+    DsnBotEvents,
+    DsnBotUserEvents,
+    DsnUser,
+    DsnUserEvent,
+    Events2Posts,
+    EventsNotApproved,
+    Exhibitions,
+    Place,
+    PlaceKeyword,
+    SubCategory,
+)
 from .events import Event
-from .scoring import calculate_score, resolve_category_id, CATEGORY_ID_TO_NAME
-from .adaptive_scoring import merge_adaptive_config, load_from_redis
+from .pydantic_models import UserCreate, UserUpdate
+from .scoring import CATEGORY_ID_TO_NAME, calculate_score, resolve_category_id
 from .settings.settings_loader import settings
+
+log = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
     "events_events2post": Events2Posts,
@@ -57,6 +60,13 @@ def _default_event_fields(model):
 
 
 def order_maping(model, order_by):
+    """Resolve an ``order_by`` string ("field-direction") to ORDER BY clauses.
+
+    Returns a list of clauses (primary first) so callers can pass it as
+    ``.order_by(*clauses)``. For Events2Posts a deterministic tie-break is
+    appended: date sorts fall back to ``score DESC`` (best first on the same
+    day), all other sorts fall back to ``from_date ASC``.
+    """
     if model == Place:
         order_mapping = {
             'title': Place.place_name,
@@ -66,35 +76,44 @@ def order_maping(model, order_by):
         try:
             field, direction = order_by.split('-')
             column = order_mapping.get(field, model.id)
-            sort_order = asc(column) if direction == 'asc' else desc(column)
+            primary = asc(column) if direction == 'asc' else desc(column)
         except ValueError:
-            sort_order = asc(model.id)
+            primary = asc(model.id)
+        return [primary]
     elif model == Events2Posts:
         order_mapping = {
             'title': Events2Posts.title,
             'date': Events2Posts.to_date,
             'price': Events2Posts.price_int,
             'ad': Events2Posts.price,
+            'score': Events2Posts.score,
             'id': Events2Posts.id,
         }
 
         try:
             field, direction = order_by.split('-')
             column = order_mapping.get(field, model.to_date)
-            sort_order = asc(column) if direction == 'asc' else desc(column)
+            primary = asc(column) if direction == 'asc' else desc(column)
         except ValueError:
-            sort_order = asc(model.id)
+            field = 'date'
+            primary = asc(model.to_date)
+
+        # Deterministic tie-break so equal primaries keep a stable order.
+        if field == 'date':
+            tiebreak = desc(Events2Posts.score).nullslast()
+        else:
+            tiebreak = asc(Events2Posts.from_date)
+        return [primary, tiebreak]
     else:
-        sort_order = asc(model.id)
-
-    return sort_order
+        return [asc(model.id)]
 
 
-@db_session
-def get_events_by_date_and_category(db, params):
-    sort_order = order_maping(Events2Posts, params.order_by)
-    query = db.query(Events2Posts).options(joinedload(Events2Posts.place)).order_by(sort_order)
+def _apply_event_filters(query, params):
+    """Apply the shared valid-events filters (status/ids/date/category/place/price).
 
+    Returns ``(query, dict_requests)``. Used by both the plain listing and the
+    diverse feed so the publicly-valid predicate stays in one place.
+    """
     if params.status != 'all':
         query = query.filter(
             Events2Posts.status.in_(('Posted', 'OnlyApi'))
@@ -110,7 +129,9 @@ def get_events_by_date_and_category(db, params):
         dict_requests['date_from'] = params.date_from
 
         if params.date_to:
-            query = query.filter(func.date(Events2Posts.from_date) <= params.date_to.date())
+            query = query.filter(
+                func.date(Events2Posts.from_date) <= params.date_to.date()
+            )
             dict_requests['date_to'] = params.date_to
 
         if params.category:
@@ -118,9 +139,13 @@ def get_events_by_date_and_category(db, params):
             negative_categories = [abs(c) for c in params.category if c < 0]
 
             if positive_categories:
-                query = query.filter(Events2Posts.main_category_id.in_(positive_categories))
+                query = query.filter(
+                    Events2Posts.main_category_id.in_(positive_categories)
+                )
             elif negative_categories:
-                query = query.filter(~Events2Posts.main_category_id.in_(negative_categories))
+                query = query.filter(
+                    ~Events2Posts.main_category_id.in_(negative_categories)
+                )
 
             dict_requests['category'] = params.category
 
@@ -139,6 +164,36 @@ def get_events_by_date_and_category(db, params):
             query = query.filter(Events2Posts.price_int <= params.price_max)
             dict_requests['price_max'] = params.price_max
 
+    return query, dict_requests
+
+
+def _event_to_dict(event, fields):
+    """Serialize an Events2Posts row to the API dict shape (with place block)."""
+    event_data = {field: getattr(event, field) for field in fields}
+    if event.place:
+        event_data['address'] = (
+            f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
+        )
+        event_data["place"] = {
+            "id": event.place.id,
+            "place_name": event.place.place_name,
+            "place_address": event.place.place_address,
+            "place_metro": event.place.place_metro,
+        }
+    return event_data
+
+
+@db_session
+def get_events_by_date_and_category(db, params):
+    sort_order = order_maping(Events2Posts, params.order_by)
+    query = (
+        db.query(Events2Posts)
+        .options(joinedload(Events2Posts.place))
+        .order_by(*sort_order)
+    )
+
+    query, dict_requests = _apply_event_filters(query, params)
+
     total_count = query.count()
     if params.limit:
         query = query.limit(params.limit)
@@ -149,31 +204,178 @@ def get_events_by_date_and_category(db, params):
 
     events = query.all()
 
-    event_dict_list = []
-
-    for event in events:
-        event_data = {
-            field: getattr(event, field)
-            for field in (params.fields or _default_event_fields(Events2Posts))
-        }
-
-        if event.place:
-            event_data['address'] = (
-                f"{event.place.place_name}, {event.place.place_address}, м.{event.place.place_metro}"
-            )
-            event_data["place"] = {
-                "id": event.place.id,
-                "place_name": event.place.place_name,
-                "place_address": event.place.place_address,
-                "place_metro": event.place.place_metro,
-            }
-
-        event_dict_list.append(event_data)
+    fields = params.fields or _default_event_fields(Events2Posts)
+    event_dict_list = [_event_to_dict(event, fields) for event in events]
 
     if params.fields:
         dict_requests['fields'] = params.fields
 
-    return {'events': event_dict_list, 'total_count': total_count, 'request': dict_requests}
+    return {
+        'events': event_dict_list,
+        'total_count': total_count,
+        'request': dict_requests,
+    }
+
+
+def _event_day(event):
+    """Calendar day of an event's start, or None when it has no start date."""
+    d = getattr(event, 'from_date', None)
+    if d is None:
+        return None
+    return d.date() if hasattr(d, 'date') else d
+
+
+def _auto_per_day(pool, limit):
+    """Default per-day cap: spread ``limit`` events over the distinct days present."""
+    distinct_days = {d for d in (_event_day(e) for e in pool) if d is not None}
+    num_days = max(len(distinct_days), 1)
+    return max(1, math.ceil((limit or len(pool) or 1) / num_days))
+
+
+def _score_sort_key(event):
+    """Sort key for score-desc (soonest first on ties)."""
+    return (-(getattr(event, 'score', 0) or 0), _event_day(event) or datetime.max.date())
+
+
+def _diverse_order(pool, per_category=None, per_day=None):
+    """Full deterministic diverse ordering of ``pool`` (best-first, no truncation).
+
+    Walks a score-desc-ordered ``pool`` and emits every event exactly once, in an
+    order that front-loads variety: an event is placed in the earliest pass whose
+    caps it still fits.
+
+    * ``per_category`` — max events sharing a ``main_category_id`` before the cap
+      relaxes (None = no cap). Stops one category swamping the front of the feed.
+    * ``per_day`` — max events on the same calendar day before relaxing
+      (None = no cap). Spreads the front of the feed across dates.
+
+    Three passes: (both caps) → (relax day) → (relax all). Because the ordering is
+    independent of any ``limit``/page, callers can slice it into stable pages with
+    no duplicates or gaps between pages. Pure (no DB) — unit-tested.
+    """
+    pool = list(pool)
+    if not pool:
+        return []
+
+    taken = set()
+    cat_count = {}
+    day_count = {}
+    order = []
+
+    def sweep(cat_cap, day_cap):
+        for event in pool:
+            if id(event) in taken:
+                continue
+            cat = getattr(event, 'main_category_id', None)
+            day = _event_day(event)
+            if (
+                cat_cap is not None
+                and cat is not None
+                and cat_count.get(cat, 0) >= cat_cap
+            ):
+                continue
+            if (
+                day_cap is not None
+                and day is not None
+                and day_count.get(day, 0) >= day_cap
+            ):
+                continue
+            order.append(event)
+            taken.add(id(event))
+            if cat is not None:
+                cat_count[cat] = cat_count.get(cat, 0) + 1
+            if day is not None:
+                day_count[day] = day_count.get(day, 0) + 1
+
+    # Pass 1: honour both caps. Pass 2: relax the day spread. Pass 3: relax all.
+    sweep(per_category, per_day)
+    sweep(per_category, None)
+    sweep(None, None)
+    return order
+
+
+def select_diverse_events(pool, limit, per_category=None, per_day=None):
+    """Diverse pick of up to ``limit`` events from a score-desc-ordered ``pool``.
+
+    Thin wrapper over :func:`_diverse_order`: takes the first ``limit`` of the
+    diverse ordering, then re-sorts that slice score-desc (soonest first on ties)
+    for presentation. ``per_day`` defaults to ``ceil(limit / distinct_days)`` so
+    the selection spreads across dates. Pure (no DB) — unit-tested.
+    """
+    pool = list(pool)
+    if not pool:
+        return []
+    if not limit or limit <= 0:
+        limit = len(pool)
+    if per_day is None:
+        per_day = _auto_per_day(pool, limit)
+
+    selected = _diverse_order(pool, per_category=per_category, per_day=per_day)[:limit]
+    selected.sort(key=_score_sort_key)
+    return selected
+
+
+@db_session
+def get_diverse_event_feed(db, params, per_category=None, per_day=None, pool_size=500):
+    """Diversified, paginated feed: same filters as the plain listing, but the
+    result is balanced across categories and dates instead of a flat score/date
+    sort. Built for the bot, where a flat list overloads a single day and a pure
+    score sort drops whole categories.
+
+    A pool of up to ``pool_size`` publicly-valid events (score-desc) is fetched
+    and turned into one deterministic diverse ordering (:func:`_diverse_order`).
+    Pagination slices that ordering by ``params.page``/``params.limit`` (page is
+    0-based, matching the plain listing), so pages never overlap or skip events;
+    each page is re-sorted score-desc for display. Note: pagination is bounded by
+    ``pool_size`` — events past that cap are not reachable via later pages.
+    """
+    query = db.query(Events2Posts).options(joinedload(Events2Posts.place))
+    query, dict_requests = _apply_event_filters(query, params)
+
+    total_count = query.count()
+
+    pool = (
+        query.order_by(desc(Events2Posts.score).nullslast(), asc(Events2Posts.from_date))
+        .limit(pool_size)
+        .all()
+    )
+    if total_count > pool_size:
+        log.warning(
+            "get_diverse_event_feed: pool truncated to %s of %s matching events",
+            pool_size,
+            total_count,
+        )
+
+    limit = params.limit or 20
+    page = params.page or 0
+    offset = page * limit
+
+    per_day_eff = per_day if per_day is not None else _auto_per_day(pool, limit)
+
+    order = _diverse_order(pool, per_category=per_category, per_day=per_day_eff)
+    page_slice = order[offset : offset + limit]
+    page_slice.sort(key=_score_sort_key)
+
+    fields = params.fields or _default_event_fields(Events2Posts)
+    event_dict_list = [_event_to_dict(event, fields) for event in page_slice]
+
+    dict_requests['limit'] = limit
+    dict_requests['diverse'] = True
+    dict_requests['diverse_total'] = len(order)
+    if page:
+        dict_requests['page'] = page
+    if per_category is not None:
+        dict_requests['per_category'] = per_category
+    if per_day is not None:
+        dict_requests['per_day'] = per_day
+    if params.fields:
+        dict_requests['fields'] = params.fields
+
+    return {
+        'events': event_dict_list,
+        'total_count': total_count,
+        'request': dict_requests,
+    }
 
 
 @db_session
@@ -300,12 +502,167 @@ def _semantic_relevance(dist, score, from_date, title, keywords, now, cfg):
     )
 
 
+def _collect_descendants(seed_ids, children_of):
+    """All ids reachable downward from ``seed_ids`` via ``children_of`` (inclusive)."""
+    result, stack = set(seed_ids), list(seed_ids)
+    while stack:
+        for child in children_of.get(stack.pop(), []):
+            if child not in result:
+                result.add(child)
+                stack.append(child)
+    return result
+
+
+@db_session
+def resolve_location_ladder(db, phrase, scope="venue", adjacency=None):
+    """Narrow→broad rungs of ``Place`` ids for a free-text location phrase.
+
+    Matching runs in Python (loads the small ``place_place`` table) so Cyrillic
+    case-folding is reliable, unlike SQLite's ASCII-only ``lower()``.
+
+    Rung 0 is the tightest match:
+    - places whose name/address/alias contains the phrase (a whole complex —
+      "Севкабель" → every "(Севкабель Порт)" venue), plus child points of a matched
+      hub via ``main_place_id`` (a bar tagged only by ``main_place`` comes along);
+    - places of the matched ``District`` and its descendant районы (source of
+      truth, city-agnostic; resolved in BOTH scopes since the analyzer's
+      venue/area guess for an area name like "Коломна" is unreliable);
+    - for ``area`` scope only, a fuzzy metro proxy (metro(s) of the matched
+      places or the phrase-as-metro, widened by the optional ``adjacency`` map).
+
+    Each further rung climbs ONE level up the District tree (Коломна →
+    Адмиралтейский район → …) so a caller can widen ONLY when the tight rung is
+    empty, instead of jumping straight to the whole city. Expansion is strictly
+    downward within a rung, so a small area never escalates up on its own.
+
+    Rung shape: ``{"place_ids": [...], "widened_to": <parent district name|None>}``
+    (rung 0 has ``widened_to=None``). Returns ``[]`` for an empty/too-short phrase.
+
+    The hierarchy columns are Django-managed and may be empty or absent on a given
+    city's DB — that path is guarded, so an unpopulated schema degrades to base
+    name/metro matching. The caller also passes the raw phrase as a lexical filter
+    over event text, so an empty rung is not fatal.
+    """
+    if not phrase:
+        return []
+    p = phrase.strip().lower()
+    if len(p) < 3:
+        return []
+
+    rows = db.query(
+        Place.id, Place.place_name, Place.place_address, Place.place_metro
+    ).all()
+    metro_of, by_metro, name_hits = {}, {}, set()
+    for pid, name, addr, metro in rows:
+        mlow = (metro or "").strip().lower()
+        metro_of[pid] = mlow
+        by_metro.setdefault(mlow, []).append(pid)
+        if p in f"{name or ''} {addr or ''}".lower():
+            name_hits.add(pid)
+
+    for kw, pid in _load_place_keywords(db):
+        klow = kw.lower()
+        if len(klow) >= 3 and (p in klow or klow in p):
+            name_hits.add(pid)
+
+    # Complex children + district tree — guarded so a DB without the (Django-
+    # managed) hierarchy, or with it empty, degrades to base name/metro matching.
+    children_of, by_district = {}, {}
+    d_name, d_parent, d_children, matched_districts = {}, {}, {}, set()
+    try:
+        for pid, mpid, did in db.query(
+            Place.id, Place.main_place_id, Place.district_id
+        ).all():
+            if mpid is not None:
+                children_of.setdefault(mpid, []).append(pid)
+            if did is not None:
+                by_district.setdefault(did, []).append(pid)
+        for did, dn, parent_id in db.query(
+            District.id, District.name, District.parent_id
+        ).all():
+            d_name[did] = dn
+            d_parent[did] = parent_id
+            d_children.setdefault(parent_id, []).append(did)
+            low = (dn or "").lower()
+            if low and (p in low or low in p):
+                matched_districts.add(did)
+        for kw, did in db.query(
+            DistrictKeyword.district_keyword, DistrictKeyword.district_id
+        ).all():
+            klow = kw.lower()
+            if len(klow) >= 3 and (p in klow or klow in p):
+                matched_districts.add(did)
+    except Exception:
+        log.warning(
+            "resolve_location_ladder: place/district hierarchy unavailable; "
+            "using base name/metro matching"
+        )
+        db.rollback()
+        children_of, by_district = {}, {}
+        d_name, d_parent, d_children, matched_districts = {}, {}, {}, set()
+
+    # Rung 0 — tightest. Hub → its child points; matched district → its descendants.
+    base = set(name_hits)
+    for pid in name_hits:
+        base.update(children_of.get(pid, []))
+    for did in _collect_descendants(matched_districts, d_children):
+        base.update(by_district.get(did, []))
+    if scope == "area":
+        target_metros = {metro_of[pid] for pid in name_hits if metro_of.get(pid)}
+        if p in by_metro:
+            target_metros.add(p)
+        adjacency = adjacency or {}
+        for m in list(target_metros):
+            for nb in adjacency.get(m, []):
+                target_metros.add(str(nb).strip().lower())
+        for m in target_metros:
+            base.update(by_metro.get(m, []))
+    elif not base and p in by_metro:
+        base.update(by_metro[p])  # phrase is a bare metro name ("у Спортивной")
+
+    rungs = [{"place_ids": sorted(base), "widened_to": None}]
+
+    # Climb the district tree, one broader rung per parent level.
+    current, covered = set(matched_districts), set(base)
+    while current:
+        parents = {d_parent[d] for d in current if d_parent.get(d)}
+        if not parents:
+            break
+        subtree_ids = set()
+        for did in _collect_descendants(parents, d_children):
+            subtree_ids.update(by_district.get(did, []))
+        if subtree_ids - covered:
+            names = ", ".join(sorted(d_name[pd] for pd in parents if d_name.get(pd)))
+            rungs.append({"place_ids": sorted(subtree_ids), "widened_to": names})
+            covered |= subtree_ids
+        current = parents
+    return rungs
+
+
+@db_session
+def resolve_location_place_ids(db, phrase, scope="venue", adjacency=None):
+    """Tight (rung-0) place ids for a location phrase. See resolve_location_ladder."""
+    ladder = resolve_location_ladder(db, phrase, scope=scope, adjacency=adjacency)
+    return ladder[0]["place_ids"] if ladder else []
+
+
 @db_session
 def search_events_by_embedding(
-    db, query_vector, embedding_model, *,
-    date_from=None, date_to=None, category_ids=None,
-    price_max=None, free_only=False, limit=10, max_distance=None,
-    keywords=None, rerank=True,
+    db,
+    query_vector,
+    embedding_model,
+    *,
+    date_from=None,
+    date_to=None,
+    category_ids=None,
+    price_max=None,
+    free_only=False,
+    limit=10,
+    max_distance=None,
+    keywords=None,
+    place_ids=None,
+    location_text=None,
+    rerank=True,
 ):
     """Vector search over Events2Posts with hard filters layered on top.
 
@@ -365,6 +722,21 @@ def search_events_by_embedding(
     elif price_max is not None:
         query = query.filter(Events2Posts.price_int <= price_max)
 
+    # Location filter: union of resolved Place ids (name/address/alias/metro from
+    # resolve_location_place_ids) and a lexical match on the event's own text —
+    # so a venue mentioned only in the title/description is caught even when its
+    # Place row lacks the complex name (e.g. a bar "in Севкабель" not tagged so).
+    loc_clauses = []
+    if place_ids is not None:
+        loc_clauses.append(Events2Posts.place_id.in_(place_ids))
+    if location_text:
+        pat = f"%{location_text.strip()}%"
+        loc_clauses.append(Events2Posts.title.ilike(pat))
+        loc_clauses.append(Events2Posts.full_text.ilike(pat))
+        loc_clauses.append(Events2Posts.address.ilike(pat))
+    if loc_clauses:
+        query = query.filter(or_(*loc_clauses))
+
     if max_distance is not None:
         query = query.filter(distance <= max_distance)
 
@@ -392,7 +764,9 @@ def search_events_by_embedding(
         event_data = {}
         for field in default_fields:
             value = getattr(event, field)
-            event_data[field] = value.isoformat() if isinstance(value, datetime) else value
+            event_data[field] = (
+                value.isoformat() if isinstance(value, datetime) else value
+            )
         event_data['distance'] = dist
         event_data['relevance'] = round(relevance, 4)
         if event.place:
@@ -420,6 +794,8 @@ def search_events_by_embedding(
             'price_max': price_max,
             'free_only': free_only,
             'max_distance': max_distance,
+            'place_ids': place_ids,
+            'location_text': location_text,
             'rerank': rerank,
         },
     }
@@ -428,7 +804,7 @@ def search_events_by_embedding(
 @db_session
 def get_places(db, params):
     sort_order = order_maping(Place, params.order_by)
-    query = db.query(Place).order_by(sort_order)
+    query = db.query(Place).order_by(*sort_order)
 
     if params.ids:
         query = query.filter(Place.id.in_(params.ids))
@@ -443,7 +819,10 @@ def get_places(db, params):
 
     places = query.all()
     result = [
-        {field: getattr(place, field) for field in (params.fields or place.__table__.columns.keys())}
+        {
+            field: getattr(place, field)
+            for field in (params.fields or place.__table__.columns.keys())
+        }
         for place in places
     ]
     return result
@@ -485,9 +864,13 @@ def get_approved_events(db, params):
         query = query.filter(Events2Posts.id.in_(params.ids))
     else:
         if params.date_from:
-            query = query.filter(func.date(Events2Posts.from_date) <= params.date_from.date())
+            query = query.filter(
+                func.date(Events2Posts.from_date) <= params.date_from.date()
+            )
         if params.date_to:
-            query = query.filter(func.date(Events2Posts.to_date) <= params.date_to.date())
+            query = query.filter(
+                func.date(Events2Posts.to_date) <= params.date_to.date()
+            )
 
         if params.limit:
             query = query.limit(params.limit)
@@ -736,7 +1119,9 @@ def get_not_approved_events(db, params):
         query = query.filter(EventsNotApproved.id.in_(params.ids))
     else:
         if params.date_from:
-            query = query.filter(func.date(EventsNotApproved.explored_date) <= params.date_from.date())
+            query = query.filter(
+                func.date(EventsNotApproved.explored_date) <= params.date_from.date()
+            )
         if params.date_to:
             query = query.filter(
                 func.date(EventsNotApproved.explored_date) <= params.date_to.date()
@@ -749,7 +1134,10 @@ def get_not_approved_events(db, params):
 
     events = query.all()
     result = [
-        {field: getattr(event, field) for field in (params.fields or _default_event_fields(EventsNotApproved))}
+        {
+            field: getattr(event, field)
+            for field in (params.fields or _default_event_fields(EventsNotApproved))
+        }
         for event in events
     ]
 
@@ -758,9 +1146,9 @@ def get_not_approved_events(db, params):
 
 @db_session
 def update_not_approved_events_set_approved(db, event_ids=[]):
-    db.query(EventsNotApproved)\
-        .filter(EventsNotApproved.id.in_(event_ids))\
-        .update({'approved': 1, 'status': 'approved'})
+    db.query(EventsNotApproved).filter(EventsNotApproved.id.in_(event_ids)).update(
+        {'approved': 1, 'status': 'approved'}
+    )
 
 
 @db_session
@@ -851,11 +1239,13 @@ def create_event(db, event_data: dict, model):
     db.add(event)
     db.commit()
     db.refresh(event)
-    return {"id": event.id} # or make Event model
+    return {"id": event.id}  # or make Event model
 
 
 @db_session
-def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_increase=2):
+def add_events_to_post(
+    db, events: List[Event], explored_date: datetime, queue_increase=2
+):
     """
     Make new rows in table Events2Posts for posting.
 
@@ -905,14 +1295,18 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
     for event in events:
 
         event_dict = event.to_dict()
-        event_dict.update({
-            'status': 'ReadyToPost',
-            'queue': next(queue_value_gen),
-            'explored_date': explored_date
-        })
+        event_dict.update(
+            {
+                'status': 'ReadyToPost',
+                'queue': next(queue_value_gen),
+                'explored_date': explored_date,
+            }
+        )
 
         if not event_dict.get('place_id'):
-            search = " ".join(filter(None, [event_dict.get('address'), event_dict.get('title')]))
+            search = " ".join(
+                filter(None, [event_dict.get('address'), event_dict.get('title')])
+            )
             event_dict['place_id'] = _match_place(search, place_keywords)
 
         _apply_place_category_override(event_dict, place_category_overrides)
@@ -976,7 +1370,12 @@ def add_events_to_post(db, events: List[Event], explored_date: datetime, queue_i
 
 
 @db_session
-def add_events(db, events: List[Event], explored_date: datetime, table: str = "events_eventsnotapprovednew"):
+def add_events(
+    db,
+    events: List[Event],
+    explored_date: datetime,
+    table: str = "events_eventsnotapprovednew",
+):
     """
     Add events to specified table.
 
@@ -1018,10 +1417,12 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
     for event in events:
         event_dict = event.to_dict()
 
-        event_dict.update({
-            'approved': False,
-            'explored_date': explored_date,
-        })
+        event_dict.update(
+            {
+                'approved': False,
+                'explored_date': explored_date,
+            }
+        )
 
         # Place matching for EventsNotApproved
         if not event_dict.get('place_id'):
@@ -1033,8 +1434,13 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
         _apply_place_category_override(event_dict, place_category_overrides)
 
         _apply_scoring(
-            event_dict, event_dict.get('place_id'), recent_titles,
-            place_counts, place_cat_queue, date_counts, place_reputation=place_rep,
+            event_dict,
+            event_dict.get('place_id'),
+            recent_titles,
+            place_counts,
+            place_cat_queue,
+            date_counts,
+            place_reputation=place_rep,
         )
 
         new_event = create_event(db, event_dict, model)
@@ -1046,7 +1452,9 @@ def add_events(db, events: List[Event], explored_date: datetime, table: str = "e
 
 
 @db_session
-def set_status(db: object, event_id: str, status: str, error_message: str = None) -> None:
+def set_status(
+    db: object, event_id: str, status: str, error_message: str = None
+) -> None:
     """
     Update status of row in table Event2Post by event ID.
 
@@ -1122,7 +1530,9 @@ def get_events_missing_images(db, event_ids: list = [], limit: int = 50) -> List
 
     events_wo_images = []
     for event in events:
-        events_wo_images.append({'id': event.id, 'event_id': event.event_id, 'image': event.image})
+        events_wo_images.append(
+            {'id': event.id, 'event_id': event.event_id, 'image': event.image}
+        )
     return events_wo_images
 
 
@@ -1147,8 +1557,12 @@ def save_api_request_log(db, request_info: dict):
 @db_session
 def add_posted_event_to_dsn_bot(db, event, post_id):
     event_data = {
-        "id": event.event_id, "title": event.title, "post_id": post_id,
-        "date_from": event.from_date, "date_to": event.to_date, "price": event.price,
+        "id": event.event_id,
+        "title": event.title,
+        "post_id": post_id,
+        "date_from": event.from_date,
+        "date_to": event.to_date,
+        "price": event.price,
     }
 
     event = DsnBotEvents(**event_data)
@@ -1161,14 +1575,19 @@ def add_posted_event_to_dsn_bot(db, event, post_id):
 @db_session
 def add_exhibition_to_dsn_bot(db, event, post_id):
     event_data = {
-        "title": event.title, "post_id": post_id, "date_before": event.to_date, "price": event.price,
+        "title": event.title,
+        "post_id": post_id,
+        "date_before": event.to_date,
+        "price": event.price,
     }
     db.add(Exhibitions(**event_data))
 
 
 @db_session
 def remove_event_from_dsn_bot(db, date):
-    db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(synchronize_session=False)
+    db.query(DsnBotEvents).filter(DsnBotEvents.date_to < date).delete(
+        synchronize_session=False
+    )
 
 
 @db_session
@@ -1216,14 +1635,18 @@ def get_pending_reminders(db):
 
     reminders = []
     for remind_event in query.all():
-        reminders.append({
-            'id':              remind_event.id,
-            'telegram_id':     remind_event.user.telegram_id if remind_event.user else None,
-            'post_url':        remind_event.event.post_url if remind_event.event else None,
-            'title':           remind_event.event.title if remind_event.event else None,
-            'price':           remind_event.event.price if remind_event.event else None,
-            'remind_datetime': remind_event.remind_datetime,
-        })
+        reminders.append(
+            {
+                'id': remind_event.id,
+                'telegram_id': (
+                    remind_event.user.telegram_id if remind_event.user else None
+                ),
+                'post_url': remind_event.event.post_url if remind_event.event else None,
+                'title': remind_event.event.title if remind_event.event else None,
+                'price': remind_event.event.price if remind_event.event else None,
+                'remind_datetime': remind_event.remind_datetime,
+            }
+        )
 
     return reminders
 
@@ -1327,7 +1750,11 @@ def compute_taste_score(
         .all()
     )
 
-    neighbors = [(status, dist) for status, dist in rows if dist is not None and dist <= max_distance]
+    neighbors = [
+        (status, dist)
+        for status, dist in rows
+        if dist is not None and dist <= max_distance
+    ]
     if len(neighbors) < min_neighbors:
         return None
 
@@ -1394,9 +1821,7 @@ def apply_taste_to_promote_candidates(
         if taste is None:
             novel += 1
             continue
-        breakdown = apply_taste_to_breakdown(
-            event.score_breakdown, taste, scoring_cfg
-        )
+        breakdown = apply_taste_to_breakdown(event.score_breakdown, taste, scoring_cfg)
         if breakdown is None:
             continue
         new_total = breakdown["total"]
@@ -1456,21 +1881,18 @@ def find_embedding_duplicate(
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookup_days)
     distance = Events2Posts.embedding.cosine_distance(embedding).label('distance')
-    query = (
-        db.query(
-            Events2Posts.id,
-            Events2Posts.title,
-            Events2Posts.status,
-            Events2Posts.from_date,
-            Events2Posts.to_date,
-            distance,
-        )
-        .filter(
-            Events2Posts.embedding.isnot(None),
-            Events2Posts.embedding_model == embedding_model,
-            Events2Posts.status.in_(('Posted', 'ReadyToPost', 'OnlyApi')),
-            Events2Posts.explored_date >= cutoff,
-        )
+    query = db.query(
+        Events2Posts.id,
+        Events2Posts.title,
+        Events2Posts.status,
+        Events2Posts.from_date,
+        Events2Posts.to_date,
+        distance,
+    ).filter(
+        Events2Posts.embedding.isnot(None),
+        Events2Posts.embedding_model == embedding_model,
+        Events2Posts.status.in_(('Posted', 'ReadyToPost', 'OnlyApi')),
+        Events2Posts.explored_date >= cutoff,
     )
     if exclude_id:
         query = query.filter(Events2Posts.id != exclude_id)
@@ -1547,7 +1969,7 @@ def dedupe_ready_queue(
         return (
             bool(event.is_ready),
             event.score or -1,
-            -(event.queue if event.queue is not None else 10 ** 9),
+            -(event.queue if event.queue is not None else 10**9),
             -event.id,
         )
 
@@ -1621,9 +2043,7 @@ def get_recent_event_titles(db, days: int = 14) -> List[str]:
     """Return titles from both tables for the last N days (repetition check)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     titles_approved = (
-        db.query(Events2Posts.title)
-        .filter(Events2Posts.explored_date >= cutoff)
-        .all()
+        db.query(Events2Posts.title).filter(Events2Posts.explored_date >= cutoff).all()
     )
     titles_not_approved = (
         db.query(EventsNotApproved.title)
@@ -1692,7 +2112,11 @@ def get_place_reputation(db, auto_reject_threshold: int = 39) -> dict:
 
     # EventsNotApproved: spam (any score) + informed rejected (score above auto threshold).
     na_rows = (
-        db.query(EventsNotApproved.place_id, EventsNotApproved.status, func.count(EventsNotApproved.id))
+        db.query(
+            EventsNotApproved.place_id,
+            EventsNotApproved.status,
+            func.count(EventsNotApproved.id),
+        )
         .filter(
             EventsNotApproved.place_id.isnot(None),
             or_(
@@ -1757,7 +2181,11 @@ def get_place_category_queue_counts(db) -> dict:
     Used to detect venue/genre saturation in the posting queue.
     """
     rows = (
-        db.query(Events2Posts.place_id, Events2Posts.main_category_id, func.count(Events2Posts.id))
+        db.query(
+            Events2Posts.place_id,
+            Events2Posts.main_category_id,
+            func.count(Events2Posts.id),
+        )
         .filter(
             Events2Posts.place_id.isnot(None),
             Events2Posts.main_category_id.isnot(None),
@@ -1787,7 +2215,9 @@ def _auto_reject_threshold(scoring_cfg: dict) -> int:
     Mirrors auto_reject_low_score_events (max_score=39). Configurable via
     scoring.place_reputation.auto_reject_threshold.
     """
-    return (scoring_cfg.get("place_reputation", {}) or {}).get("auto_reject_threshold", 39)
+    return (scoring_cfg.get("place_reputation", {}) or {}).get(
+        "auto_reject_threshold", 39
+    )
 
 
 def _apply_scoring(
@@ -1816,7 +2246,9 @@ def _apply_scoring(
 
 
 @db_session
-def recalculate_event_score(db, event_id: int, table: str = "events_events2post") -> dict:
+def recalculate_event_score(
+    db, event_id: int, table: str = "events_events2post"
+) -> dict:
     """Recalculate score for a single event (after AI fills place/category).
 
     Returns
@@ -1906,9 +2338,13 @@ def recalculate_scores_bulk(
     window = scoring_config.get("repetition_window_days", 14)
     recent_titles = get_recent_event_titles(days=window)
     place_counts = get_place_post_counts()
-    place_rep = get_place_reputation(auto_reject_threshold=_auto_reject_threshold(scoring_config))
+    place_rep = get_place_reputation(
+        auto_reject_threshold=_auto_reject_threshold(scoring_config)
+    )
     place_cat_queue = get_place_category_queue_counts()
-    date_counts = get_date_event_counts(days=scoring_config.get("date_scarcity_window_days", 10))
+    date_counts = get_date_event_counts(
+        days=scoring_config.get("date_scarcity_window_days", 10)
+    )
 
     updated = 0
     skipped = 0
@@ -1999,9 +2435,7 @@ def get_adaptive_scoring_data(db, days: int = 30) -> dict:
     )
     positive = []
     for e in pos_query:
-        positive.append({
-            col.name: getattr(e, col.name) for col in e.__table__.columns
-        })
+        positive.append({col.name: getattr(e, col.name) for col in e.__table__.columns})
 
     # Negative: explicitly rejected + stale 'new'
     neg_query = db.query(EventsNotApproved).filter(
@@ -2016,9 +2450,7 @@ def get_adaptive_scoring_data(db, days: int = 30) -> dict:
     )
     negative = []
     for e in neg_query:
-        negative.append({
-            col.name: getattr(e, col.name) for col in e.__table__.columns
-        })
+        negative.append({col.name: getattr(e, col.name) for col in e.__table__.columns})
 
     return {"positive": positive, "negative": negative}
 
@@ -2161,7 +2593,9 @@ def _resolve_place_view(db, event_data: dict, place_keywords=None):
 
 
 OTHER_CATEGORY_NAME = "Other"
-UNCATEGORIZED_CATEGORY_ID = 2  # 'Без категории' — treated as fallback, re-resolved like NULL
+UNCATEGORIZED_CATEGORY_ID = (
+    2  # 'Без категории' — treated as fallback, re-resolved like NULL
+)
 
 
 def _get_or_create_other_category(db) -> Category:
@@ -2255,8 +2689,13 @@ _CATEGORY_NAME_TO_ID = {name.lower(): cid for cid, name in CATEGORY_ID_TO_NAME.i
 @db_session
 def search_events_by_string(db, string: str, limit: int):
     columns = [
-        Events2Posts.id, Events2Posts.title, Events2Posts.place_id,
-        Events2Posts.image, Events2Posts.main_category_id, Events2Posts.from_date, Events2Posts.to_date,
+        Events2Posts.id,
+        Events2Posts.title,
+        Events2Posts.place_id,
+        Events2Posts.image,
+        Events2Posts.main_category_id,
+        Events2Posts.from_date,
+        Events2Posts.to_date,
     ]
 
     query = db.query(*columns)
@@ -2281,7 +2720,8 @@ def search_events_by_string(db, string: str, limit: int):
     # Soonest first; tie-break by editorial score so same-day picks the best.
     events = (
         query.order_by(Events2Posts.from_date.asc(), Events2Posts.score.desc())
-        .limit(limit).all()
+        .limit(limit)
+        .all()
     )
     return [dict(zip([column.name for column in columns], event)) for event in events]
 
@@ -2320,7 +2760,7 @@ def register_user(db, user_data: UserCreate):
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        is_active=True
+        is_active=True,
     )
 
     db.add(new_user)
@@ -2526,8 +2966,15 @@ def update_not_approved_event_status(db, event_id: int, status: str) -> bool:
 def _enrich_not_approved_event(db, event, enriched_data: dict) -> None:
     """Apply enriched fields to an already-loaded event. Does not commit."""
     allowed_fields = {
-        "title", "address", "price", "price_int", "category",
-        "from_date", "to_date", "url", "ticket_url",
+        "title",
+        "address",
+        "price",
+        "price_int",
+        "category",
+        "from_date",
+        "to_date",
+        "url",
+        "ticket_url",
     }
 
     for key, value in enriched_data.items():
@@ -2913,13 +3360,18 @@ def bulk_make_and_save_posts(
         try:
             event_data = dict(raw)
             pipeline = _make_post_pipeline(
-                db, event_data, place_keywords=place_keywords, write_subcategory=save,
+                db,
+                event_data,
+                place_keywords=place_keywords,
+                write_subcategory=save,
             )
 
             entry = {**pipeline, "event_id": None, "saved": False, "error": None}
 
             if save:
-                row_data = {k: v for k, v in event_data.items() if k in insertable_columns}
+                row_data = {
+                    k: v for k, v in event_data.items() if k in insertable_columns
+                }
                 row_data['post'] = pipeline['post']
                 if pipeline['main_category_id'] is not None:
                     row_data['main_category_id'] = pipeline['main_category_id']
@@ -3010,11 +3462,27 @@ def auto_promote_high_score_events(
     )
 
     shared_fields = [
-        'event_id', 'title', 'full_text', 'post', 'image', 'price',
-        'price_int', 'url', 'ticket_url', 'address', 'from_date',
-        'to_date', 'category', 'source', 'place_id', 'explored_date',
-        'score', 'score_breakdown',
-        'embedding', 'embedding_model', 'embedding_updated_at',
+        'event_id',
+        'title',
+        'full_text',
+        'post',
+        'image',
+        'price',
+        'price_int',
+        'url',
+        'ticket_url',
+        'address',
+        'from_date',
+        'to_date',
+        'category',
+        'source',
+        'place_id',
+        'explored_date',
+        'score',
+        'score_breakdown',
+        'embedding',
+        'embedding_model',
+        'embedding_updated_at',
     ]
 
     last_q = (
@@ -3186,10 +3654,12 @@ def distribute_event_queue(db, protect_first: int = 10) -> int:
 
     # Within each category sort: most urgent (from_date soonest) and highest score first
     for cat in by_category:
-        by_category[cat].sort(key=lambda e: (
-            (e.from_date - msk_now).total_seconds() if e.from_date else 999999999,
-            -(e.score or 0),
-        ))
+        by_category[cat].sort(
+            key=lambda e: (
+                (e.from_date - msk_now).total_seconds() if e.from_date else 999999999,
+                -(e.score or 0),
+            )
+        )
 
     # Round-robin by category (largest first so popular categories interleave)
     category_queues = sorted(
@@ -3377,7 +3847,8 @@ def find_unschedulable_events(
     # Events ending before the runway cutoff are left to the regular expiry path.
     runway_cutoff = today + timedelta(days=min_runway_days)
     candidates = [
-        e for e in all_ready[protect_first:]
+        e
+        for e in all_ready[protect_first:]
         if e.to_date is not None and e.to_date.date() >= runway_cutoff
     ]
     candidates.sort(key=lambda e: e.to_date)

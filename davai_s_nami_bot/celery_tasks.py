@@ -863,6 +863,8 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
         "message": message,
         "semantic_query": analysis["semantic_query"],
         "date_human": format_date_range_ru(analysis["date_from"], analysis["date_to"]),
+        "location": analysis["location"],
+        "location_scope": analysis["location_scope"],
         "filters": {
             "category_ids": analysis["category_ids"],
             "date_from": (
@@ -872,6 +874,7 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
             "price_max": analysis["price_max"],
             "free_only": analysis["free_only"],
             "keywords": analysis["keywords"],
+            "location": analysis["location"],
         },
     }
 
@@ -891,6 +894,20 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
 
     vector = EmbeddingClient().embed_batch([analysis["semantic_query"]])[0]
     model_label = current_embedding_model_label()
+
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    location = analysis["location"]
+    location_ladder = (
+        crud.resolve_location_ladder(
+            location,
+            scope=analysis["location_scope"],
+            adjacency=getattr(settings, "metro_adjacency", {}),
+        )
+        if location
+        else []
+    )
+    base_place_ids = location_ladder[0]["place_ids"] if location_ladder else None
 
     # The date range is made inclusive of whole days: from_date at 00:00, to_date
     # at end of day, in MSK (UTC+3). The DB columns are tz-aware UTC.
@@ -918,6 +935,8 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
             limit=limit,
             max_distance=max_distance,
             keywords=analysis["keywords"],
+            place_ids=filters["place_ids"],
+            location_text=filters["location_text"],
         )
 
     base = {
@@ -926,6 +945,9 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
         "free_only": analysis["free_only"],
         "date_from": analysis["date_from"],
         "date_to": analysis["date_to"],
+        "place_ids": base_place_ids,
+        "location_text": location,
+        "loc_note": None,
     }
     attempts = [dict(base)]
     cur = dict(base)
@@ -941,6 +963,22 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
     if cur["category_ids"]:
         cur = {**cur, "category_ids": []}
         attempts.append(dict(cur))
+    if location:
+        for rung in location_ladder[1:]:
+            cur = {
+                **cur,
+                "place_ids": rung["place_ids"],
+                "location_text": None,
+                "loc_note": f"расширил до «{rung['widened_to']}»",
+            }
+            attempts.append(dict(cur))
+        cur = {
+            **cur,
+            "place_ids": None,
+            "location_text": None,
+            "loc_note": "по всему городу",
+        }
+        attempts.append(dict(cur))
 
     result, winner = None, attempts[0]
     for winner in attempts:
@@ -949,6 +987,8 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
             break
 
     relaxed_notes = _relaxation_notes(base, winner)
+    if winner.get("loc_note"):
+        relaxed_notes.append(winner["loc_note"])
 
     query_info["relaxed"] = relaxed_notes
     query_info["date_human"] = format_date_range_ru(
@@ -963,6 +1003,7 @@ def semantic_event_search(self, message, limit=5, max_distance=None, history=Non
                 winner["date_from"].isoformat() if winner["date_from"] else None
             ),
             "date_to": winner["date_to"].isoformat() if winner["date_to"] else None,
+            "location": winner["location_text"],
         }
     )
 
