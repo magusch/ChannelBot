@@ -101,16 +101,18 @@ def test_route_events_to_api_selects_by_each_criterion(db_session_fixture):
     db.add(_e2p('trash', score=20, main_category_id=1, days_ahead=3))
     # 2) low score + low_category
     db.add(_e2p('low-cat', score=50, main_category_id=14, days_ahead=3))
-    # 3) far date
-    db.add(_e2p('far', score=90, main_category_id=1, days_ahead=30))
+    # 3) far date + слабый score
+    db.add(_e2p('far-weak', score=70, main_category_id=1, days_ahead=30))
     # Контрольные — не должны уходить
     db.add(_e2p('keep-high', score=80, main_category_id=1, days_ahead=3))
     db.add(_e2p('keep-low-but-good-cat', score=50, main_category_id=1, days_ahead=3))
+    db.add(_e2p('far-strong', score=90, main_category_id=1, days_ahead=30))
+    db.add(_e2p('far-unscored', score=None, main_category_id=1, days_ahead=30))
     db.commit()
 
     routed_ids = crud_module.route_events_to_api(
-        min_score=55, hard_min_score=35,
-        low_category_ids=[2, 14], far_days=14, min_channel_queue=5,
+        min_score=55, hard_min_score=35, low_category_ids=[2, 14],
+        far_days=21, far_min_score=75, min_channel_queue=5,
     )
 
     def status_of(eid):
@@ -118,9 +120,11 @@ def test_route_events_to_api_selects_by_each_criterion(db_session_fixture):
 
     assert status_of('EVT-trash') == 'OnlyApi'
     assert status_of('EVT-low-cat') == 'OnlyApi'
-    assert status_of('EVT-far') == 'OnlyApi'
+    assert status_of('EVT-far-weak') == 'OnlyApi'
     assert status_of('EVT-keep-high') == 'ReadyToPost'
     assert status_of('EVT-keep-low-but-good-cat') == 'ReadyToPost'
+    assert status_of('EVT-far-strong') == 'ReadyToPost'
+    assert status_of('EVT-far-unscored') == 'ReadyToPost'
     assert len(routed_ids) == 3
 
 

@@ -1086,7 +1086,8 @@ def auto_route_to_api():
         min_score=cfg.get('min_score', 55),
         hard_min_score=cfg.get('hard_min_score', 35),
         low_category_ids=cfg.get('low_category_ids') or [],
-        far_days=cfg.get('far_days', 14),
+        far_days=cfg.get('far_days', 21),
+        far_min_score=cfg.get('far_min_score', 75),
         limit=cfg.get('limit', 100),
         min_channel_queue=cfg.get('min_channel_queue', 20),
     )

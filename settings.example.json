@@ -22,7 +22,8 @@
       "min_score": 55,
       "hard_min_score": 35,
       "low_category_ids": [2, 14],
-      "far_days": 14,
+      "far_days": 21,
+      "far_min_score": 75,
       "limit": 100,
       "min_channel_queue": 20
     },

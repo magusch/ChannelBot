@@ -237,6 +237,21 @@ def _score_sort_key(event):
     return (-(getattr(event, 'score', 0) or 0), _event_day(event) or datetime.max.date())
 
 
+_FEED_STATUS_PRIORITY = {'Posted': 0, 'ReadyToPost': 1, 'OnlyApi': 2}
+_FEED_STATUS_DEFAULT_RANK = 3
+
+
+def _status_rank(event, priority=None):
+    """Feed tier of an event by status (lower = higher in the feed)."""
+    priority = priority or _FEED_STATUS_PRIORITY
+    return priority.get(getattr(event, 'status', None), _FEED_STATUS_DEFAULT_RANK)
+
+
+def _feed_sort_key(event, status_priority=None):
+    """Page-display sort key: status tier first, then score-desc."""
+    return (_status_rank(event, status_priority),) + _score_sort_key(event)
+
+
 def _diverse_order(pool, per_category=None, per_day=None):
     """Full deterministic diverse ordering of ``pool`` (best-first, no truncation).
 
@@ -316,17 +331,25 @@ def select_diverse_events(pool, limit, per_category=None, per_day=None):
 
 
 @db_session
-def get_diverse_event_feed(db, params, per_category=None, per_day=None, pool_size=500):
+def get_diverse_event_feed(
+    db, params, per_category=None, per_day=None, pool_size=500, status_priority=None
+):
     """Diversified, paginated feed: same filters as the plain listing, but the
     result is balanced across categories and dates instead of a flat score/date
     sort. Built for the bot, where a flat list overloads a single day and a pure
     score sort drops whole categories.
 
-    A pool of up to ``pool_size`` publicly-valid events (score-desc) is fetched
-    and turned into one deterministic diverse ordering (:func:`_diverse_order`).
-    Pagination slices that ordering by ``params.page``/``params.limit`` (page is
-    0-based, matching the plain listing), so pages never overlap or skip events;
-    each page is re-sorted score-desc for display. Note: pagination is bounded by
+    A pool of up to ``pool_size`` publicly-valid events (top by score) is fetched,
+    then ordered by ``(status tier, score-desc)`` — ``status_priority`` defaults to
+    Posted → ReadyToPost → OnlyApi — and run through a single diverse pass
+    (:func:`_diverse_order`). Because the pass fills each category/day slot in pool
+    order, it takes Posted first, but reaches into lower tiers (ReadyToPost,
+    OnlyApi) for categories/days that Posted does not cover — so a festival with no
+    Posted instance still surfaces from OnlyApi instead of a gap. Posted still lead
+    overall (earlier in the pool and in the page sort). Pagination slices that
+    ordering by ``params.page``/``params.limit`` (page is 0-based, matching the
+    plain listing), so pages never overlap or skip events; each page is re-sorted
+    by ``(status tier, score-desc)`` for display. Note: pagination is bounded by
     ``pool_size`` — events past that cap are not reachable via later pages.
     """
     query = db.query(Events2Posts).options(joinedload(Events2Posts.place))
@@ -352,9 +375,11 @@ def get_diverse_event_feed(db, params, per_category=None, per_day=None, pool_siz
 
     per_day_eff = per_day if per_day is not None else _auto_per_day(pool, limit)
 
+    pool.sort(key=lambda e: _feed_sort_key(e, status_priority))
     order = _diverse_order(pool, per_category=per_category, per_day=per_day_eff)
+
     page_slice = order[offset : offset + limit]
-    page_slice.sort(key=_score_sort_key)
+    page_slice.sort(key=lambda e: _feed_sort_key(e, status_priority))
 
     fields = params.fields or _default_event_fields(Events2Posts)
     event_dict_list = [_event_to_dict(event, fields) for event in page_slice]
@@ -3689,7 +3714,8 @@ def route_events_to_api(
     min_score: int = 55,
     hard_min_score: int = 35,
     low_category_ids: List[int] = None,
-    far_days: int = 14,
+    far_days: int = 21,
+    far_min_score: int = 75,
     limit: int = 100,
     min_channel_queue: int = 20,
 ) -> List[int]:
@@ -3698,7 +3724,7 @@ def route_events_to_api(
     An event is a candidate if any of the following is true:
       - score < hard_min_score (junk)
       - score < min_score AND main_category_id IN low_category_ids
-      - from_date > now + far_days (too far ahead)
+      - from_date > now + far_days AND score < far_min_score (far away *and* weak)
 
     Safety floor: if fewer than min_channel_queue events with
     (ReadyToPost & is_ready=True) are scheduled in the next 7 days, skip this run.
@@ -3735,7 +3761,12 @@ def route_events_to_api(
                 Events2Posts.main_category_id.in_(low_category_ids),
             )
         )
-    criteria.append(Events2Posts.from_date > far_cutoff)
+    criteria.append(
+        and_(
+            Events2Posts.from_date > far_cutoff,
+            Events2Posts.score < far_min_score,
+        )
+    )
 
     candidates = (
         db.query(Events2Posts)
