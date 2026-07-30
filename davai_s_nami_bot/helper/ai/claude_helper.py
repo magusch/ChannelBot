@@ -5,6 +5,8 @@ import logging
 
 from anthropic import Anthropic
 
+from ...settings.settings_loader import settings
+
 log = logging.getLogger(__name__)
 
 # Fields that should NOT be sent to AI (internal/confusing)
@@ -42,7 +44,7 @@ class ClaudeHelper:
         if self.system_message is not None:
             system_message = self.system_message
         else:
-            system_message = "Ты редактор-копирайтер для телеграм канала о мероприятиях в Санкт-Петербурге. " \
+            system_message = f"Ты редактор-копирайтер для телеграм канала о мероприятиях в {settings.city_name_loc}. " \
                              "У нас есть сырая информация по мероприятию необходимо адаптировать её для поста."
 
         if self.user_message is not None:

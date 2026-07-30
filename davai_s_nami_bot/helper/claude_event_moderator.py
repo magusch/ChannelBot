@@ -1,5 +1,6 @@
 from anthropic import Anthropic
 from .dsn_parameters import DSNParameters
+from ..settings.settings_loader import settings
 
 class ClaudeEventModerator:
     def __init__(self, max_events_percent=30, max_moderate_percent=50):
@@ -40,9 +41,9 @@ class ClaudeEventModerator:
             system_message += self.system_message
         else:
             ai_messages.append({
-                "role": "user", "content": "Вы модератор мероприятий для платформы по интересным, движовым и молодёжным мероприям Санкт-Петербурга. Средний возраст читателей: 17-29 лет."
+                "role": "user", "content": f"Вы модератор мероприятий для платформы по интересным, движовым и молодёжным мероприям {settings.city_name_gen}. Средний возраст читателей: 17-29 лет."
             })
-            system_message += "Вы модератор мероприятий для платформы по интересным, движовым и молодёжным мероприям Санкт-Петербурга. Средний возраст читателей: 17-29 лет."
+            system_message += f"Вы модератор мероприятий для платформы по интересным, движовым и молодёжным мероприям {settings.city_name_gen}. Средний возраст читателей: 17-29 лет."
         
         if self.user_message:
             ai_messages.append({

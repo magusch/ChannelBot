@@ -3,7 +3,11 @@ import pytest
 
 from davai_s_nami_bot.scoring import (
     ScoreBreakdown,
+    apply_taste_to_breakdown,
     calculate_score,
+    normalize_title_tokens,
+    parse_breakdown,
+    title_containment,
     title_similarity,
     _score_completeness,
     _score_source,
@@ -155,6 +159,105 @@ def test_title_similarity():
 
     sim = title_similarity("Концерт группы Кино в клубе", "Концерт группы Кино")
     assert 0.5 < sim < 1.0
+
+
+def test_normalize_title_tokens_strips_emoji_and_boilerplate():
+    # AI prep adds emoji, scrapers add ticket boilerplate — neither is identity.
+    assert normalize_title_tokens("💭 Выставка «Так не бывает»") == \
+        normalize_title_tokens("Выставка Так не бывает")
+    assert "билет" not in normalize_title_tokens("Входной билет на выставку «Тело»")
+    assert normalize_title_tokens("") == frozenset()
+    assert normalize_title_tokens(None) == frozenset()
+
+
+def test_normalize_title_tokens_collapses_case_forms():
+    # "выставку"/"выставка" must land on the same stem.
+    a = normalize_title_tokens("Входной билет на выставку «Тело»")
+    b = normalize_title_tokens("Выставка Тело")
+    assert a == b
+
+
+def test_title_containment_catches_boilerplate_wrapped_titles():
+    # The exact production case: Timepad re-issues an exhibition with a
+    # "Входной билет на ..." wrapper; Jaccard fails, containment must not.
+    assert title_containment(
+        "Входной билет на выставку «Тело»", "Выставка Тело"
+    ) == 1.0
+    assert title_containment(
+        "💭 Выставка «Так не бывает»", "🏺 Выставка «Так не бывает»"
+    ) == 1.0
+    # Date-suffixed series instances compare as the same core.
+    assert title_containment(
+        "Большой стендап 14 июня", "Большой стендап 21 июля"
+    ) == 1.0
+    # Different events stay apart.
+    assert title_containment("Концерт группы Кино", "Выставка картин Дали") < 0.5
+    assert title_containment("", "Что-то") == 0.0
+
+
+def test_repetition_detected_for_date_suffixed_series():
+    event = {
+        "title": "Большой стендап 21 июня",
+        "price_int": 500,
+        "main_category_id": 10,
+    }
+    existing = ["🎤 Большой стендап 14 июня"]
+
+    result = calculate_score(event, existing, place_id=1, scoring_config=ENABLED_CONFIG)
+    assert result.repetition_penalty == -20
+
+
+# --- taste component --------------------------------------------------------
+
+TASTE_CONFIG = {**ENABLED_CONFIG, "weights": {**ENABLED_CONFIG["weights"], "taste": 20}}
+
+
+def test_taste_score_moves_total_when_present():
+    event = {"title": "Концерт X", "price_int": 500, "main_category_id": 1}
+
+    base = calculate_score(event, [], place_id=1, scoring_config=TASTE_CONFIG)
+    liked = calculate_score(
+        event, [], place_id=1, scoring_config=TASTE_CONFIG, taste_score=100
+    )
+    disliked = calculate_score(
+        event, [], place_id=1, scoring_config=TASTE_CONFIG, taste_score=0
+    )
+
+    assert liked.total > base.total > disliked.total
+    assert liked.taste_score == 100
+    # None keeps the component (and its weight) out entirely.
+    assert base.taste_score is None
+    assert '"taste": null' in base.to_json()
+
+
+def test_parse_breakdown_handles_double_encoded_json():
+    inner = {"price": 80, "place": 70, "total": 75}
+    assert parse_breakdown(json.dumps(inner)) == inner
+    # Historical rows: JSON string containing JSON.
+    assert parse_breakdown(json.dumps(json.dumps(inner))) == inner
+    assert parse_breakdown(None) is None
+    assert parse_breakdown("not json") is None
+
+
+def test_apply_taste_to_breakdown_recomputes_total_idempotently():
+    stored = json.dumps({
+        "price": 80, "place": 60, "category": 90, "keywords": 50,
+        "completeness": 75, "source": 70, "repetition_penalty": 0,
+        "place_queue_penalty": 0, "date_scarcity_boost": 0, "total": 71,
+    })
+
+    lifted = apply_taste_to_breakdown(stored, 100, TASTE_CONFIG)
+    assert lifted["taste"] == 100
+    assert lifted["total"] > 71
+
+    # Re-applying a different taste rebuilds from base components, not from
+    # the already-adjusted total.
+    dropped = apply_taste_to_breakdown(json.dumps(lifted), 0, TASTE_CONFIG)
+    assert dropped["total"] < 71
+
+    # Malformed / incomplete breakdowns are refused rather than guessed.
+    assert apply_taste_to_breakdown(json.dumps({"price": 80}), 50, TASTE_CONFIG) is None
+    assert apply_taste_to_breakdown(None, 50, TASTE_CONFIG) is None
 
 
 def test_exhibition_duplicate():

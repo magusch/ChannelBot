@@ -101,16 +101,18 @@ def test_route_events_to_api_selects_by_each_criterion(db_session_fixture):
     db.add(_e2p('trash', score=20, main_category_id=1, days_ahead=3))
     # 2) low score + low_category
     db.add(_e2p('low-cat', score=50, main_category_id=14, days_ahead=3))
-    # 3) far date
-    db.add(_e2p('far', score=90, main_category_id=1, days_ahead=30))
+    # 3) far date + слабый score
+    db.add(_e2p('far-weak', score=70, main_category_id=1, days_ahead=30))
     # Контрольные — не должны уходить
     db.add(_e2p('keep-high', score=80, main_category_id=1, days_ahead=3))
     db.add(_e2p('keep-low-but-good-cat', score=50, main_category_id=1, days_ahead=3))
+    db.add(_e2p('far-strong', score=90, main_category_id=1, days_ahead=30))
+    db.add(_e2p('far-unscored', score=None, main_category_id=1, days_ahead=30))
     db.commit()
 
     routed_ids = crud_module.route_events_to_api(
-        min_score=55, hard_min_score=35,
-        low_category_ids=[2, 14], far_days=14, min_channel_queue=5,
+        min_score=55, hard_min_score=35, low_category_ids=[2, 14],
+        far_days=21, far_min_score=75, min_channel_queue=5,
     )
 
     def status_of(eid):
@@ -118,9 +120,11 @@ def test_route_events_to_api_selects_by_each_criterion(db_session_fixture):
 
     assert status_of('EVT-trash') == 'OnlyApi'
     assert status_of('EVT-low-cat') == 'OnlyApi'
-    assert status_of('EVT-far') == 'OnlyApi'
+    assert status_of('EVT-far-weak') == 'OnlyApi'
     assert status_of('EVT-keep-high') == 'ReadyToPost'
     assert status_of('EVT-keep-low-but-good-cat') == 'ReadyToPost'
+    assert status_of('EVT-far-strong') == 'ReadyToPost'
+    assert status_of('EVT-far-unscored') == 'ReadyToPost'
     assert len(routed_ids) == 3
 
 
@@ -241,6 +245,58 @@ def test_find_exhibition_duplicate_ignores_rejected_status(db_session_fixture):
     assert crud_module.find_exhibition_duplicate(
         title='Expired Show', place_id=42, main_category_id=11,
     ) == 0
+
+
+def test_find_exhibition_duplicate_sees_through_emoji_and_boilerplate(db_session_fixture):
+    """The stored title carries an AI-added emoji, the incoming one — Timepad's
+    "Входной билет на ..." wrapper. Both must still match the same core."""
+    db = db_session_fixture
+    db.add(_exhibition(1, title='💭 Выставка «Так не бывает»', place_id=42))
+    db.commit()
+
+    dup = crud_module.find_exhibition_duplicate(
+        title='Входной билет на выставку «Так не бывает»',
+        place_id=42, main_category_id=11,
+    )
+    assert dup != 0
+
+
+# --- embedding dedup helpers ----------------------------------------------
+
+
+def test_dates_overlap():
+    d = lambda day: datetime(2026, 7, day)
+    # Intersecting ranges
+    assert crud_module._dates_overlap(d(1), d(10), d(5), d(15)) is True
+    # Touching boundaries count as overlap
+    assert crud_module._dates_overlap(d(1), d(5), d(5), d(9)) is True
+    # Disjoint ranges
+    assert crud_module._dates_overlap(d(1), d(4), d(5), d(9)) is False
+    # Missing to_date falls back to from_date
+    assert crud_module._dates_overlap(d(3), None, d(1), d(5)) is True
+    assert crud_module._dates_overlap(d(7), None, d(1), d(5)) is False
+    # Missing from_date → no overlap claim
+    assert crud_module._dates_overlap(None, None, d(1), d(5)) is False
+
+
+def test_enrich_event_from_duplicate_fills_only_empty_fields(db_session_fixture):
+    db = db_session_fixture
+    survivor = _exhibition(1, title='Выставка Тело', place_id=42)
+    survivor.image = ''
+    survivor.price = '500₽'  # already set — must not be overwritten
+    db.add(survivor)
+    db.commit()
+
+    updated = crud_module._enrich_event_from_duplicate(
+        db,
+        survivor.id,
+        {'image': 'https://img.example/1.jpg', 'price': '300₽', 'ticket_url': 'https://t.example'},
+    )
+
+    assert 'image' in updated and 'ticket_url' in updated
+    assert 'price' not in updated
+    assert survivor.image == 'https://img.example/1.jpg'
+    assert survivor.price == '500₽'
 
 
 # --- Place category override --------------------------------------------------

@@ -5,6 +5,9 @@ import logging
 
 from openai import OpenAI
 
+from ...settings.settings_loader import settings
+from .openai_models import DEFAULT_OPENAI_MODEL, chat_kwargs, create_chat_completion
+
 log = logging.getLogger(__name__)
 
 # Fields that should NOT be sent to AI (internal/confusing)
@@ -12,6 +15,8 @@ _SKIP_FIELDS = {
     'post_date', 'post_url', 'queue', 'is_ready', 'status',
     'score', 'score_breakdown', 'explored_date', 'image_upload',
 }
+
+_MAX_OUTPUT_TOKENS = 4000
 
 _JSON_SCHEMA = {
     "title": "<ЭМОДЗИ> <Тип> <Название>",
@@ -33,7 +38,13 @@ class OpenAIHelper:
         self.answer = None
         self.system_message = dsn_param.site_parameters('openai_system_message', last=1)
         self.user_message = dsn_param.site_parameters('openai_user_message', last=1)
-        self.openai_model = dsn_param.site_parameters('openai_model', last=1) or 'gpt-4o'
+        self.openai_model = (
+            dsn_param.site_parameters('openai_model', last=1) or DEFAULT_OPENAI_MODEL
+        )
+        self.reasoning_effort = (
+            dsn_param.site_parameters('openai_reasoning_effort', last=1) or 'low'
+        )
+        self.verbosity = dsn_param.site_parameters('openai_verbosity', last=1) or 'low'
 
     def ai_balance(self):
         return 1
@@ -42,7 +53,7 @@ class OpenAIHelper:
         if self.system_message is not None:
             system_message = self.system_message
         else:
-            system_message = "Ты редактор-копирайтер для телеграм канала о мероприятиях в Санкт-Петербурге. У нас есть сырая информация по мероприятию необходимо адаптировать её для поста."
+            system_message = f"Ты редактор-копирайтер для телеграм канала о мероприятиях в {settings.city_name_loc}. У нас есть сырая информация по мероприятию необходимо адаптировать её для поста."
 
         if self.user_message is not None:
             user_message = self.user_message
@@ -59,11 +70,7 @@ class OpenAIHelper:
                 continue
             event_info += f"{key}: {value}\n"
 
-        completion = self.client.chat.completions.create(
-            model=self.openai_model,
-            temperature=0.5,
-            response_format={"type": "json_object"},
-            messages=[
+        messages = [
                 {"role": "system",
                  "content": system_message
                  },
@@ -95,9 +102,39 @@ class OpenAIHelper:
                 {event_info}
                  """}
             ]
+
+        completion = create_chat_completion(
+            self.client,
+            self.openai_model,
+            messages,
+            response_format={"type": "json_object"},
+            **chat_kwargs(
+                self.openai_model,
+                temperature=0.5,
+                max_tokens=_MAX_OUTPUT_TOKENS,
+                reasoning_effort=self.reasoning_effort,
+                verbosity=self.verbosity,
+            ),
         )
 
-        self.answer = completion.choices[0].message.content
+        choice = completion.choices[0]
+        usage = getattr(completion, 'usage', None)
+        if usage is not None:
+            details = getattr(usage, 'completion_tokens_details', None)
+            log.info(
+                f"refactor_post: model={self.openai_model} "
+                f"tokens in:{usage.prompt_tokens}/out:{usage.completion_tokens} "
+                f"(reasoning:{getattr(details, 'reasoning_tokens', 0)})"
+            )
+        if choice.finish_reason == 'length':
+            # On reasoning models the budget is shared with hidden reasoning, so
+            # a truncated answer means the JSON is unparseable — flag it loudly.
+            log.warning(
+                f"refactor_post: answer truncated at {_MAX_OUTPUT_TOKENS} tokens "
+                f"(model={self.openai_model}, reasoning_effort={self.reasoning_effort})"
+            )
+
+        self.answer = choice.message.content
 
         return self.answer
 
@@ -133,8 +170,11 @@ class OpenAIHelper:
         event_data['full_answer'] = self.answer
         return event_data
 
+    # AIHelper calls parse_ai_answer() on whichever provider is current.
+    parse_ai_answer = parse_gpt_answer
+
     def new_event_data(self, event):
-        replace_phrases = {'текст': 'prepared_text', 'text': 'prepared_text',
+        replace_phrases ={'текст': 'prepared_text', 'text': 'prepared_text',
                            'заголовок': 'title',
                            'категория': 'category', 'дата': 'from_date',
                            'адрес': 'address', 'стоимость': 'price',

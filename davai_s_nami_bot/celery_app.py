@@ -29,6 +29,17 @@ def create_celery_app():
         },
     }
 
+    # Daily pipeline (MSK), order matters:
+    # 04:40 full_update         — scraping (including approved-orgs to Events2Posts)
+    # 05:00 auto_promote        — NotApproved.score≥70 → Events2Posts (is_ready=NULL)
+    # 05:10 auto_moderate       — MWF, AI-moderation mid-score
+    # 05:15 auto_route_to_api   — low scoring ReadyToPost → OnlyApi (until prepare, not spend AI tokens)
+    # 05:22 dedupe_queue_early  — embedding near-dups out before AI prep is spent
+    # 05:25 prepare_unprepared  — AI-prep is_ready=NULL
+    # 05:45 embed_unembedded    — embedding for all
+    # 05:50 dedupe_channel_queue— embedding near-dups out of ReadyToPost
+    # 06:00 distribute_queue    — re-balance queue
+
     beat_schedules['auto-promote-by-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
         'schedule': crontab(minute=0, hour=5),
@@ -55,6 +66,11 @@ def create_celery_app():
             'schedule': crontab(minute=20, hour=5),
         }
 
+    beat_schedules['dedupe-channel-queue-early'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
+        'schedule': crontab(minute=22, hour=5),
+    }
+
     if settings.prepare_events_limit > 0:
         beat_schedules['prepare-unprepared-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
@@ -66,6 +82,11 @@ def create_celery_app():
         'task': 'davai_s_nami_bot.celery_tasks.embed_unembedded_events',
         'schedule': crontab(minute=45, hour=5),
         'kwargs': {'limit': 100, 'table': 'both'},
+    }
+
+    beat_schedules['dedupe-channel-queue'] = {
+        'task': 'davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
+        'schedule': crontab(minute=50, hour=5),
     }
 
     beat_schedules['distribute-event-queue'] = {

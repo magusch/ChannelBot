@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -99,6 +100,7 @@ class ScoreBreakdown:
     keyword_score: int = 50
     completeness_score: int = 50
     source_score: int = 50
+    taste_score: Optional[int] = None  # kNN over embeddings; None = no vector / no close neighbours
     repetition_penalty: int = 0
     place_queue_penalty: int = 0
     date_scarcity_boost: int = 0
@@ -112,6 +114,7 @@ class ScoreBreakdown:
             "keywords": self.keyword_score,
             "completeness": self.completeness_score,
             "source": self.source_score,
+            "taste": self.taste_score,
             "repetition_penalty": self.repetition_penalty,
             "place_queue_penalty": self.place_queue_penalty,
             "date_scarcity_boost": self.date_scarcity_boost,
@@ -134,6 +137,67 @@ def title_similarity(a: str, b: str) -> float:
     intersection = words_a & words_b
     union = words_a | words_b
     return len(intersection) / len(union)
+
+
+_TITLE_NOISE_WORDS = frozenset({
+    # ticket/entry boilerplate
+    "входной", "билет", "билеты", "вход", "абонемент", "запись", "бесплатный",
+    # prepositions / conjunctions / particles
+    "в", "во", "на", "и", "а", "с", "со", "к", "ко", "о", "об", "обо", "от",
+    "до", "по", "за", "из", "изо", "у", "не", "для", "при", "под", "над",
+    "про", "без", "или", "же", "то", "как",
+    # month names (event dates inside titles: "Большой стендап 14 июня")
+    "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+    "сентября", "октября", "ноября", "декабря",
+    "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август",
+    "сентябрь", "октябрь", "ноябрь", "декабрь",
+})
+
+# Common Russian case/plural endings, trimmed once from tokens longer than 4
+# chars so that "выставка"/"выставку"/"выставке" all collapse to "выставк".
+_STEM_ENDING_RE = re.compile(
+    r"(ами|ями|ого|его|ому|ему|ыми|ими|ах|ях|ов|ев|ой|ей|ом|ем|ы|и|а|я|у|ю|е|о|ь)$"
+)
+
+# Anything that is not a letter: emoji, digits, punctuation, quotes.
+_NON_LETTER_RE = re.compile(r"[^a-zа-яё]+")
+
+
+def _light_stem(token: str) -> str:
+    if len(token) > 4:
+        return _STEM_ENDING_RE.sub("", token)
+    return token
+
+
+def normalize_title_tokens(title: Optional[str]) -> frozenset:
+    """Title → set of stemmed core tokens (no emoji/digits/punctuation/noise words).
+
+    AI prep adds emoji prefixes and scrapers add boilerplate ("Входной билет
+    на ..."), so raw word comparison misses even identical titles. This strips
+    all of that down to the words that actually identify the event.
+    """
+    if not title:
+        return frozenset()
+    cleaned = _NON_LETTER_RE.sub(" ", title.lower().replace("ё", "е"))
+    return frozenset(
+        _light_stem(tok)
+        for tok in cleaned.split()
+        if len(tok) > 1 and tok not in _TITLE_NOISE_WORDS
+    )
+
+
+def title_containment(a: Optional[str], b: Optional[str]) -> float:
+    """Overlap of normalized title cores relative to the SHORTER one.
+
+    1.0 when one core is a subset of the other — catches "Входной билет на
+    выставку «Тело»" vs "Выставка Тело", unlike Jaccard which is diluted by
+    the boilerplate words.
+    """
+    tokens_a = normalize_title_tokens(a)
+    tokens_b = normalize_title_tokens(b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
 
 
 def _score_price(price_int, price_ranges: list) -> int:
@@ -326,8 +390,20 @@ def _check_repetition(
     existing_titles: List[str],
     threshold: float = 0.8,
 ) -> bool:
+    # Containment on normalized cores: catches date-suffixed series
+    # ("Большой стендап 14 июня" vs "... 21 июня") and emoji-prefixed
+    # prepared titles that word-level Jaccard misses.
+    tokens = normalize_title_tokens(title)
+    if not tokens:
+        return False
     for existing in existing_titles:
-        if title_similarity(title, existing) > threshold:
+        existing_tokens = normalize_title_tokens(existing)
+        if not existing_tokens:
+            continue
+        containment = len(tokens & existing_tokens) / min(
+            len(tokens), len(existing_tokens)
+        )
+        if containment > threshold:
             return True
     return False
 
@@ -347,6 +423,7 @@ def calculate_score(
     place_category_queue_counts: Optional[dict] = None,
     date_event_counts: Optional[dict] = None,
     place_reputation: Optional[dict] = None,
+    taste_score: Optional[int] = None,
 ) -> ScoreBreakdown:
     """Calculate event score based on config weights.
 
@@ -374,6 +451,12 @@ def calculate_score(
         {place_id: {posted, ready, onlyapi, rejected, spam}} — weighted place
         reputation across statuses. Takes precedence over place_post_counts.
         Weights come from scoring_config["place_reputation"].
+    taste_score : int or None
+        kNN-over-embeddings "taste" component (0-100): share of really-posted
+        events among close embedding neighbours. None (no vector yet, or no
+        close neighbours = novel event) excludes the component AND its weight,
+        so novel events are scored exactly as without it — evidence-based
+        adjustment, never a novelty penalty.
 
     Returns
     -------
@@ -422,16 +505,21 @@ def calculate_score(
     completeness_s = _score_completeness(event_data, place_id)
     source_s = _score_source(source, source_scores)
 
-    # Weighted sum
-    w_total = sum(weights.values()) or 1
-    raw = (
-        price_s * weights.get("price", 15)
-        + place_s * weights.get("place", 15)
-        + category_s * weights.get("category", 20)
-        + keyword_s * weights.get("keywords", 15)
-        + completeness_s * weights.get("completeness", 15)
-        + source_s * weights.get("source", 10)
-    ) / w_total
+    # Weighted sum. The taste component participates only when computed —
+    # its weight is excluded otherwise, so scores without embeddings are
+    # unaffected rather than diluted.
+    component_weights = [
+        (price_s, weights.get("price", 15)),
+        (place_s, weights.get("place", 15)),
+        (category_s, weights.get("category", 20)),
+        (keyword_s, weights.get("keywords", 15)),
+        (completeness_s, weights.get("completeness", 15)),
+        (source_s, weights.get("source", 10)),
+    ]
+    if taste_score is not None:
+        component_weights.append((taste_score, weights.get("taste", 20)))
+    w_total = sum(w for _, w in component_weights) or 1
+    raw = sum(s * w for s, w in component_weights) / w_total
 
     # Repetition penalty (title similarity)
     rep_penalty = 0
@@ -473,8 +561,76 @@ def calculate_score(
         keyword_score=keyword_s,
         completeness_score=completeness_s,
         source_score=source_s,
+        taste_score=taste_score,
         repetition_penalty=rep_penalty,
         place_queue_penalty=place_queue_pen,
         date_scarcity_boost=date_boost,
         total=total,
     )
+
+
+def parse_breakdown(raw) -> Optional[dict]:
+    """Parse a stored score_breakdown value into a dict.
+
+    Historical rows are sometimes double-encoded (a JSON string containing
+    JSON) depending on the code path that wrote them — unwrap both shapes.
+    """
+    if raw is None:
+        return None
+    value = raw
+    for _ in range(2):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (ValueError, TypeError):
+                return None
+    return value if isinstance(value, dict) else None
+
+
+def apply_taste_to_breakdown(
+    breakdown_raw,
+    taste_score: Optional[int],
+    scoring_config: dict,
+) -> Optional[dict]:
+    """Recompute a stored breakdown's total with a (new) taste component.
+
+    Pure and idempotent: reads the six base components + penalties/boosts from
+    the stored breakdown, sets 'taste', recomputes 'total' with the configured
+    weights. Returns the updated breakdown dict, or None when the stored
+    breakdown is unusable. taste_score=None removes the component (and its
+    weight) — the total falls back to the plain six-component score.
+    """
+    breakdown = parse_breakdown(breakdown_raw)
+    if breakdown is None:
+        return None
+
+    weights = (scoring_config or {}).get("weights", DEFAULT_WEIGHTS)
+    component_keys = [
+        ("price", "price", 15),
+        ("place", "place", 15),
+        ("category", "category", 20),
+        ("keywords", "keywords", 15),
+        ("completeness", "completeness", 15),
+        ("source", "source", 10),
+    ]
+    component_weights = []
+    for bd_key, w_key, w_default in component_keys:
+        value = breakdown.get(bd_key)
+        if value is None:
+            return None  # malformed breakdown — don't guess
+        component_weights.append((value, weights.get(w_key, w_default)))
+    if taste_score is not None:
+        component_weights.append((taste_score, weights.get("taste", 20)))
+
+    w_total = sum(w for _, w in component_weights) or 1
+    raw_score = sum(s * w for s, w in component_weights) / w_total
+    total = int(
+        raw_score
+        + (breakdown.get("repetition_penalty") or 0)
+        + (breakdown.get("place_queue_penalty") or 0)
+        + (breakdown.get("date_scarcity_boost") or 0)
+    )
+
+    breakdown["taste"] = taste_score
+    breakdown["total"] = max(0, min(100, total))
+    return breakdown

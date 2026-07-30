@@ -6,6 +6,8 @@ import time
 
 from openai import OpenAI, OpenAIError
 
+from ...settings.settings_loader import settings
+
 log = logging.getLogger(__name__)
 
 # Fields that should NOT be sent to AI (internal/confusing)
@@ -38,14 +40,14 @@ class GeminiHelper:
 
         self.system_message = dsn_param.site_parameters('gemini_system_message', last=1)
         self.user_message = dsn_param.site_parameters('gemini_user_message', last=1)
-        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-2.5-flash"
+        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-3.5-flash"
         self.answer = None
 
     def ai_balance(self):
         return 1
 
     def refactor_post(self, event):
-        system_message = self.system_message or "Ты редактор-копирайтер для телеграм канала о мероприятиях в Санкт-Петербурге. " \
+        system_message = self.system_message or f"Ты редактор-копирайтер для телеграм канала о мероприятиях в {settings.city_name_loc}. " \
                              "У нас есть сырая информация по мероприятию необходимо адаптировать её для поста."
         user_message = self.user_message or """Необходимо прочитать текст, заголовок и другую информацию и отредактировать их по следующим инструкциям:
                  Заголовок не должен содержать какие-то даты и упоминания места проведения мероприятия. Необходимо из текста понять какой тип мероприятия (лекция, кинопоказ, концерт, фестиваль и другие) (на кирилице), название мероприятия на кирилице нужно поставить в кавычки, если название мероприятия на латинице то кавычки не нужны. Добавить какое-нибудь яркое и необычное эмодзи в начале по смыслу или просто любое. В конечном итоге составить заголовк по шаблону "<ЭМОДЗИ> <Тип мероприятия> <Название мероприятия>". Пример (🚀 Лекция «Покорение космоса в СССР»).
@@ -96,7 +98,7 @@ class GeminiHelper:
             try:
                 completion = self.client.chat.completions.create(
                     model=self.model,
-                    temperature=0.5,
+                    temperature=0.8,
                     response_format={"type": "json_object"},
                     messages=messages,
                 )
