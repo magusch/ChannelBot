@@ -5,6 +5,7 @@ from .ai.perplexity_helper import PerplexityHelper
 from .ai.open_ai_helper import OpenAIHelper
 from .ai.claude_helper import ClaudeHelper
 from .ai.gemini_helper import GeminiHelper
+from .ai.openai_models import chat_kwargs, create_chat_completion
 
 from .dsn_parameters import DSNParameters
 
@@ -122,14 +123,14 @@ class AIHelper:
         else:
             # OpenAI-compatible: OpenAI, Gemini, Perplexity
             model_id = getattr(model, 'model', None) or getattr(model, 'openai_model', None)
-            completion = model.client.chat.completions.create(
-                model=model_id,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                messages=[
+            completion = create_chat_completion(
+                model.client,
+                model_id,
+                [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                **chat_kwargs(model_id, temperature=temperature, max_tokens=max_tokens),
             )
             finish_reason = completion.choices[0].finish_reason
             log.info(f"generate_text: {model_name} finish_reason={finish_reason}")

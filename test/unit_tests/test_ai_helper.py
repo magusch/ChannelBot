@@ -144,6 +144,89 @@ class TestOpenAIHelper:
         assert result['ai_relevant'] is False
 
 
+# --- OpenAI model/param compatibility ---
+
+class TestOpenAIModelParams:
+    def test_reasoning_model_detection(self):
+        from davai_s_nami_bot.helper.ai.openai_models import is_reasoning_model
+        assert is_reasoning_model('gpt-5.4-mini')
+        assert is_reasoning_model('gpt-5-mini')
+        assert is_reasoning_model('o4-mini')
+        assert not is_reasoning_model('gpt-4o')
+        assert not is_reasoning_model('gemini-2.5-flash')
+        assert not is_reasoning_model(None)
+
+    def test_kwargs_for_new_model(self):
+        from davai_s_nami_bot.helper.ai.openai_models import chat_kwargs
+        kwargs = chat_kwargs(
+            'gpt-5.4-mini', temperature=0.5, max_tokens=4000,
+            reasoning_effort='low', verbosity='low',
+        )
+        # max_tokens renamed, temperature dropped, gpt-5 knobs added
+        assert kwargs == {
+            'max_completion_tokens': 4000,
+            'reasoning_effort': 'low',
+            'verbosity': 'low',
+        }
+
+    def test_kwargs_for_legacy_model_unchanged(self):
+        from davai_s_nami_bot.helper.ai.openai_models import chat_kwargs
+        # Gemini/Perplexity go through the same helper and must keep the old shape
+        for model in ('gpt-4o', 'gemini-2.5-flash', 'sonar'):
+            assert chat_kwargs(
+                model, temperature=0.8, max_tokens=2000,
+                reasoning_effort='low', verbosity='low',
+            ) == {'max_tokens': 2000, 'temperature': 0.8}
+
+    def test_rejected_param_is_dropped_and_retried(self):
+        from openai import BadRequestError
+        from davai_s_nami_bot.helper.ai.openai_models import create_chat_completion
+
+        error = BadRequestError(
+            "Unsupported value: 'verbosity' does not support 'low' with this model",
+            response=MagicMock(status_code=400, headers={}),
+            body={'param': 'verbosity'},
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [error, 'ok']
+
+        result = create_chat_completion(
+            client, 'gpt-5.4-mini', [{'role': 'user', 'content': 'hi'}],
+            max_completion_tokens=100, verbosity='low',
+        )
+        assert result == 'ok'
+        assert client.chat.completions.create.call_count == 2
+        # the retry keeps everything except the rejected param
+        retry_kwargs = client.chat.completions.create.call_args.kwargs
+        assert 'verbosity' not in retry_kwargs
+        assert retry_kwargs['max_completion_tokens'] == 100
+
+    def test_unrelated_bad_request_propagates(self):
+        from openai import BadRequestError
+        from davai_s_nami_bot.helper.ai.openai_models import create_chat_completion
+
+        error = BadRequestError(
+            'Invalid value for messages',
+            response=MagicMock(status_code=400, headers={}),
+            body={'param': 'messages'},
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = error
+
+        with pytest.raises(BadRequestError):
+            create_chat_completion(
+                client, 'gpt-5.4-mini', [], max_completion_tokens=100, verbosity='low'
+            )
+        assert client.chat.completions.create.call_count == 1
+
+    def test_default_model_is_used_when_redis_param_missing(self, mock_dsn):
+        from davai_s_nami_bot.helper.ai.open_ai_helper import OpenAIHelper
+        from davai_s_nami_bot.helper.ai.openai_models import DEFAULT_OPENAI_MODEL
+        helper = OpenAIHelper(mock_dsn)
+        assert helper.openai_model == DEFAULT_OPENAI_MODEL == 'gpt-5.4-mini'
+        assert helper.reasoning_effort == 'low'
+
+
 # --- Gemini Helper ---
 
 class TestGeminiHelper:

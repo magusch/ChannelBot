@@ -40,7 +40,7 @@ class GeminiHelper:
 
         self.system_message = dsn_param.site_parameters('gemini_system_message', last=1)
         self.user_message = dsn_param.site_parameters('gemini_user_message', last=1)
-        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-2.5-flash"
+        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-3.5-flash"
         self.answer = None
 
     def ai_balance(self):
@@ -98,7 +98,7 @@ class GeminiHelper:
             try:
                 completion = self.client.chat.completions.create(
                     model=self.model,
-                    temperature=0.5,
+                    temperature=0.8,
                     response_format={"type": "json_object"},
                     messages=messages,
                 )
