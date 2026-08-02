@@ -54,7 +54,7 @@ async def event_from_url(body: EventUrlRequest, request: Request):
 
 @router.post("/new-event-from-sites/", response_model=TaskResponse,
               summary="Scrape from sites",
-              description="Start scraping events from the specified source sites. Sources: timepad, radario, ticketscloud, qtickets, mts, kassir, culture, cfg, vk, telegram.")
+              description="Start scraping events from the specified source sites. Sources: timepad, radario, ticketscloud, qtickets, mts, kassir, afisha, yandex, culture, cfg, vk, telegram.")
 async def new_event_from_sites(body: NewEventFromSitesRequest):
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.update_event_from_sites',

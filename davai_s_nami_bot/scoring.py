@@ -73,6 +73,7 @@ DEFAULT_SOURCE_SCORES = {
     "ticketscloud": 75,
     "qtickets": 65,
     "mts": 60,
+    "ya": 55,
     "culture.ru": 60,
     "vk": 45,
     "telegram": 40,

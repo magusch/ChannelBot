@@ -405,7 +405,7 @@ def _update_events(events, table, msk_today):
 @celery_app.task(soft_time_limit=1800, time_limit=1920)
 def update_event_from_sites(sites=None, days=7):
     if sites is None or sites[0] == 'all':
-        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir', 'afisha']
+        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir', 'afisha', 'yandex']
     log.info("Start updating events from special sites.")
     msk_today = get_msk_today()
 

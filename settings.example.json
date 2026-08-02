@@ -68,6 +68,11 @@
         "city": "spb",
         "categories": ["concerts", "theatre", "exhibitions", "standup", "festivals", "musicals", "party"],
         "days": 30
+      },
+      "yandex": {
+        "city": "saint-petersburg",
+        "categories": ["concert", "theatre", "festival", "standup", "show", "sport"],
+        "days": 7
       }
     },
     "scoring": {

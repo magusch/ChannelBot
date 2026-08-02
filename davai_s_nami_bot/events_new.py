@@ -27,6 +27,7 @@ from escraper.parsers import (
     Telegram,
     Ticketscloud,
     Timepad,
+    Yandex,
 )
 
 from . import crud
@@ -410,6 +411,7 @@ tg_parser = Telegram(use_proxy=_use_proxy("tg"))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy("cfg"))
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
+yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +446,7 @@ class ScrapeEvents:
     _cfg_parser = cfg_parser
     _kassir_parser = kassir_parser
     _afisha_parser = afisha_parser
+    _yandex_parser = yandex_parser
 
     PARSER_URLS = {
         "timepad.ru": _timepad_parser,
@@ -455,6 +458,7 @@ class ScrapeEvents:
         "culture.ru": _culture_parser,
         "t.me": _tg_parser,
         "kassir.ru": _kassir_parser,
+        "afisha.yandex.ru": _yandex_parser,
         "afisha.ru": _afisha_parser,
     }
 
@@ -472,6 +476,7 @@ class ScrapeEvents:
             "cfg": self.get_cfg_events,
             "kassir": self.get_kassir_events,
             "afisha": self.get_afisha_events,
+            "yandex": self.get_yandex_events,
         }
 
     # ------------------------------------------------------------------
@@ -525,6 +530,8 @@ class ScrapeEvents:
             events_list += self.run_scraper("culture", days)
         elif weekday == 3 or weekday == 6:
             events_list += self.run_scraper("afisha", days)
+        elif weekday == 1:
+            events_list += self.run_scraper("yandex", days)
 
         return events_list
 
@@ -982,6 +989,43 @@ class ScrapeEvents:
         yield from _apply_filter(
             _iter_events(
                 self._afisha_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids,
+            ),
+            events_filter,
+        )
+
+    # ------------------------------------------------------------------
+    # Yandex Afisha
+    # ------------------------------------------------------------------
+
+    def get_yandex_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        yandex_settings = settings.escraper_parameters.get("yandex", {})
+        days = int(yandex_settings.get("days", days) or 7)
+
+        # City is a URL slug on afisha.yandex.ru ('saint-petersburg'), not the
+        # short city code used by the other scrapers.
+        yandex_city = yandex_settings.get("city", "saint-petersburg")
+        yandex_cities = dsn_parameters.read_param("yandex").get("city")
+        if yandex_cities:
+            yandex_city = yandex_cities[0]
+
+        request_params = {
+            "city": yandex_city,
+            "date_from": date.today().strftime("%Y-%m-%d"),
+            "days": days,
+        }
+        yandex_categories = yandex_settings.get("categories")
+        if yandex_categories:
+            request_params["categories"] = yandex_categories
+
+        existed_event_ids = crud.get_event_id_by_prefix("YA")
+        yield from _apply_filter(
+            _iter_events(
+                self._yandex_parser,
                 request_params=request_params,
                 tags=ALL_EVENT_TAGS,
                 existed_event_ids=existed_event_ids,
