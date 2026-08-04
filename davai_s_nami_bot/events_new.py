@@ -27,10 +27,12 @@ from escraper.parsers import (
     Telegram,
     Ticketscloud,
     Timepad,
+    Tripster,
     Yandex,
 )
 
 from . import crud
+from .helper import tripster_filter
 from .helper.dsn_parameters import dsn_parameters
 from .logger import catch_exceptions, get_logger
 from .settings.settings_loader import settings
@@ -133,6 +135,66 @@ def _apply_filter(events: Iterable, events_filter: Optional[Callable]) -> Iterab
 def _get_event(parser, *args, **kwargs):
     event = parser.get_event(*args, **kwargs)
     return ParserEvent.from_parser(event)
+
+
+def _fetch_tripster_experiences(
+    parser,
+    request_params: Dict[str, Any],
+    existed_event_ids: Optional[Iterable[str]] = None,
+    max_pages: int = 10,
+) -> List[Dict[str, Any]]:
+    """Fetch raw Tripster search results, following pagination.
+
+    escraper's `Tripster.get_events()` parses every result immediately and
+    reads only the first page. The selection in `tripster_filter` needs the
+    raw objects (rating, review_count, schedule, guide) and the whole pool to
+    pick from, so the search call is made here instead.
+    """
+    params = dict(request_params)
+    days = int(params.pop("days", 7) or 7)
+    today = datetime.now().date()
+    params["start_date"] = today.strftime("%Y-%m-%d")
+    params["end_date"] = (today + timedelta(days=days)).strftime("%Y-%m-%d")
+    params["need_upcoming_events"] = "true"
+    params["detailed"] = "true"
+    params["include_paid"] = "false"
+    if existed_event_ids:
+        params["exclude_ids"] = ",".join(
+            str(event_id).split("-")[-1] for event_id in existed_event_ids
+        )
+
+    url = parser.search_api.format(partner_id=parser.partner_id)
+    query = params
+    items: List[Dict[str, Any]] = []
+
+    for _ in range(max(1, max_pages)):
+        response = parser._request_get(url, params=query, headers=parser.headers)
+        if not response:
+            log.warning(
+                f"Tripster: search request failed, keeping {len(items)} collected"
+            )
+            break
+        try:
+            payload = response.json()
+        except ValueError as e:
+            log.error(f"Tripster: unparsable search response: {e}")
+            break
+
+        items.extend(
+            obj for obj in payload.get("results") or [] if isinstance(obj, dict)
+        )
+        url = payload.get("next")
+        if not url:
+            break
+        # 'next' already carries the query string.
+        query = None
+    else:
+        log.warning(
+            f"Tripster: stopped at max_pages={max_pages} with {len(items)} "
+            f"experiences — the pool may be truncated"
+        )
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +475,24 @@ kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
 
+_tripster_parser = None
+_tripster_unavailable = False
+
+
+def get_tripster_parser() -> Optional[Tripster]:
+    """Return a Tripster parser, or None when credentials are missing."""
+    global _tripster_parser, _tripster_unavailable
+    if _tripster_parser is None and not _tripster_unavailable:
+        try:
+            _tripster_parser = Tripster(use_proxy=_use_proxy("tripster"))
+        except ValueError as e:
+            _tripster_unavailable = True
+            log.warning(
+                f"Tripster parser unavailable ({e}) — "
+                f"set TRIPSTER_TOKEN and TRIPSTER_PARTNER_ID to enable it."
+            )
+    return _tripster_parser
+
 
 # ---------------------------------------------------------------------------
 # ScrapeEvents — all scraper logic lives here
@@ -477,6 +557,7 @@ class ScrapeEvents:
             "kassir": self.get_kassir_events,
             "afisha": self.get_afisha_events,
             "yandex": self.get_yandex_events,
+            "tripster": self.get_tripster_events,
         }
 
     # ------------------------------------------------------------------
@@ -1039,6 +1120,12 @@ class ScrapeEvents:
 
     def from_url(self, event_url: str) -> Optional[ParserEvent]:
         """Get event by URL, matching against known parser URL patterns."""
+        if "tripster.ru" in event_url:
+            parser = get_tripster_parser()
+            if parser is None:
+                return None
+            return _get_event(parser, exp_url=event_url)
+
         for parser_base_url, parser in self.PARSER_URLS.items():
             if parser_base_url in event_url:
                 return _get_event(parser, event_url=event_url)

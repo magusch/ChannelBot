@@ -21,7 +21,7 @@
       "enabled": false,
       "min_score": 55,
       "hard_min_score": 35,
-      "low_category_ids": [2, 14],
+      "low_category_ids": [2, 13],
       "far_days": 21,
       "far_min_score": 75,
       "limit": 100,
@@ -69,6 +69,15 @@
         "categories": ["concerts", "theatre", "exhibitions", "standup", "festivals", "musicals", "party"],
         "days": 30
       },
+      "tripster": {
+        "city": "Saint_Petersburg", "days": 7, "max_pages": 10,
+        "filter": {
+          "min_rating": 4.75, "min_reviews": 3, "max_sessions": 0,
+          "types": ["group"], "max_price": 3500, "max_duration_hours": 5,
+          "max_group_size": 25, "require_local_topic": false,
+          "similar_title_threshold": 0.75, "max_per_guide": 3, "limit": 250
+        }
+      },
       "yandex": {
         "city": "saint-petersburg",
         "categories": ["concert", "theatre", "festival", "standup", "show", "sport"],
@@ -98,13 +107,13 @@
         "1": 90, "8": 85, "6": 85,
         "9": 85, "10": 80, "7": 70,
         "11": 65, "3": 60, "4": 55,
-        "13": 55, "14": 50, "12": 50,
+        "12": 55, "13": 50,
         "5": 45, "2": 30
       },
       "source_scores": {
         "timepad": 70, "radario": 70, "tc": 65,
         "qt": 65, "mts": 60, "cltr": 60,
-        "cfg": 65, "kassir": 60, "afisha": 55, "other": 80,
+        "cfg": 65, "kassir": 60, "afisha": 55, "ya": 55, "tripster": 55, "other": 80,
         "vk": 45, "tg": 40, "instagram": 40
       },
       "boost_keywords": [

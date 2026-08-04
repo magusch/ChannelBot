@@ -74,6 +74,39 @@ REQUIRED_CONSTANT_NAMES = [
 ]
 
 
+def _parse_constant_line(line):
+    """Parse one 'prod_constants' line into (tag, value), or None to skip it.
+
+    The file is hand-edited, and a bare `line.split()` used to raise on any
+    line that was not exactly two tokens — a single blank line, a comment or a
+    `KEY = value` written out of habit took down every import of this package.
+    Accepts `KEY value`, `KEY = value` and `KEY=value`, and keeps values that
+    contain spaces intact.
+    """
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+
+    head = line.split(maxsplit=1)[0]
+    if "=" in head:
+        tag, _, value = line.partition("=")
+    else:
+        parts = line.split(maxsplit=1)
+        if len(parts) < 2:
+            return None
+        tag, value = parts
+        value = value.lstrip()
+        if value.startswith("="):
+            value = value[1:]
+
+    tag, value = tag.strip(), value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    if not tag or not value:
+        return None
+    return tag, value
+
+
 def read_constants():
     if os.path.exists(CONSTANTS_FILE_NAME):
         warnings.warn(
@@ -88,7 +121,10 @@ def read_constants():
 
         with open(CONSTANTS_FILE_NAME) as file:
             for line in file:
-                tag, value = line.split()
+                parsed = _parse_constant_line(line)
+                if parsed is None:
+                    continue
+                tag, value = parsed
 
                 os.environ[tag] = value
 

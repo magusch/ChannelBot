@@ -148,7 +148,7 @@ sees the result of the previous one on the same day.
 ### Event processing flow
 
 ```
-Sources (timepad, radario, qtickets, ticketscloud, mts, culture, vk, telegram, cfg)
+Sources (timepad, radario, qtickets, ticketscloud, mts, kassir, afisha, yandex, culture, vk, telegram, cfg)
     ↓ full_update → update_events (scraper rotation by weekday)
 EventsNotApproved (status: new, score computed)
     ├─ score >= 70 → auto_promote → Events2Posts (ReadyToPost, is_ready=NULL)
