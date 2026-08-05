@@ -1115,6 +1115,66 @@ class ScrapeEvents:
         )
 
     # ------------------------------------------------------------------
+    # Tripster (excursions) — not in the weekday rotation, run explicitly
+    # ------------------------------------------------------------------
+
+    def get_tripster_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Scrape Tripster excursions, keeping only the curated selection.
+
+        Unlike the other sources this one filters the raw API payload before
+        parsing: the signals worth selecting on (rating, review_count,
+        schedule, guide, duration) do not survive `Tripster.parse()`. See
+        `tripster_filter` for the policy and its settings.
+        """
+        parser = get_tripster_parser()
+        if parser is None:
+            return
+
+        tripster_settings = settings.escraper_parameters.get("tripster", {})
+        days = int(tripster_settings.get("days", days) or 7)
+
+        # Tripster wants its own city slug ('Saint_Petersburg', 'Kazan').
+        city_slug = tripster_settings.get("city", "Saint_Petersburg")
+        tripster_cities = dsn_parameters.read_param("tripster").get("city")
+        if tripster_cities:
+            city_slug = tripster_cities[0]
+
+        request_params = {
+            "city__slug": city_slug,
+            "days": days,
+        }
+        existed_event_ids = crud.get_event_id_by_prefix("TRIPSTER")
+
+        raw_items = _fetch_tripster_experiences(
+            parser,
+            request_params,
+            existed_event_ids=existed_event_ids,
+            max_pages=int(tripster_settings.get("max_pages", 10)),
+        )
+        selected, funnel = tripster_filter.select_experiences(
+            raw_items, tripster_settings.get("filter"), days=days
+        )
+        log.info(
+            "Tripster selection funnel: "
+            + ", ".join(f"{stage}={count}" for stage, count in funnel.items())
+        )
+
+        events = []
+        for item in selected:
+            try:
+                parsed = parser.parse(item, tags=ALL_EVENT_TAGS)
+            except Exception as e:
+                log.error(f"Tripster: failed to parse experience {item.get('id')}: {e}")
+                continue
+            if not parsed.is_registration_open:
+                continue
+            events.append(ParserEvent.from_parser(parsed))
+
+        yield from _apply_filter(events, events_filter)
+
+    # ------------------------------------------------------------------
     # Single event by URL
     # ------------------------------------------------------------------
 
