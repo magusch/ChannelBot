@@ -1,46 +1,30 @@
 # -*- coding: utf-8 -*-
-import datetime
-import json
 import logging
 
 from openai import OpenAI
 
-from ...settings.settings_loader import settings
+from .answer_parser import parse_event_answer
 from .openai_models import DEFAULT_OPENAI_MODEL, chat_kwargs, create_chat_completion
+from .prompts import build_user_message, resolve_prompts
 
 log = logging.getLogger(__name__)
 
-# Fields that should NOT be sent to AI (internal/confusing)
-_SKIP_FIELDS = {
-    'post_date', 'post_url', 'queue', 'is_ready', 'status',
-    'score', 'score_breakdown', 'explored_date', 'image_upload',
-}
-
+# Output budget for one prepared post. On gpt-5.x this is shared with hidden
+# reasoning tokens, hence the headroom over the ~500 tokens the JSON needs.
 _MAX_OUTPUT_TOKENS = 4000
-
-_JSON_SCHEMA = {
-    "title": "<ЭМОДЗИ> <Тип> <Название>",
-    "prepared_text": "<Текст 2-4 предложения>",
-    "category": "<Категория>",
-    "address": "<Место, адрес, метро>",
-    "price": "<Цена или Бесплатно>",
-    "from_date": "<YYYY-MM-DDTHH:MM>",
-    "to_date": "<YYYY-MM-DDTHH:MM или null>",
-    "url": "<ссылка>",
-    "relevant": True,
-    "reject_reason": "",
-}
 
 
 class OpenAIHelper:
     def __init__(self, dsn_param):
         self.client = OpenAI()
         self.answer = None
-        self.system_message = dsn_param.site_parameters('openai_system_message', last=1)
-        self.user_message = dsn_param.site_parameters('openai_user_message', last=1)
+        self.system_message, self.user_message = resolve_prompts(dsn_param, 'openai')
         self.openai_model = (
             dsn_param.site_parameters('openai_model', last=1) or DEFAULT_OPENAI_MODEL
         )
+        # gpt-5.x knobs, optional Redis params. Copywriting needs no deep
+        # reasoning, so keep the effort low (it is billed as output tokens) and
+        # the answer terse — unsupported values are dropped automatically.
         self.reasoning_effort = (
             dsn_param.site_parameters('openai_reasoning_effort', last=1) or 'low'
         )
@@ -50,63 +34,13 @@ class OpenAIHelper:
         return 1
 
     def refactor_post(self, event):
-        if self.system_message is not None:
-            system_message = self.system_message
-        else:
-            system_message = f"Ты редактор-копирайтер для телеграм канала о мероприятиях в {settings.city_name_loc}. У нас есть сырая информация по мероприятию необходимо адаптировать её для поста."
-
-        if self.user_message is not None:
-            user_message = self.user_message
-        else:
-            user_message = """Необходимо прочитать текст, заголовок и другую информацию и отредактировать их по следующим инструкциям:
-                 Заголовок не должен содержать какие-то даты и упоминания места проведения мероприятия. Необходимо из текста понять какой тип мероприятия (лекция, кинопоказ, концерт, фестиваль и другие) (на кирилице), название мероприятия на кирилице нужно поставить в кавычки, если название мероприятия на латинице то кавычки не нужны. Добавить какое-нибудь яркое и необычное эмодзи в начале по смыслу или просто любое. В конечном итоге составить заголовк по шаблону "<ЭМОДЗИ> <Тип мероприятия> <Название мероприятия>". Пример (🚀 Лекция «Покорение космоса в СССР»).
-                 Текст мероприятия адаптировать для того чтобы быстро понять суть мероприятия и завлечь читателей. Не делать текст слишком официальным и строгим. Также текст мероприятия не должен содержать какие-то точные даты, по возможности перевести их в указания дней недель или названия праздника. Убрать все ненужные ссылки, спец-символы и другие мешающие вещи из текста. Из всего текста выделить основную мысль и выложить её в одном абзаце (2-4 предложения). Стиль написания должен быть упрощённым и понятным, оставить капельку любопытсва если оно присутсововало в оригинальном тексте. Текст не должен быть от первого лица. Все местоимения перефразировать в третье лицо ("они что-то сделали"). В тексте также не надо использовать необязательную информацию по типу названия места проведения, график работы и стоимость входа, если нету необходимости увеличения количества символов в посте (к примеру оригинальный текст слишком короткий)."""
-
-        today = datetime.date.today().isoformat()
-
-        event_info = "Мероприятие:\n"
-        for key, value in event.items():
-            if key in _SKIP_FIELDS or value is None:
-                continue
-            event_info += f"{key}: {value}\n"
-
-        messages = [
-                {"role": "system",
-                 "content": system_message
-                 },
-                {"role": "user",
-                 "content":
-                 user_message +
-                     f"""
-                     На основе предоставленной информации о мероприятии, адаптируй её для поста.
-
-                        Верни результат строго в формате JSON:
-                        {json.dumps(_JSON_SCHEMA, ensure_ascii=False, indent=2)}
-
-                        Правила заполнения полей:
-                        1) title — заголовок по шаблону "<ЭМОДЗИ> <Тип мероприятия> <Название>".
-                        2) prepared_text — краткое описание 2-4 предложения, завлекающее, без дат и адресов.
-                        3) category — одна из: Концерты, Кино, Лекции, Культура, Фестивали, Театр, Вечеринки, Перфомансы, Стэндап, Выставки, Спорт, Мастер-классы, Экскурсии, Без категории.
-                        4) price — если указана: "цифры + валюта". Скидка для студентов: "цена / студ.цена (инфо)". Бесплатно: "Бесплатно". Если не указана — null.
-                        5) address — название места, адрес, станция метро (если знаешь). Без города и района.
-                        6) from_date, to_date — формат YYYY-MM-DDTHH:MM, UTC+3. Только из исходных данных.
-                        7) url — ссылка на мероприятие из исходных данных.
-                        8) relevant — false если мероприятие: корпоратив, бизнес-мероприятие, детское, платный курс/тренинг, реклама без события, онлайн-вебинар, или мероприятие уже прошло (from_date < {today}).
-                           true во всех остальных случаях.
-                        9) reject_reason — причина если relevant=false, иначе пустая строка.
-
-                        Сегодняшняя дата: {today}. Используй её для определения прошло ли мероприятие.
-                        Включай только достоверные данные из исходной информации.
-
-                        Исходная информация:
-                {event_info}
-                 """}
-            ]
-
         completion = create_chat_completion(
             self.client,
             self.openai_model,
-            messages,
+            [
+                {"role": "system", "content": self.system_message},
+                {"role": "user", "content": build_user_message(self.user_message, event)},
+            ],
             response_format={"type": "json_object"},
             **chat_kwargs(
                 self.openai_model,
@@ -128,7 +62,7 @@ class OpenAIHelper:
             )
         if choice.finish_reason == 'length':
             # On reasoning models the budget is shared with hidden reasoning, so
-            # a truncated answer means the JSON is unparseable — flag it loudly.
+            # a truncated answer means unparseable JSON — flag it loudly.
             log.warning(
                 f"refactor_post: answer truncated at {_MAX_OUTPUT_TOKENS} tokens "
                 f"(model={self.openai_model}, reasoning_effort={self.reasoning_effort})"
@@ -139,36 +73,7 @@ class OpenAIHelper:
         return self.answer
 
     def parse_gpt_answer(self):
-        if self.answer is None:
-            return {}
-
-        # Try JSON first
-        try:
-            text = self.answer.strip()
-            if text.startswith('```'):
-                text = text.split('\n', 1)[1] if '\n' in text else text[3:]
-                text = text.rsplit('```', 1)[0]
-            data = json.loads(text)
-            data['full_answer'] = self.answer
-            return data
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        # Fallback to key => value parsing
-        log.warning("JSON parse failed, falling back to key=>value parsing")
-        data = self.answer.split('\n')
-        event_data = {}
-        for d in data:
-            if d.strip() == '':
-                continue
-            divided = d.split('=>')
-            if len(divided) >= 2:
-                event_data[divided[0].strip().lower()] = divided[-1].strip().replace(';', '')
-
-        if 'текст' not in event_data or len(event_data.get('текст', '').strip()) < 100:
-            event_data['текст'] = self.answer
-        event_data['full_answer'] = self.answer
-        return event_data
+        return parse_event_answer(self.answer)
 
     # AIHelper calls parse_ai_answer() on whichever provider is current.
     parse_ai_answer = parse_gpt_answer
