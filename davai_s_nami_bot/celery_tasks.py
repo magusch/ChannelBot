@@ -361,10 +361,11 @@ def schedule_generated_posting_tasks():
                 if current_task_id:
                     celery_app.control.revoke(current_task_id, terminate=False)
 
-            result = post_generated_by_schedule.apply_async((schedule['id'],), eta=schedule['eta_utc'])
+            schedule_id = schedule['schedule_id']
+            result = post_generated_by_schedule.apply_async((schedule_id,), eta=schedule['eta_utc'])
             schedule_time_str = schedule['eta_utc'].strftime('%Y-%m-%d %H:%M:%S')
             redis_client.hset(redis_key,
-                              mapping={'time': schedule_time_str, 'task_id': result.id, 'schedule_id': str(schedule['id'])})
+                              mapping={'time': schedule_time_str, 'task_id': result.id, 'schedule_id': str(schedule_id)})
             log.info(f"Generated posting task ({platform}) scheduled to {schedule_time_str}")
 
 
