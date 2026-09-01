@@ -1453,11 +1453,21 @@ def schedule_theme_post(
             planned.append({'date': str(slot.date()), **result})
             continue
 
-        schedule = cg_crud.create_posting_schedule({
-            'generated_post_id': result['id'],
-            'scheduled_time': slot.replace(tzinfo=None),
-            'platform': platform,
-        })
+        try:
+            schedule = cg_crud.create_posting_schedule({
+                'generated_post_id': result['id'],
+                'scheduled_time': slot.replace(tzinfo=None),
+                'platform': platform,
+            })
+        except Exception as e:
+            log.error(
+                f"Theme post {result['id']} built but could not be scheduled for "
+                f"{slot}: {e}"
+            )
+            planned.append({'date': str(slot.date()), 'status': 'schedule_failed',
+                            'error': str(e), **result})
+            continue
+
         result['schedule_id'] = schedule['id']
         used_filter_ids.append(result['filter_set_id'])
         planned.append({'date': str(slot.date()), **result})

@@ -29,9 +29,26 @@ log = logging.getLogger(__name__)
 
 MSK_TZ = timezone(timedelta(hours=3))
 
-#: Slack over the 200 chars the prompt asks for: models overshoot by a few
-#: words, and cutting at exactly 200 ends mid-word.
-INTRO_HARD_LIMIT = 280
+#: Slack over what the prompt asks for: models overshoot by a few words, and
+#: cutting at exactly the asked-for number ends mid-word.
+INTRO_SLACK = 80
+
+
+def _clean_intro(raw, intro_max):
+    """Trim an intro to whole sentences rather than mid-word.
+
+    A character cut left posts opening with "...если хочется просто смотреть
+    кино, а не…", which reads worse than one sentence fewer.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    limit = int(intro_max) + INTRO_SLACK
+    trimmed = themes.trim_sentences(text, limit)
+    # A single over-long sentence survives trim_sentences untouched.
+    if themes.visible_length(trimmed) > limit:
+        return themes.shorten(trimmed, limit)
+    return trimmed
 
 #: No count: the web-app list is live, so its size is unknown when rendering.
 DEFAULT_FOOTER_LABEL = "Все мероприятия — в приложении"
@@ -67,12 +84,16 @@ DEFAULT_THEME_PARAMS = {
     "picks_label": "\u0421\u043e\u0432\u0435\u0442\u0443\u044e \u0441\u0445\u043e\u0434\u0438\u0442\u044c:",
     # 0 = derive from the remaining budget.
     "comment_chars": 0,
+    "intro_chars": 260,
     "paragraph_max": 320,
     # feed = scored/diversified, no embedding. semantic = embedding match.
     "selection": "semantic",
     "require_start_in_window": True,
     "max_duration_days": 0,
     "exclude_category_ids": [],
+    # Publication weekdays: [3, 4] / "3-4" / "0,2,4" / None = any.
+    "weekdays": None,
+    "min_lead_days": 1,
     # filter = live web-app list (no bot handler). selection = frozen pool.
     "footer_link": "filter",
     "footer_label": "",
@@ -112,6 +133,53 @@ WEEKEND_PLANNING_WEEKDAYS = frozenset({3, 4})
 def is_weekend_theme(filter_set):
     """True if the theme's date window targets the weekend."""
     return _theme_params(filter_set)["range"] in WEEKEND_RANGES
+
+
+def parse_weekdays(value):
+    """Weekday restriction -> frozenset of 0..6 (Mon=0), or None for "any day".
+
+    Accepts a list (``[3, 4]``), a range (``"3-4"``), a comma list (``"0,2,4"``)
+    and ``"*"``/``None``/``""`` for no restriction. Pure — unit-tested.
+    """
+    if value is None or value == "" or value == "*":
+        return None
+    if isinstance(value, int):
+        value = [value]
+    if isinstance(value, str):
+        parts = []
+        for chunk in value.replace(" ", "").split(","):
+            if not chunk:
+                continue
+            if "-" in chunk[1:]:
+                lo, _, hi = chunk.partition("-")
+                parts.extend(range(int(lo), int(hi) + 1))
+            else:
+                parts.append(int(chunk))
+        value = parts
+    days = frozenset(int(d) % 7 for d in value)
+    return days or None
+
+
+def theme_weekdays(filter_set):
+    """Days a theme may be published on, or None for any day.
+
+    A weekend theme defaults to Thursday/Friday: a digest of the coming weekend
+    is planning material, and on Tuesday it is four days early. An explicit
+    ``weekdays`` in the theme's params overrides that.
+    """
+    params = _theme_params(filter_set)
+    explicit = parse_weekdays(params.get("weekdays"))
+    if explicit is not None:
+        return explicit
+    if params["range"] in WEEKEND_RANGES:
+        return WEEKEND_PLANNING_WEEKDAYS
+    return None
+
+
+def runs_on_weekday(filter_set, weekday):
+    """True if the theme is allowed to be published on ``weekday``."""
+    days = theme_weekdays(filter_set)
+    return days is None or weekday in days
 
 
 def slot_after_last_event(
@@ -170,10 +238,14 @@ def pick_theme(filter_sets, recent_filter_ids, weekday=None, exclude_ids=()):
     excluded = set(exclude_ids or ())
     candidates = [fs for fs in filter_sets if fs["id"] not in excluded] or filter_sets
 
-    if weekday in WEEKEND_PLANNING_WEEKDAYS:
-        weekend = [fs for fs in candidates if is_weekend_theme(fs)]
-        if weekend:
-            candidates = weekend
+    if weekday is not None:
+        candidates = [fs for fs in candidates if runs_on_weekday(fs, weekday)]
+        if not candidates:
+            return None
+        if weekday in WEEKEND_PLANNING_WEEKDAYS:
+            weekend = [fs for fs in candidates if is_weekend_theme(fs)]
+            if weekend:
+                candidates = weekend
 
     def staleness(fs):
         try:
@@ -227,6 +299,29 @@ def _day_bounds(date_from, date_to):
     return dt_from, dt_to
 
 
+def window_for(params, target_date):
+    """Event date window for a theme published on ``target_date``.
+
+    ``min_lead_days`` pushes the start forward: a digest that goes out in the
+    evening must not list a lecture that started at 15:00 the same day, so by
+    default the window opens tomorrow.
+    """
+    date_from, date_to = _resolve_relative_range(
+        str(params["range"]).lower(), target_date
+    )
+    lead = int(params.get("min_lead_days") or 0)
+    if lead > 0:
+        earliest = target_date + timedelta(days=lead)
+        if date_from is None or date_from < earliest:
+            date_from = earliest
+    if date_from is not None and date_to is not None and date_from > date_to:
+        log.info(
+            f"Theme window for {target_date} is empty: min_lead_days={lead} "
+            f"pushes the start past {date_to}"
+        )
+    return date_from, date_to
+
+
 def _apply_window_rules(candidates, params, date_from, date_to):
     """Trim candidates to what actually *happens* in the window."""
     candidates = themes.drop_categories(candidates, params.get("exclude_category_ids"))
@@ -238,7 +333,7 @@ def _apply_window_rules(candidates, params, date_from, date_to):
 def select_feed_events(params, *, recent_ids=None, today=None):
     """Pick events for a broad window from the scored, diversified feed."""
     today = today or datetime.now(MSK_TZ).date()
-    date_from, date_to = _resolve_relative_range(str(params["range"]).lower(), today)
+    date_from, date_to = window_for(params, today)
     dt_from, dt_to = _day_bounds(date_from, date_to)
 
     request = EventRequestParameters(
@@ -266,7 +361,7 @@ def select_feed_events(params, *, recent_ids=None, today=None):
 def select_theme_events(params, *, recent_ids=None, today=None):
     """Run the theme's semantic query and reduce it to a pool and a shown set."""
     today = today or datetime.now(MSK_TZ).date()
-    date_from, date_to = _resolve_relative_range(str(params["range"]).lower(), today)
+    date_from, date_to = window_for(params, today)
     dt_from, dt_to = _day_bounds(date_from, date_to)
 
     vector = EmbeddingClient().embed_batch([params["semantic_query"]])[0]
@@ -400,6 +495,11 @@ def _ask_ai(prompt_body, system_message):
         return ""
 
 
+def _intro_max(params):
+    """Character target for the intro, from the theme's ``intro_chars``."""
+    return int((params or {}).get("intro_chars") or 260)
+
+
 def generate_comments(theme_title, params, events, comment_max, also=()):
     """``(intro, {event_id: comment})`` from the AI — empty on any failure."""
     if not events:
@@ -409,13 +509,14 @@ def generate_comments(theme_title, params, events, comment_max, also=()):
     raw = _ask_ai(
         editorial
         + theme_prompts.comments_contract(
-            theme_title, _event_payload(events), comment_max, also=also
+            theme_title, _event_payload(events), comment_max,
+            intro_max=_intro_max(params), also=also,
         ),
         system,
     )
 
     data = _parse_ai_json(raw)
-    intro = themes.shorten((data.get("intro") or "").strip(), INTRO_HARD_LIMIT)
+    intro = _clean_intro(data.get("intro"), _intro_max(params))
 
     comments = {}
     for item in data.get("comments") or []:
@@ -438,13 +539,14 @@ def generate_prose(theme_title, params, events, prose_max, paragraph_max=320, al
     raw = _ask_ai(
         editorial
         + theme_prompts.prose_contract(
-            theme_title, _event_payload(events), prose_max, paragraph_max, also=also
+            theme_title, _event_payload(events), prose_max, paragraph_max,
+            intro_max=_intro_max(params), also=also,
         ),
         system,
     )
 
     data = _parse_ai_json(raw)
-    intro = themes.shorten((data.get("intro") or "").strip(), INTRO_HARD_LIMIT)
+    intro = _clean_intro(data.get("intro"), _intro_max(params))
     paragraphs = [
         str(p).strip() for p in (data.get("paragraphs") or []) if str(p).strip()
     ]
@@ -467,10 +569,11 @@ def generate_intro_only(theme_title, params, events, also=()):
 Тема подборки: «{theme_title}». Мероприятия:
 {titles}
 {theme_prompts._also_block(also)}
-Верни СТРОГО JSON: {{"intro": "..."}} — только вступление, по правилам выше.""",
+Верни СТРОГО JSON: {{"intro": "..."}} — только вступление, до {_intro_max(params)} символов,
+по правилам выше. Не используй слова из заголовка «{theme_title}» и однокоренные с ними.""",
         system,
     )
-    return themes.shorten((_parse_ai_json(raw).get("intro") or "").strip(), INTRO_HARD_LIMIT), {}
+    return _clean_intro(_parse_ai_json(raw).get("intro"), _intro_max(params)), {}
 
 
 # --- Orchestration ----------------------------------------------------------
@@ -616,6 +719,9 @@ def build_theme_post(
             weekday=target_date.weekday(),
             exclude_ids=exclude_filter_ids,
         )
+        if filter_set is None:
+            # Every active theme is restricted to other weekdays.
+            return {"status": "no_theme_for_day", "weekday": target_date.weekday()}
 
     params = _theme_params(filter_set)
     if not params["semantic_query"]:
@@ -635,9 +741,7 @@ def build_theme_post(
     tail_events = pool[len(shown) : len(shown) + tail_count] if tail_count else []
 
     # Same window the selection used — the footer link must filter identically.
-    date_from, date_to = _resolve_relative_range(
-        str(params["range"]).lower(), target_date
-    )
+    date_from, date_to = window_for(params, target_date)
 
     if len(shown) < int(params["min_events"]):
         log.info(

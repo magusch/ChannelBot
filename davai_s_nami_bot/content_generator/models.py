@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, func
 from sqlalchemy.orm import relationship
 from sqlalchemy import UniqueConstraint
 
@@ -92,6 +92,10 @@ class PostingSchedule(Base):
 
     is_posted = Column(Boolean, default=False, nullable=False)
     posted_at = Column(DateTime, nullable=True, comment='Publication time')
+
+    status = Column(String(20), nullable=False, default='pending')
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, server_default=func.now())
 
     error_message = Column(String, nullable=True, comment='Error message')
     retry_count = Column(Integer, default=0, nullable=False, comment='Retry count')

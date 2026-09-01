@@ -9,6 +9,7 @@ from .schemas import (
     ContentGeneratorEventSelectionRequest,
     ContentGeneratorGeneratePostRequest,
     ContentGeneratorGeneratePostAIRequest,
+    ContentGeneratorScheduleThemePostRequest,
     ContentGeneratorThemePostRequest,
     TaskResponse,
 )
@@ -70,6 +71,30 @@ async def content_generator_theme_post(body: ContentGeneratorThemePostRequest):
         kwargs={'filter_set_id': body.filter_set_id, 'dry_run': body.dry_run},
     )
     return TaskResponse(message='Task theme post added to queue', task_id=task.id)
+
+
+@router.post("/schedule-theme-post/", response_model=TaskResponse,
+             summary="Run the theme-post planner",
+             description=(
+                 "Top the publication plan back up: build themed drafts for the "
+                 "next `days_ahead` free slots and write a PostingSchedule row for "
+                 "each. Unlike /theme-post/, which only renders a draft, this is "
+                 "what makes a post actually go out. Idempotent — a day that "
+                 "already holds an unposted schedule is skipped."
+             ))
+async def content_generator_schedule_theme_post(
+    body: ContentGeneratorScheduleThemePostRequest,
+):
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.schedule_theme_post',
+        kwargs={
+            'days_ahead': body.days_ahead,
+            'platform': body.platform,
+            'publish_hour': body.publish_hour,
+            'publish_minute': body.publish_minute,
+        },
+    )
+    return TaskResponse(message='Task theme post planner added to queue', task_id=task.id)
 
 
 @router.get("/selection/{selection_id}/",

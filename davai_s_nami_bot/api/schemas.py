@@ -97,6 +97,19 @@ class ContentGeneratorGeneratePostAIRequest(BaseModel):
     title: Optional[str] = Field(None, description="Post title (optional)")
 
 
+class ContentGeneratorScheduleThemePostRequest(BaseModel):
+    """Request to run the theme-post planner (draft + PostingSchedule row)."""
+
+    days_ahead: Optional[int] = Field(
+        None, description="How many upcoming publication slots to keep filled (default: settings)"
+    )
+    platform: str = Field("telegram", description="Target platform")
+    publish_hour: Optional[int] = Field(
+        None, description="Fallback publication hour for a day with no event posts"
+    )
+    publish_minute: Optional[int] = Field(None, description="Fallback publication minute")
+
+
 class ContentGeneratorThemePostRequest(BaseModel):
     """Request to build a themed digest post."""
 
