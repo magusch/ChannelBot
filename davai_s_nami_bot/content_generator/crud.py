@@ -235,6 +235,9 @@ def get_next_schedule_per_platform(db, not_before=None):
 @db_session
 def get_scheduled_dates(db, platform: str, since, until) -> set:
     """Calendar dates in ``[since, until]`` that already hold an unposted schedule.
+
+    Dates are bucketed in the timezone of ``since`` when it is aware, so a caller
+    planning MSK evening slots gets MSK calendar dates back instead of UTC ones.
     """
     rows = (
         db.query(PostingSchedule.scheduled_time)
@@ -246,7 +249,15 @@ def get_scheduled_dates(db, platform: str, since, until) -> set:
         )
         .all()
     )
-    return {row[0].date() for row in rows if row[0] is not None}
+
+    tz = getattr(since, 'tzinfo', None)
+
+    def _date(value):
+        if tz is not None and value.tzinfo is not None:
+            return value.astimezone(tz).date()
+        return value.date()
+
+    return {_date(row[0]) for row in rows if row[0] is not None}
 
 
 @db_session

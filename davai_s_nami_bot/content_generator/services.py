@@ -683,19 +683,20 @@ class GeneratorPost:
         return result
 
 
+SCHEDULE_GRACE_MINUTES = 10
+SCHEDULE_EARLY_MINUTES = 5
+
+
 class Posting:
 
     def __init__(self, log):
         self.log = log
 
-    def get_next_time_posting(self, grace_minutes: int = 10):
+    def get_next_time_posting(self, grace_minutes: int = SCHEDULE_GRACE_MINUTES):
         """Nearest publishable schedule per platform, as UTC etas."""
         time_posting_by_platform = {}
 
-        tz_name = settings.timezone if settings.timezone else 'UTC'
-        cutoff = datetime.now(pytz.timezone(tz_name)).replace(tzinfo=None) - timedelta(
-            minutes=grace_minutes
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=grace_minutes)
         stale = crud.count_stale_schedules(cutoff)
         if stale:
             self.log.warning(
@@ -744,9 +745,13 @@ class Posting:
             eta_utc = eta_local.astimezone(pytz.UTC)
             now_utc = datetime.now(timezone.utc)
 
-            # Allow small clock skew window; skip if too far from now
-            if abs(now_utc - eta_utc) > timedelta(minutes=5):
-                self.log.info(f"Skipping schedule {schedule_id}: time window mismatch (now={now_utc}, eta={eta_utc})")
+            lateness = now_utc - eta_utc
+            if (lateness > timedelta(minutes=SCHEDULE_GRACE_MINUTES)
+                    or lateness < -timedelta(minutes=SCHEDULE_EARLY_MINUTES)):
+                self.log.info(
+                    f"Skipping schedule {schedule_id}: time window mismatch "
+                    f"(now={now_utc}, eta={eta_utc}, late by {lateness})"
+                )
                 return
         except Exception as e:
             self.log.error(f"Error validating schedule time for {schedule_id}: {e}")

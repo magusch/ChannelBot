@@ -1432,8 +1432,8 @@ def schedule_theme_post(
 
     taken = cg_crud.get_scheduled_dates(
         platform,
-        slots[0].replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
-        slots[-1].replace(hour=23, minute=59, second=59, tzinfo=None),
+        slots[0].replace(hour=0, minute=0, second=0, microsecond=0),
+        slots[-1].replace(hour=23, minute=59, second=59, microsecond=0),
     )
 
     planned, used_filter_ids = [], []
@@ -1456,7 +1456,7 @@ def schedule_theme_post(
         try:
             schedule = cg_crud.create_posting_schedule({
                 'generated_post_id': result['id'],
-                'scheduled_time': slot.replace(tzinfo=None),
+                'scheduled_time': slot.astimezone(timezone.utc),
                 'platform': platform,
             })
         except Exception as e:
