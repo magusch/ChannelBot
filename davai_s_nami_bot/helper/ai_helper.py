@@ -58,14 +58,19 @@ class AIHelper:
             self.set_model_by_name(model_name or dsn_param.site_parameters('ai_model', last=1))
 
     def set_model_by_name(self, model_name: str):
-        """Set current model by name."""
-        model_name = model_name.lower()
+        """Set current model by name (unknown name → first provider, with a log)."""
+        model_name = (model_name or '').strip().lower()
         for i, (name, model) in enumerate(self.models):
             if name == model_name:
                 self.current_model_index = i
                 self.current_model = model
+                log.info(f"AIHelper: provider set to {name}")
                 return
-        
+
+        log.warning(
+            f"AIHelper: unknown provider {model_name!r}, falling back to "
+            f"{self.models[0][0]}. Known: {[name for name, _ in self.models]}"
+        )
         self.current_model_index = 0
         self.current_model = self.models[0][1]
 

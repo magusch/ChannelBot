@@ -102,6 +102,7 @@ def test_send_text(telegram_client, mock_telebot):
         chat_id="test_channel",
         text="Test message",
         disable_web_page_preview=True,
+        reply_markup=None,
     )
 
 

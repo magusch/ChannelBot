@@ -437,3 +437,97 @@ class TestRelevanceCheck:
     def test_relevance_values(self, value, should_reject):
         is_reject = value is False or str(value).strip().lower() in ('нет', 'no', 'false')
         assert is_reject == should_reject
+
+
+# --- Parameter cache invalidation ---
+
+class TestParameterRevision:
+    """A param edited in Django must reach a running worker without a restart."""
+
+    def test_new_revision_forces_reload(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {
+            'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:dsn_site:rev': '1',
+        }
+        monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
+
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        assert params.site_parameters('ai_model', last=1) == 'gemini'
+
+        # Django edit + POST /api/param/ → new blob and a bumped revision
+        store['parameters:dsn_site'] = _json.dumps({'ai_model': ['openai']})
+        store['parameters:dsn_site:rev'] = '2'
+
+        assert params.site_parameters('ai_model', last=1) == 'openai'
+
+    def test_same_revision_serves_memory_copy(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {
+            'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:dsn_site:rev': '1',
+        }
+        reads = []
+
+        def fake_get(key):
+            reads.append(key)
+            return store.get(key)
+
+        monkeypatch.setattr(dp.redis_client, 'get', fake_get)
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        params.site_parameters('ai_model', last=1)
+        reads.clear()
+        params.site_parameters('ai_model', last=1)
+
+        # only the tiny revision key is re-read, not the 60KB blob
+        assert reads == ['parameters:dsn_site:rev']
+
+    def test_missing_revision_marker_is_not_outdated(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']})}
+        monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        assert params.site_parameters('ai_model', last=1) == 'gemini'
+        assert params._is_outdated('dsn_site', None) is False
+
+
+class TestProviderSelection:
+    def test_unknown_provider_logs_and_falls_back(self, caplog):
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('gemini', 'G'), ('openai', 'O')]
+        helper.current_model_index = 1
+        helper.current_model = 'O'
+
+        with caplog.at_level('WARNING'):
+            helper.set_model_by_name('opeanai')  # typo
+
+        assert helper.current_model == 'G'
+        assert 'unknown provider' in caplog.text
+
+    def test_whitespace_around_value_is_tolerated(self):
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('gemini', 'G'), ('openai', 'O')]
+        helper.current_model_index = 0
+        helper.current_model = 'G'
+
+        helper.set_model_by_name(' OpenAI\n')
+        assert helper.current_model == 'O'
