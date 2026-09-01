@@ -7,6 +7,7 @@ import requests
 from PIL import Image
 from pillow_heif import register_heif_opener
 import boto3
+from botocore.config import Config as BotoConfig
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +22,11 @@ s3_client = boto3.client("s3", region_name=AWS_REGION,
                          aws_access_key_id=AWS_ACCESS_KEY_ID,
                          aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
                          aws_session_token=AWS_SECRET_ACCESS_KEY,
-                         endpoint_url=AWS_S3_ENDPOINT_URL
+                         endpoint_url=AWS_S3_ENDPOINT_URL,
+                         config=BotoConfig(
+                             request_checksum_calculation="when_required",
+                             response_checksum_validation="when_required",
+                         ),
                          )
 
 
@@ -154,7 +159,9 @@ def _download_from_s3(s3_key: str) -> bytes:
     return response["Body"].read()
 
 
-def prepare_image(image_url, s3_key: str = None):
+def prepare_image(image_url, s3_key: str = None, name: str = "img"):
+    """Download an image and write it next to the process as ``<name>.png/.jpg``.
+    """
     if image_url is None and s3_key is None:
         return None
     if isinstance(image_url, list) or image_url == '':
@@ -184,7 +191,7 @@ def prepare_image(image_url, s3_key: str = None):
 
     image_path = None
     with Image.open(io.BytesIO(image_bytes)) as img:
-            image_name = "img"
+            image_name = name
             img.thumbnail(IMG_MAXSIZE, THUMB_RESAMPLE)
 
             if img.mode != "RGB":
@@ -256,7 +263,6 @@ def upload_bytes_to_s3(bytes, ext: str) -> dict:
         Key=key,
         Body=bytes,
         ContentType="image/jpeg",
-        ContentEncoding="identity",
         ContentDisposition="inline",
         CacheControl="public, max-age=31536000",
         ACL="public-read",

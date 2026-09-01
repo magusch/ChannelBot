@@ -9,7 +9,7 @@ from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery import chain, chord
 from celery.signals import task_postrun, task_prerun
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
@@ -38,6 +38,8 @@ from .helper.embeddings import (
 )
 
 from .content_generator.services import GeneratorPost, Posting
+from .content_generator import crud as cg_crud
+from .content_generator import theme_post
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -204,15 +206,30 @@ def post_generated_by_schedule(schedule_id: int):
             destination_id = clients.VKRequests.constants['prod']['destination_id']
         if client_post:
             try:
-                if postings['image_path']:
-                    client_post.send_image(text=postings['post_text'], image_path=postings['image_path'],
-                                           destination_id=destination_id)
+                # Buttons are Telegram-only; the VK client has no equivalent.
+                extra = (
+                    {'buttons': postings.get('buttons')}
+                    if platform == 'telegram' and postings.get('buttons')
+                    else {}
+                )
+                if postings.get('format') == 'rich' and platform == 'telegram':
+                    client_post.send_rich(
+                        text=postings['text'],
+                        image_paths=postings.get('image_paths'),
+                        destination_id=destination_id,
+                        **extra,
+                    )
+                elif postings.get('image_path'):
+                    client_post.send_image(text=postings['text'], image_path=postings['image_path'],
+                                           destination_id=destination_id, **extra)
                 else:
-                    client_post.send_text(text=postings['post_text'], destination_id=destination_id)
+                    client_post.send_text(text=postings['text'], destination_id=destination_id,
+                                          **extra)
                 posting_class.schedule_posted(schedule_id)
                 log.info(f"Schedule {schedule_id} marked as posted successfully")
             except Exception as e:
                 log.error(f"Failed to post schedule {schedule_id}: {e}")
+                cg_crud.increment_schedule_retry(schedule_id, error_message=str(e))
     else:
         log.info(f"No postings generated for schedule_id={schedule_id}")
     # Clean up Redis so schedule_generated_posting_tasks can reschedule
@@ -292,13 +309,24 @@ def schedule_posting_tasks():
         log.info(f"Posting task scheduled to {event_time_str} (task_id: {result.id})")
 
 
+GENERATED_POST_SCHEDULE_WINDOW = timedelta(hours=1)
+
+
 @celery_app.task
 def schedule_generated_posting_tasks():
     """Schedule per-platform generated post tasks based on PostingSchedule table."""
     log.info("Scheduling generated posting tasks based on PostingSchedule entries")
     time_posting_by_platform = Posting(log).get_next_time_posting()
 
-    for platform, schedule in time_posting_by_platform:
+    now_utc = datetime.now(timezone.utc)
+    for platform, schedule in time_posting_by_platform.items():
+        wait = schedule['eta_utc'] - now_utc
+        if wait > GENERATED_POST_SCHEDULE_WINDOW:
+            log.info(
+                f"Next generated post ({platform}) at {schedule['eta_utc']}, "
+                f"in {wait}, too far ahead — leaving it in the DB for now"
+            )
+            continue
 
         redis_key = f'cg_posting_event:{platform}'
         current_scheduled_info = redis_client.hgetall(redis_key)
@@ -1304,11 +1332,14 @@ def content_generator_event_selection(filter_set_id: int):
 
 @celery_app.task
 def content_generator_generate_post(
-    post_template_id: int, event_selection_id: int, generated_by_id: int
+    event_selection_id: int, post_template_id: int, generated_by_id: int = None
 ):
+    # Order matches the API router and generate_post_by_template.
     generator_post = GeneratorPost()
     post = generator_post.generate_post_by_template(
-        post_template_id, event_selection_id, generated_by_id
+        event_selection_id=event_selection_id,
+        post_template_id=post_template_id,
+        generated_by_id=generated_by_id,
     )
     return post
 
@@ -1328,6 +1359,114 @@ def content_generator_generate_post_ai(
         title=title,
     )
     return post
+
+
+@celery_app.task
+def content_generator_theme_post(filter_set_id: int = None, dry_run: bool = False):
+    """Build one themed digest post (semantic selection → AI comments → render).
+
+    Without ``filter_set_id`` the least-recently-posted active theme is used, so
+    the beat entry rotates through themes on its own. ``dry_run=True`` returns
+    the rendered post without writing anything — for previewing a new theme.
+    """
+    result = theme_post.build_theme_post(filter_set_id=filter_set_id, dry_run=dry_run)
+    log.info(
+        f"Theme post: status={result.get('status')} theme={result.get('theme')!r} "
+        f"len={result.get('length')} (raw {result.get('raw_length')}) "
+        f"shown={len(result.get('shown_ids') or [])} pool={result.get('pool_size')}"
+    )
+    return result
+
+
+@celery_app.task
+def schedule_theme_post(
+    days_ahead: int = None, platform: str = 'telegram', publish_hour: int = None,
+    publish_minute: int = None,
+):
+    """Keep the next ``days_ahead`` publication slots filled with themed drafts.
+
+    Runs daily and tops the plan back up rather than producing exactly one post:
+    a two-day plan means a bad draft can be fixed or deleted in Django a day
+    before it goes out, and one failed run doesn't leave a hole in the channel.
+
+    Idempotent — a slot that already holds an unposted schedule is skipped, so
+    re-running mid-day adds nothing. Each draft is built for **its own**
+    publication date (dates, weekend-theme preference), and themes planned
+    earlier in the same run are excluded from later slots so a two-day plan does
+    not run the same theme twice.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.content_generator or {}
+    days_ahead = days_ahead if days_ahead is not None else cfg.get('theme_post_days_ahead', 2)
+    publish_hour = publish_hour if publish_hour is not None else cfg.get('theme_post_publish_hour', 20)
+    publish_minute = (
+        publish_minute if publish_minute is not None
+        else cfg.get('theme_post_publish_minute', 30)
+    )
+    after_last = cfg.get('theme_post_publish_after_last_event', True)
+    offset_hours = cfg.get('theme_post_publish_offset_hours', 2)
+    latest = time(
+        cfg.get('theme_post_publish_latest_hour', 22),
+        cfg.get('theme_post_publish_latest_minute', 0),
+    )
+    fallback = time(publish_hour, publish_minute)
+
+    def resolve_time(day):
+        """Publication time for `day`, after that day's last individual event post."""
+        last_event_at = None
+        if after_last:
+            day_start = datetime.combine(day, time.min, tzinfo=theme_post.MSK_TZ)
+            last_event_at = crud.get_last_event_post_time(
+                day_start, day_start + timedelta(days=1) - timedelta(seconds=1)
+            )
+        return theme_post.slot_after_last_event(
+            day, last_event_at, offset_hours, fallback, latest, theme_post.MSK_TZ
+        )
+
+    now = datetime.now(theme_post.MSK_TZ)
+    slots = theme_post.planning_slots(now, days_ahead, resolve_time)
+    if not slots:
+        log.info("Theme post planner: nothing to schedule (days_ahead=0)")
+        return {'status': 'ok', 'planned': []}
+
+    taken = cg_crud.get_scheduled_dates(
+        platform,
+        slots[0].replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
+        slots[-1].replace(hour=23, minute=59, second=59, tzinfo=None),
+    )
+
+    planned, used_filter_ids = [], []
+    for slot in slots:
+        if slot.date() in taken:
+            log.info(f"Theme post planner: {slot.date()} already scheduled, skipping")
+            continue
+
+        result = theme_post.build_theme_post(
+            target_date=slot.date(), exclude_filter_ids=used_filter_ids
+        )
+        if result.get('status') != 'ok':
+            log.info(
+                f"Theme post planner: {slot.date()} not scheduled "
+                f"({result.get('status')})"
+            )
+            planned.append({'date': str(slot.date()), **result})
+            continue
+
+        schedule = cg_crud.create_posting_schedule({
+            'generated_post_id': result['id'],
+            'scheduled_time': slot.replace(tzinfo=None),
+            'platform': platform,
+        })
+        result['schedule_id'] = schedule['id']
+        used_filter_ids.append(result['filter_set_id'])
+        planned.append({'date': str(slot.date()), **result})
+        log.info(
+            f"Theme post {result['id']} ({result.get('theme')!r}) scheduled for "
+            f"{slot} ({platform})"
+        )
+
+    return {'status': 'ok', 'planned': planned}
 
 
 @celery_app.task

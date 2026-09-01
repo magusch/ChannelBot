@@ -72,7 +72,11 @@ def _to_local(dt):
     return dt.astimezone(MSK_TZ)
 
 
-CATEGORIES_NAME = ["Концерты", "Без категории", "Кино", "Лекции", "Культура", "Фестивали", "Театр", "Вечеринки", "Перфомансы", "Стэндап", "Выставки"]
+CATEGORIES_NAME = [
+    "Концерты", "Без категории", "Кино", "Лекции", "Культура", "Фестивали",
+    "Театр", "Вечеринки", "Перфомансы", "Стэндап", "Выставки",
+    "Мастер-классы", "Экскурсии",
+]
 
 VIRTUAL_FIELD_DEPENDENCIES = {
     'event_date': ['from_date', 'to_date'],
@@ -83,7 +87,9 @@ VIRTUAL_FIELD_DEPENDENCIES = {
 }
 
 def category_name(cat_id):
-    return CATEGORIES_NAME[cat_id-1]
+    if not isinstance(cat_id, int) or not 1 <= cat_id <= len(CATEGORIES_NAME):
+        return "Без категории"
+    return CATEGORIES_NAME[cat_id - 1]
 
 
 def month_name_genitive(m):
@@ -206,9 +212,8 @@ class GeneratorPost:
         today = datetime.today()
         week_ahead = today + timedelta(days=7)
 
-        parameters = {
-            'date_from': today, 'date_to': week_ahead, 'status': 'all'
-        }
+        # No `status: 'all'`: it drops the publicly-valid predicate.
+        parameters = {'date_from': today, 'date_to': week_ahead}
 
         if 'main_category' in filter_params:
             parameters['category'] = filter_params['main_category']
@@ -257,6 +262,10 @@ class GeneratorPost:
         #     for keyword in params['keywords']:
         #         q_objects |= Q(title__icontains=keyword) | Q(description__icontains=keyword)
         #     queryset = queryset.filter(q_objects)
+        # Without a cap this returned every matching event of the week (~20+).
+        parameters['limit'] = int(filter_params.get('limit') or 12)
+        parameters['order_by'] = filter_params.get('order_by') or 'score-desc'
+
         parameters['fields'] = ['id']
         params = EventRequestParameters(**parameters)
         answer = dsn_crud.get_events_by_date_and_category(params)
@@ -595,10 +604,13 @@ class GeneratorPost:
 — Мероприятия — для каждого: название-ссылка, 1-2 предложения своими словами, дата, место, цена.
 — Концовка — не нужна. Не пиши призывов, итогов, пожеланий.
 
-ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ (Telegram MarkdownV1):
+ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ (Telegram MarkdownV2 — канал отправляет именно в ней):
 — Название мероприятия — кликабельная ссылка: [Название](url) — можно обернуть в *жирный*
 — Если есть ticket_url — используй для ссылки на билеты/цену
-— Экранируй \\_ \\* \\` \\[ в тексте вне разметки
+— MarkdownV2 требует экранировать обратным слэшем ВСЕ эти символы в обычном тексте
+  (включая текст внутри квадратных скобок ссылки): _ * [ ] ( ) ~ ` > # + - = | {{ }} . !
+  Например: «Стоимость — 500\\₽\\.» → точка, дефис и прочее обязаны быть экранированы.
+  Не экранируй символы внутри (url) — там спецсимвол только ) и \\.
 — Компактно, читаемо с телефона
 
 ТОН И СТИЛЬ:
@@ -676,9 +688,22 @@ class Posting:
     def __init__(self, log):
         self.log = log
 
-    def get_next_time_posting(self):
+    def get_next_time_posting(self, grace_minutes: int = 10):
+        """Nearest publishable schedule per platform, as UTC etas."""
         time_posting_by_platform = {}
-        next_by_platform = crud.get_next_schedule_per_platform()
+
+        tz_name = settings.timezone if settings.timezone else 'UTC'
+        cutoff = datetime.now(pytz.timezone(tz_name)).replace(tzinfo=None) - timedelta(
+            minutes=grace_minutes
+        )
+        stale = crud.count_stale_schedules(cutoff)
+        if stale:
+            self.log.warning(
+                f"{stale} posting schedule(s) missed their slot and are skipped; "
+                f"check content_generator_postingschedule for unposted rows"
+            )
+
+        next_by_platform = crud.get_next_schedule_per_platform(not_before=cutoff)
         for platform, schedule in next_by_platform.items():
             eta = schedule['scheduled_time']
             if eta is None:
@@ -738,10 +763,44 @@ class Posting:
 
             # Choose client by platform
             platform = (schedule.get('platform') or 'telegram').lower()
+
+            # media_files holds S3 URLs; the clients send a local file.
             image_path = None
+            media_files = GeneratorPost._parse_json_field(generated_post.get('media_files'))
+            if isinstance(media_files, list) and media_files:
+                try:
+                    image_path = utils.prepare_image(media_files[0])
+                except Exception as e:
+                    self.log.warning(f"Could not prepare media for schedule {schedule_id}: {e}")
+                if image_path is None:
+                    # prepare_image returns None (not raises) on a failed S3 fetch,
+                    # and the post would then go out as text with no word about it.
+                    self.log.warning(
+                        f"Schedule {schedule_id}: media {media_files[0]} could not be "
+                        f"fetched, posting as text without the collage"
+                    )
 
             if platform in ('telegram', 'vk'):
-                return {'platform': platform, 'text': post_text, 'image_path': image_path}
+                blob = self._selection_settings(generated_post)
+                post = {
+                    'platform': platform,
+                    'text': post_text,
+                    'image_path': image_path,
+                    'buttons': self._buttons_from(blob),
+                    'format': (blob.get('format') or 'plain'),
+                }
+                if post['format'] == 'rich' and platform == 'telegram':
+                    # In collage mode media_files holds the source posters and the
+                    # collage is built here, so nothing has to round-trip through S3.
+                    if (blob.get('photos') or 'each') == 'collage':
+                        post['image_paths'] = self._collage_media(
+                            media_files, schedule_id
+                        )
+                    else:
+                        post['image_paths'] = self._materialise_media(
+                            media_files, schedule_id
+                        )
+                return post
             else:
                 self.log.info(f"Unsupported platform: {platform}")
                 return
@@ -749,6 +808,79 @@ class Posting:
         except Exception as e:
             self.log.error(f"Error posting generated content for schedule {schedule_id}: {e}")
             crud.increment_schedule_retry(schedule_id, error_message=str(e))
+
+    def _selection_settings(self, generated_post):
+        """``generation_settings`` of the post's selection, or ``{}``.
+
+        Themed posts keep their rendering details here — the inline button and
+        the delivery format. The generated post has no column for either, and
+        adding one means a Django-side migration for what is a rendering detail.
+        """
+        selection_id = generated_post.get('event_selection_id')
+        if not selection_id:
+            return {}
+        try:
+            selection = crud.get_event_selection(selection_id) or {}
+            blob = GeneratorPost._parse_json_field(selection.get('generation_settings'))
+        except Exception as e:
+            self.log.warning(f"Could not read settings for selection {selection_id}: {e}")
+            return {}
+        return blob if isinstance(blob, dict) else {}
+
+    @staticmethod
+    def _buttons_from(settings_blob):
+        """The post's inline buttons, or ``None``.
+
+        ``buttons`` is a list; ``button`` is the earlier single-button shape and
+        is still read so drafts generated before it stay postable.
+        """
+        blob = settings_blob or {}
+        raw = blob.get('buttons')
+        if raw is None:
+            raw = blob.get('button')
+        if isinstance(raw, dict):
+            raw = [raw]
+        buttons = [
+            b for b in (raw or [])
+            if isinstance(b, dict) and b.get('text') and b.get('url')
+        ]
+        return buttons or None
+
+    def _collage_media(self, media_files, schedule_id):
+        """One combined picture from the event posters, as a local file path."""
+        if not media_files:
+            return []
+        try:
+            collage = utils.create_collage(list(media_files))
+        except Exception as e:
+            self.log.warning(f"Schedule {schedule_id}: collage failed: {e}")
+            return []
+        if not collage:
+            return []
+
+        path = 'collage.jpg'
+        with open(path, 'wb') as handle:
+            handle.write(collage)
+        return [path]
+
+    def _materialise_media(self, media_files, schedule_id):
+        """Download every media URL to a local file, skipping the ones that fail.
+
+        A missing photo costs the post that photo; it must not cost the post.
+        """
+        paths = []
+        for index, url in enumerate(media_files or []):
+            try:
+                # prepare_image writes one file per call; a shared name would collide.
+                path = utils.prepare_image(url, name=f"media_{index}")
+            except Exception as e:
+                self.log.warning(f"Schedule {schedule_id}: media {url} failed: {e}")
+                continue
+            if path:
+                paths.append(path)
+            else:
+                self.log.warning(f"Schedule {schedule_id}: media {url} not fetched")
+        return paths
 
     def schedule_posted(self, schedule_id):
         crud.mark_schedule_posted(schedule_id, posted_at=datetime.now(timezone.utc))

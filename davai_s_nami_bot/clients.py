@@ -1,4 +1,4 @@
-import os, datetime
+import json, os, datetime
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Any, Dict, Union
@@ -6,6 +6,7 @@ from typing import Any, Dict, Union
 import requests
 
 from telebot import TeleBot
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import events
 from . import crud
@@ -103,24 +104,96 @@ class Telegram(BaseClient):
             print("Error adding exhibition to DSN bot")
             print(e)
 
-    def send_text(self, text: str, *, destination_id: Union[int, str]):
+    @staticmethod
+    def _inline_keyboard(buttons):
+        """``[{"text": ..., "url": ...}]`` → an inline keyboard, one button a row.
+
+        A URL button is the one keyboard kind a channel post can carry, and it
+        costs nothing against the caption limit — Telegram counts the text only.
+        """
+        if not buttons:
+            return None
+        markup = InlineKeyboardMarkup()
+        for button in buttons:
+            text, url = (button or {}).get("text"), (button or {}).get("url")
+            if text and url:
+                markup.add(InlineKeyboardButton(text=text, url=url))
+        return markup if markup.keyboard else None
+
+    def send_text(self, text: str, *, destination_id: Union[int, str], buttons=None):
         return self._client.send_message(
             chat_id=destination_id,
             text=text,
             disable_web_page_preview=True,
+            reply_markup=self._inline_keyboard(buttons),
         )
 
     def send_image(
-        self, text: str, image_path: str, *, destination_id: Union[int, str]
+        self, text: str, image_path: str, *, destination_id: Union[int, str],
+        buttons=None,
     ):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
                 chat_id=destination_id,
                 photo=image_obj,
                 caption=text,
+                reply_markup=self._inline_keyboard(buttons),
             )
 
         return message
+
+    def send_rich(
+        self, text: str, image_paths=None, *, destination_id: Union[int, str],
+        buttons=None,
+    ):
+        """Send a Bot API 10.1 rich message: photos *inside* the text.
+
+        Called over plain HTTP rather than through TeleBot: the pinned
+        pyTelegramBotAPI (4.33) predates the method, and upgrading the library
+        for every posting path is a bigger change than one request. Photos are
+        uploaded as ``attach://`` parts — Telegram could not fetch our S3 URLs
+        directly ("failed to get HTTP URL content"), which is also why ordinary
+        event posts already upload bytes.
+        """
+        image_paths = list(image_paths or [])
+        media, files, handles = [], {}, []
+        try:
+            for index, path in enumerate(image_paths):
+                key = f"ev{index + 1}"
+                handle = open(path, "rb")
+                handles.append(handle)
+                files[key] = handle
+                media.append(
+                    {"id": key, "media": {"type": "photo", "media": f"attach://{key}"}}
+                )
+
+            payload = {"markdown": text}
+            if media:
+                payload["media"] = media
+
+            data = {
+                "chat_id": str(destination_id),
+                "rich_message": json.dumps(payload, ensure_ascii=False),
+            }
+            markup = self._inline_keyboard(buttons)
+            if markup:
+                data["reply_markup"] = markup.to_json()
+
+            response = requests.post(
+                f"https://api.telegram.org/bot{os.environ.get('BOT_TOKEN')}"
+                f"/sendRichMessage",
+                data=data,
+                files=files or None,
+                timeout=120,
+            )
+        finally:
+            for handle in handles:
+                handle.close()
+
+        body = response.json()
+        if not body.get("ok"):
+            raise RuntimeError(f"sendRichMessage failed: {body.get('description')}")
+        return body["result"]
 
     def send_file(
         self, destination_id: Union[int, str], file_path: str, mode: str = "r"

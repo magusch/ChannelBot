@@ -217,9 +217,18 @@ def get_events_by_date_and_category(db, params):
     }
 
 
+def _event_field(event, name, default=None):
+    """Read ``name`` off an event that may be an ORM row or a plain dict."""
+    if isinstance(event, dict):
+        value = event.get(name, default)
+    else:
+        value = getattr(event, name, default)
+    return default if value is None else value
+
+
 def _event_day(event):
     """Calendar day of an event's start, or None when it has no start date."""
-    d = getattr(event, 'from_date', None)
+    d = _event_field(event, 'from_date')
     if d is None:
         return None
     return d.date() if hasattr(d, 'date') else d
@@ -234,7 +243,10 @@ def _auto_per_day(pool, limit):
 
 def _score_sort_key(event):
     """Sort key for score-desc (soonest first on ties)."""
-    return (-(getattr(event, 'score', 0) or 0), _event_day(event) or datetime.max.date())
+    return (
+        -(_event_field(event, 'score', 0) or 0),
+        _event_day(event) or datetime.max.date(),
+    )
 
 
 _FEED_STATUS_PRIORITY = {'Posted': 0, 'ReadyToPost': 1, 'OnlyApi': 2}
@@ -244,7 +256,7 @@ _FEED_STATUS_DEFAULT_RANK = 3
 def _status_rank(event, priority=None):
     """Feed tier of an event by status (lower = higher in the feed)."""
     priority = priority or _FEED_STATUS_PRIORITY
-    return priority.get(getattr(event, 'status', None), _FEED_STATUS_DEFAULT_RANK)
+    return priority.get(_event_field(event, 'status'), _FEED_STATUS_DEFAULT_RANK)
 
 
 def _feed_sort_key(event, status_priority=None):
@@ -281,7 +293,7 @@ def _diverse_order(pool, per_category=None, per_day=None):
         for event in pool:
             if id(event) in taken:
                 continue
-            cat = getattr(event, 'main_category_id', None)
+            cat = _event_field(event, 'main_category_id')
             day = _event_day(event)
             if (
                 cat_cap is not None
@@ -511,7 +523,6 @@ def _semantic_relevance(dist, score, from_date, title, keywords, now, cfg):
     (see :func:`_semantic_rerank_config`); they need not sum to 1.
     """
     semantic = max(0.0, 1.0 - dist / 2.0)  # cosine 0..2 → closeness 1..0
-    quality = min(max((score or 0) / 100.0, 0.0), 1.0)  # score 0..100 → 0..1
     if from_date is not None:
         halflife = max(1, cfg["date_halflife_days"])
         days = max(0, (from_date - now).days)  # today→0, decays after
@@ -519,12 +530,20 @@ def _semantic_relevance(dist, score, from_date, title, keywords, now, cfg):
     else:
         date_prox = 0.0
     keyword = 1.0 if _keyword_hit(title, keywords) else 0.0
-    return (
+
+    blended = (
         cfg["w_semantic"] * semantic
-        + cfg["w_quality"] * quality
         + cfg["w_date"] * date_prox
         + cfg["w_keyword"] * keyword
     )
+    weight = cfg["w_semantic"] + cfg["w_date"] + cfg["w_keyword"]
+
+    if score is not None:
+        blended += cfg["w_quality"] * min(max(score / 100.0, 0.0), 1.0)
+        weight += cfg["w_quality"]
+
+    return blended * (weight and (cfg["w_semantic"] + cfg["w_quality"]
+                                  + cfg["w_date"] + cfg["w_keyword"]) / weight)
 
 
 def _collect_descendants(seed_ids, children_of):
@@ -1061,6 +1080,21 @@ def get_event_id_by_prefix(db, site_prefix):
     )
     event_ids.extend([event.event_id for event in events_to_post])
     return event_ids
+
+
+@db_session
+def get_last_event_post_time(db, since, until):
+    """Latest individual-event posting time in ``[since, until]``, or ``None``.
+    """
+    return (
+        db.query(func.max(Events2Posts.post_date))
+        .filter(
+            Events2Posts.post_date.isnot(None),
+            Events2Posts.post_date >= since,
+            Events2Posts.post_date <= until,
+        )
+        .scalar()
+    )
 
 
 @db_session

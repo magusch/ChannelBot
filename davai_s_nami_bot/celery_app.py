@@ -110,10 +110,21 @@ def create_celery_app():
             'task': 'davai_s_nami_bot.celery_tasks.schedule_posting_tasks',
             'schedule': crontab(minute='*/5')
         }
-    elif settings.task_digest_post:
+    if settings.task_digest_post:
         beat_schedules['schedule-generated-posting-tasks'] = {
             'task': 'davai_s_nami_bot.celery_tasks.schedule_generated_posting_tasks',
             'schedule': crontab(minute='*/30')
+        }
+
+    theme_cfg = settings.content_generator or {}
+    if theme_cfg.get('theme_post_enabled'):
+        beat_schedules['schedule-theme-post'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.schedule_theme_post',
+            'schedule': crontab(
+                minute=theme_cfg.get('theme_post_minute', 0),
+                hour=theme_cfg.get('theme_post_hour', 12),
+                day_of_week=theme_cfg.get('theme_post_days', '*'),
+            ),
         }
 
     celery_app.conf.update(

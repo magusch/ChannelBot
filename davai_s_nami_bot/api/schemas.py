@@ -97,6 +97,17 @@ class ContentGeneratorGeneratePostAIRequest(BaseModel):
     title: Optional[str] = Field(None, description="Post title (optional)")
 
 
+class ContentGeneratorThemePostRequest(BaseModel):
+    """Request to build a themed digest post."""
+
+    filter_set_id: Optional[int] = Field(
+        None, description="Theme (filter set) ID; omit to rotate to the stalest active theme"
+    )
+    dry_run: bool = Field(
+        False, description="Render the post without writing selection/post/collage"
+    )
+
+
 # Similar events (embedding-based)
 class SimilarEventsResult(BaseModel):
     """Envelope shared between the hot (success) and cold (pending) responses."""

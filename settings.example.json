@@ -11,7 +11,19 @@
     "city": "spb",
     "timezone": "Europe/Moscow",
     "content_generator": {
-      "ai_model_name": "openai"
+      "ai_model_name": "openai",
+      "bot_url": "https://t.me/YourBot",
+      "theme_post_enabled": false,
+      "theme_post_hour": 12,
+      "theme_post_minute": 0,
+      "theme_post_days": "*",
+      "theme_post_days_ahead": 2,
+      "theme_post_publish_after_last_event": true,
+      "theme_post_publish_offset_hours": 2,
+      "theme_post_publish_latest_hour": 22,
+      "theme_post_publish_latest_minute": 0,
+      "theme_post_publish_hour": 20,
+      "theme_post_publish_minute": 30
     },
     "query_analyzer": {
       "provider": "openai",
