@@ -69,6 +69,12 @@ FUNNEL_STAGES = (
     "limit",
 )
 
+DEFAULT_API_MOVEMENT_TYPES = [
+    "foot",
+    "museum",
+    "room",
+]
+
 DEFAULT_EXCLUDED_MOVEMENT_TYPES = [
     "bus",
     "motorship",
@@ -221,6 +227,7 @@ DEFAULT_TRIPSTER_FILTER: Dict[str, Any] = {
     "min_reviews": 3,
     "max_sessions": 0,
     "types": ["group"],
+    "api_movement_types": DEFAULT_API_MOVEMENT_TYPES,
     "excluded_movement_types": DEFAULT_EXCLUDED_MOVEMENT_TYPES,
     "max_price": 3500,
     "max_duration_hours": 5.0,
@@ -471,6 +478,38 @@ def _cap_per_guide(
             seen[key] += 1
         kept.append(item)
     return kept, len(items) - len(kept)
+
+
+def api_prefilter_params(config: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """Gates the partner API can apply itself, so a page of results is a page
+    of candidates.
+
+    The search endpoint pages 31 items at a time and ignores `page_size`, so
+    the only way to reach the tail of the catalogue within a sane number of
+    requests is to stop spending pages on listings `type` and `movement` would
+    drop anyway. Measured on the live SPb pool (August 2026): 2265 experiences
+    for one week, of which 424 are group tours on foot / in a museum / indoors
+    — 14 requests instead of 73, and the local funnel then sees the whole
+    relevant pool instead of its most touristic head.
+
+    `type` goes out only when exactly one is configured (the API takes a single
+    value). `api_movement_types` is an explicit include list, kept separate
+    from the local exclude list `excluded_movement_types` on purpose: what we
+    never fetch we can never judge, so widening it is a conscious decision.
+    An empty list means "send nothing" — the old, unfiltered behaviour.
+    """
+    cfg = {**DEFAULT_TRIPSTER_FILTER, **(config or {})}
+    params: Dict[str, str] = {}
+
+    types = cfg.get("types") or []
+    if len(types) == 1:
+        params["type"] = str(types[0])
+
+    movement_types = cfg.get("api_movement_types") or []
+    if movement_types:
+        params["movement_type"] = ",".join(str(m) for m in movement_types)
+
+    return params
 
 
 def select_experiences(

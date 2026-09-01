@@ -493,10 +493,23 @@ def test_place_category_queue_custom_limit():
     assert result.place_queue_penalty == -20
 
 
+def _scoring_today():
+    """Today as calculate_score sees it.
+
+    The boost measures `days_ahead` against `datetime.now(timezone.utc).date()`,
+    so offsets built from the local `date.today()` are off by one whenever the
+    local date and the UTC date disagree — which silently flipped these
+    assertions on a UTC+7 machine for seven hours a day.
+    """
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).date()
+
+
 def test_date_scarcity_boost_applies():
     """Boost applied when 1 <= day_count < threshold and within window."""
-    from datetime import date, timedelta
-    event_day = date.today() + timedelta(days=5)
+    from datetime import timedelta
+    event_day = _scoring_today() + timedelta(days=5)
     event = {"title": "Стендап шоу", "price_int": 500, "main_category_id": 10,
              "from_date": event_day}
     date_counts_sparse = {event_day: 2}   # only 2 events on that day
@@ -518,8 +531,8 @@ def test_date_scarcity_boost_applies():
 
 def test_date_scarcity_boost_not_too_soon():
     """No boost for events within min_days from today (tomorrow/day after)."""
-    from datetime import date, timedelta
-    tomorrow = date.today() + timedelta(days=1)
+    from datetime import timedelta
+    tomorrow = _scoring_today() + timedelta(days=1)
     event = {"title": "Концерт", "price_int": 500, "main_category_id": 1,
              "from_date": tomorrow}
     date_counts = {tomorrow: 1}  # sparse, but too soon
@@ -531,8 +544,8 @@ def test_date_scarcity_boost_not_too_soon():
 
 def test_date_scarcity_boost_outside_window():
     """No boost for events beyond the window (> 10 days)."""
-    from datetime import date, timedelta
-    far_day = date.today() + timedelta(days=15)
+    from datetime import timedelta
+    far_day = _scoring_today() + timedelta(days=15)
     event = {"title": "Концерт", "price_int": 500, "main_category_id": 1,
              "from_date": far_day}
     date_counts = {far_day: 1}

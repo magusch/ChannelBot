@@ -82,10 +82,11 @@
         "days": 30
       },
       "tripster": {
-        "city": "Saint_Petersburg", "days": 7, "max_pages": 10,
+        "city": "Saint_Petersburg", "days": 7, "max_pages": 20,
         "filter": {
           "min_rating": 4.75, "min_reviews": 3, "max_sessions": 0,
-          "types": ["group"], "max_price": 3500, "max_duration_hours": 5,
+          "types": ["group"],
+          "api_movement_types": ["foot", "museum", "room"], "max_price": 3500, "max_duration_hours": 5,
           "max_group_size": 25, "require_local_topic": false,
           "similar_title_threshold": 0.75, "max_per_guide": 3, "limit": 250
         }

@@ -137,6 +137,9 @@ def _get_event(parser, *args, **kwargs):
     return ParserEvent.from_parser(event)
 
 
+_MAX_EXCLUDE_IDS = 500
+
+
 def _fetch_tripster_experiences(
     parser,
     request_params: Dict[str, Any],
@@ -159,9 +162,12 @@ def _fetch_tripster_experiences(
     params["detailed"] = "true"
     params["include_paid"] = "false"
     if existed_event_ids:
-        params["exclude_ids"] = ",".join(
-            str(event_id).split("-")[-1] for event_id in existed_event_ids
-        )
+        ids = sorted(
+            (str(event_id).split("-")[-1] for event_id in existed_event_ids),
+            key=lambda value: int(value) if value.isdigit() else 0,
+            reverse=True,
+        )[:_MAX_EXCLUDE_IDS]
+        params["exclude_ids"] = ",".join(ids)
 
     url = parser.search_api.format(partner_id=parser.partner_id)
     query = params
@@ -1141,9 +1147,11 @@ class ScrapeEvents:
         if tripster_cities:
             city_slug = tripster_cities[0]
 
+        filter_config = tripster_settings.get("filter")
         request_params = {
             "city__slug": city_slug,
             "days": days,
+            **tripster_filter.api_prefilter_params(filter_config),
         }
         existed_event_ids = crud.get_event_id_by_prefix("TRIPSTER")
 
@@ -1151,10 +1159,10 @@ class ScrapeEvents:
             parser,
             request_params,
             existed_event_ids=existed_event_ids,
-            max_pages=int(tripster_settings.get("max_pages", 10)),
+            max_pages=int(tripster_settings.get("max_pages", 20)),
         )
         selected, funnel = tripster_filter.select_experiences(
-            raw_items, tripster_settings.get("filter"), days=days
+            raw_items, filter_config, days=days
         )
         log.info(
             "Tripster selection funnel: "
