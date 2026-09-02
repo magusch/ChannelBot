@@ -91,6 +91,8 @@ DEFAULT_THEME_PARAMS = {
     "require_start_in_window": True,
     "max_duration_days": 0,
     "exclude_category_ids": [],
+    "location": "",
+    "location_scope": "venue",
     # Publication weekdays: [3, 4] / "3-4" / "0,2,4" / None = any.
     "weekdays": None,
     "min_lead_days": 1,
@@ -123,6 +125,8 @@ def _theme_params(filter_set):
         ).strip()
     return params
 
+
+_NEXT_DAYS_RE = re.compile(r"^next_(\d{1,2})_days$")
 
 WEEKEND_RANGES = frozenset({"this_weekend", "next_weekend"})
 
@@ -306,9 +310,15 @@ def window_for(params, target_date):
     evening must not list a lecture that started at 15:00 the same day, so by
     default the window opens tomorrow.
     """
-    date_from, date_to = _resolve_relative_range(
-        str(params["range"]).lower(), target_date
-    )
+    raw_range = str(params["range"]).lower()
+
+    horizon = _NEXT_DAYS_RE.match(raw_range)
+    if horizon:
+        date_from = target_date
+        date_to = target_date + timedelta(days=int(horizon.group(1)))
+    else:
+        date_from, date_to = _resolve_relative_range(raw_range, target_date)
+
     lead = int(params.get("min_lead_days") or 0)
     if lead > 0:
         earliest = target_date + timedelta(days=lead)
@@ -340,6 +350,7 @@ def select_feed_events(params, *, recent_ids=None, today=None):
         date_from=dt_from or datetime.now(MSK_TZ),
         date_to=dt_to,
         category=params.get("category_ids") or None,
+        place=_resolve_place_ids(params),
         price_max=params.get("price_max"),
         limit=int(params["pool"]),
     )
@@ -356,6 +367,30 @@ def select_feed_events(params, *, recent_ids=None, today=None):
 
     shown = candidates[: int(params["shown"])]
     return shown, candidates
+
+
+def _resolve_place_ids(params):
+    """Place ids for the theme's ``location``, or None when it has none.
+
+    Degrades to None (no place filter) rather than to an empty list: an empty
+    list would filter everything out and silently produce an empty theme.
+    """
+    phrase = (params.get("location") or "").strip()
+    if not phrase:
+        return None
+    try:
+        ids = dsn_crud.resolve_location_place_ids(
+            phrase,
+            scope=str(params.get("location_scope") or "venue"),
+            adjacency=getattr(settings, "metro_adjacency", {}),
+        )
+    except Exception as e:
+        log.warning(f"Theme location {phrase!r} could not be resolved: {e}")
+        return None
+    if not ids:
+        log.info(f"Theme location {phrase!r} matched no places; using text match only")
+        return None
+    return ids
 
 
 def select_theme_events(params, *, recent_ids=None, today=None):
@@ -376,6 +411,8 @@ def select_theme_events(params, *, recent_ids=None, today=None):
         free_only=bool(params.get("free_only")),
         limit=int(params["pool"]),
         max_distance=params.get("max_distance"),
+        place_ids=_resolve_place_ids(params),
+        location_text=(params.get("location") or "").strip() or None,
         rerank=True,
     )
     candidates = _normalize_event_dates(found["events"])

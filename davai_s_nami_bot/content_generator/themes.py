@@ -134,15 +134,19 @@ def fmt_price(event):
     return shorten(price, 20)
 
 
-def event_place_name(event):
+PLACE_MAX_CHARS = 32
+
+
+def event_place_name(event, max_chars=PLACE_MAX_CHARS):
     """Short venue label: the Place name, else the first part of the address."""
     place = event.get("place") or {}
     name = (place.get("place_name") or "").strip()
     if name:
-        return shorten(name, 32)
+        return shorten(name, max_chars) if max_chars else name
     address = (event.get("address") or "").strip()
     if address:
-        return shorten(address.split(",")[0], 32)
+        first = address.split(",")[0]
+        return shorten(first, max_chars) if max_chars else first
     return ""
 
 

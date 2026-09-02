@@ -33,7 +33,11 @@ DEFAULT_RICH_LIMIT = 1300
 
 DEFAULT_MAX_PHOTOS = 5
 
+PLACE_MAX_CHARS = 0
+
 _GFM_SPECIAL_RE = re.compile(r"([\\`*_\[\]])")
+
+HARD_BREAK = "  \n"
 
 
 def escape(text):
@@ -81,7 +85,7 @@ def event_line(event, with_place=True):
     """``чт 20 авг, 14:00 · Лендок · бесплатно`` — the non-AI facts, one line."""
     parts = [
         themes.fmt_compact_date(event.get("from_date"), event.get("to_date")),
-        themes.event_place_name(event) if with_place else "",
+        themes.event_place_name(event, PLACE_MAX_CHARS) if with_place else "",
         themes.fmt_price(event),
     ]
     return " · ".join(p for p in parts if p)
@@ -93,7 +97,7 @@ def event_facts(event):
     when = themes.fmt_compact_date(event.get("from_date"), event.get("to_date"))
     if when:
         lines.append(f"📅 {escape(when)}")
-    place = themes.event_place_name(event)
+    place = themes.event_place_name(event, PLACE_MAX_CHARS)
     if place:
         lines.append(f"📍 {escape(place)}")
 
@@ -197,7 +201,7 @@ def _event_block(event, comments):
     if comment:
         block.append(escape(comment))
     block.extend(event_facts(event))
-    return "\n".join(block)
+    return HARD_BREAK.join(block)
 
 
 def build_prose(
@@ -245,7 +249,7 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
                 bits.append(price)
             meta = " · ".join(bits)
             lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
-        parts.append("\n".join(lines))
+        parts.append(HARD_BREAK.join(lines))
 
     return "\n\n".join(parts), photos
 
@@ -260,7 +264,7 @@ def build_tail(events, label=""):
         head = link(themes.shorten(event.get("title") or "", 60), themes.event_link(event))
         meta = event_line(event, with_place=False)
         lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
-    return "\n".join(lines)
+    return HARD_BREAK.join(lines)
 
 
 def join_sections(*sections):

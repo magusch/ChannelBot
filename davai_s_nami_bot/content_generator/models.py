@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, func
 from sqlalchemy.orm import relationship
 from sqlalchemy import UniqueConstraint
@@ -42,7 +44,8 @@ class ContentGeneratorFilterSet(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
-    description = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     filter_type = Column(String(20), nullable=False)
     is_active = Column(Boolean, nullable=False)
     filter_params = Column(String, nullable=False)  # Assuming JSONB is stored as String

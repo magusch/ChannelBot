@@ -311,6 +311,8 @@ def schedule_posting_tasks():
 
 GENERATED_POST_SCHEDULE_WINDOW = timedelta(hours=1)
 
+THEME_ATTEMPTS_PER_SLOT = 3
+
 
 @celery_app.task
 def schedule_generated_posting_tasks():
@@ -1443,9 +1445,20 @@ def schedule_theme_post(
             log.info(f"Theme post planner: {slot.date()} already scheduled, skipping")
             continue
 
-        result = theme_post.build_theme_post(
-            target_date=slot.date(), exclude_filter_ids=used_filter_ids
-        )
+        tried = list(used_filter_ids)
+        for _ in range(THEME_ATTEMPTS_PER_SLOT):
+            result = theme_post.build_theme_post(
+                target_date=slot.date(), exclude_filter_ids=tried
+            )
+            if result.get('status') == 'ok' or not result.get('filter_set_id'):
+                break
+            log.info(
+                f"Theme post planner: {slot.date()} — theme "
+                f"{result.get('theme')!r} skipped ({result.get('status')}), "
+                f"trying the next one"
+            )
+            tried.append(result['filter_set_id'])
+
         if result.get('status') != 'ok':
             log.info(
                 f"Theme post planner: {slot.date()} not scheduled "
