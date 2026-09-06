@@ -2098,6 +2098,30 @@ def dedupe_ready_queue(
 
 
 @db_session
+@db_session
+def mark_events_as_digested(db, event_ids: list, post_url: str = None) -> dict:
+    """Take digested events off the channel queue: ReadyToPost -> OnlyApi.
+    """
+    if not event_ids:
+        return {"moved": 0, "skipped": 0}
+
+    rows = (
+        db.query(Events2Posts)
+        .filter(Events2Posts.id.in_(list(event_ids)))
+        .all()
+    )
+    moved = 0
+    for event in rows:
+        if event.status != 'ReadyToPost':
+            continue
+        event.status = 'OnlyApi'
+        if post_url:
+            event.post_url = post_url
+        moved += 1
+    db.commit()
+    return {"moved": moved, "skipped": len(rows) - moved}
+
+
 def get_recent_event_titles(db, days: int = 14) -> List[str]:
     """Return titles from both tables for the last N days (repetition check)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)

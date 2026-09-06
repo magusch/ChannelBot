@@ -189,6 +189,39 @@ def post_to_telegram():
             log.error(f"врFailed to send log to dev channel: {e}")
 
 
+def _digest_post_url(client_post, message):
+    """Channel URL of the message just sent, or None when it cannot be built."""
+    message_id = None
+    if isinstance(message, dict):
+        message_id = message.get('message_id')
+    else:
+        message_id = getattr(message, 'message_id', None)
+    link = getattr(client_post, 'channel_link', None)
+    if not message_id or not link:
+        return None
+    return f"{link}/{message_id}"
+
+
+def _mark_digested_events(platform, client_post, message, postings):
+    """Take the digest's events off the channel queue, pointing them at the post.
+
+    Runs only after a successful send: a draft that never goes out must not cost
+    its events their own post. Telegram only — VK has no per-message URL here.
+    """
+    event_ids = postings.get('mark_event_ids') or []
+    if platform != 'telegram' or not event_ids:
+        return
+    try:
+        post_url = _digest_post_url(client_post, message)
+        result = crud.mark_events_as_digested(event_ids, post_url)
+        log.info(
+            f"Digest events: {result['moved']} moved ReadyToPost→OnlyApi, "
+            f"{result['skipped']} already elsewhere (url={post_url})"
+        )
+    except Exception as e:
+        log.error(f"Could not mark digested events: {e}")
+
+
 @celery_app.task
 def post_generated_by_schedule(schedule_id: int):
     """Post a generated post for the given schedule id to its platform."""
@@ -213,20 +246,22 @@ def post_generated_by_schedule(schedule_id: int):
                     else {}
                 )
                 if postings.get('format') == 'rich' and platform == 'telegram':
-                    client_post.send_rich(
+                    message = client_post.send_rich(
                         text=postings['text'],
                         image_paths=postings.get('image_paths'),
                         destination_id=destination_id,
                         **extra,
                     )
                 elif postings.get('image_path'):
-                    client_post.send_image(text=postings['text'], image_path=postings['image_path'],
-                                           destination_id=destination_id, **extra)
+                    message = client_post.send_image(
+                        text=postings['text'], image_path=postings['image_path'],
+                        destination_id=destination_id, **extra)
                 else:
-                    client_post.send_text(text=postings['text'], destination_id=destination_id,
-                                          **extra)
+                    message = client_post.send_text(
+                        text=postings['text'], destination_id=destination_id, **extra)
                 posting_class.schedule_posted(schedule_id)
                 log.info(f"Schedule {schedule_id} marked as posted successfully")
+                _mark_digested_events(platform, client_post, message, postings)
             except Exception as e:
                 log.error(f"Failed to post schedule {schedule_id}: {e}")
                 cg_crud.increment_schedule_retry(schedule_id, error_message=str(e))
@@ -1384,7 +1419,7 @@ def content_generator_theme_post(filter_set_id: int = None, dry_run: bool = Fals
 @celery_app.task
 def schedule_theme_post(
     days_ahead: int = None, platform: str = 'telegram', publish_hour: int = None,
-    publish_minute: int = None,
+    publish_minute: int = None, filter_set_id: int = None,
 ):
     """Keep the next ``days_ahead`` publication slots filled with themed drafts.
 
@@ -1401,7 +1436,8 @@ def schedule_theme_post(
     from davai_s_nami_bot.settings.settings_loader import settings
 
     cfg = settings.content_generator or {}
-    days_ahead = days_ahead if days_ahead is not None else cfg.get('theme_post_days_ahead', 2)
+    if days_ahead is None:
+        days_ahead = 1 if filter_set_id else cfg.get('theme_post_days_ahead', 2)
     publish_hour = publish_hour if publish_hour is not None else cfg.get('theme_post_publish_hour', 20)
     publish_minute = (
         publish_minute if publish_minute is not None
@@ -1433,31 +1469,50 @@ def schedule_theme_post(
         log.info("Theme post planner: nothing to schedule (days_ahead=0)")
         return {'status': 'ok', 'planned': []}
 
+    repeat_days = cfg.get('theme_post_repeat_days', 3)
+    recent_themes = set()
+    if repeat_days:
+        recent_themes = cg_crud.get_scheduled_filter_ids(
+            platform,
+            (now - timedelta(days=int(repeat_days))).replace(tzinfo=None),
+            (now + timedelta(days=int(days_ahead) + 1)).replace(tzinfo=None),
+        )
+        if recent_themes:
+            log.info(
+                f"Theme post planner: themes {sorted(recent_themes)} ran within "
+                f"{repeat_days} days, excluded from rotation"
+            )
+
     taken = cg_crud.get_scheduled_dates(
         platform,
         slots[0].replace(hour=0, minute=0, second=0, microsecond=0),
         slots[-1].replace(hour=23, minute=59, second=59, microsecond=0),
     )
 
-    planned, used_filter_ids = [], []
+    planned, used_filter_ids = [], list(recent_themes)
     for slot in slots:
         if slot.date() in taken:
             log.info(f"Theme post planner: {slot.date()} already scheduled, skipping")
             continue
 
-        tried = list(used_filter_ids)
-        for _ in range(THEME_ATTEMPTS_PER_SLOT):
+        if filter_set_id:
             result = theme_post.build_theme_post(
-                target_date=slot.date(), exclude_filter_ids=tried
+                filter_set_id=filter_set_id, target_date=slot.date()
             )
-            if result.get('status') == 'ok' or not result.get('filter_set_id'):
-                break
-            log.info(
-                f"Theme post planner: {slot.date()} — theme "
-                f"{result.get('theme')!r} skipped ({result.get('status')}), "
-                f"trying the next one"
-            )
-            tried.append(result['filter_set_id'])
+        else:
+            tried = list(used_filter_ids)
+            for _ in range(THEME_ATTEMPTS_PER_SLOT):
+                result = theme_post.build_theme_post(
+                    target_date=slot.date(), exclude_filter_ids=tried
+                )
+                if result.get('status') == 'ok' or not result.get('filter_set_id'):
+                    break
+                log.info(
+                    f"Theme post planner: {slot.date()} — theme "
+                    f"{result.get('theme')!r} skipped ({result.get('status')}), "
+                    f"trying the next one"
+                )
+                tried.append(result['filter_set_id'])
 
         if result.get('status') != 'ok':
             log.info(

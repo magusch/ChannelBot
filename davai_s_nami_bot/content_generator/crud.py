@@ -261,6 +261,35 @@ def get_scheduled_dates(db, platform: str, since, until) -> set:
 
 
 @db_session
+def get_scheduled_filter_ids(db, platform: str, since, until) -> set:
+    """Themes that already have a scheduled post in ``[since, until]``.
+
+    Read from PostingSchedule rather than from the selections table because this
+    answers "was it published on a day", which is what a repeat rule is about;
+    a selection can exist without ever reaching the channel.
+    """
+    rows = (
+        db.query(ContentGeneratorEventSelection.filter_set_id)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.event_selection_id
+            == ContentGeneratorEventSelection.id,
+        )
+        .join(
+            PostingSchedule,
+            PostingSchedule.generated_post_id == ContentGeneratorGeneratedPost.id,
+        )
+        .filter(
+            PostingSchedule.platform == platform,
+            PostingSchedule.scheduled_time >= since,
+            PostingSchedule.scheduled_time <= until,
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row[0] is not None}
+
+
+@db_session
 def count_stale_schedules(db, before) -> int:
     """How many not-posted schedules are already past ``before`` (for logging)."""
     return (

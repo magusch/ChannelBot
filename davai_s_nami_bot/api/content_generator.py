@@ -57,13 +57,13 @@ async def content_generator_generate_post_ai(body: ContentGeneratorGeneratePostA
 
 
 @router.post("/theme-post/", response_model=TaskResponse,
-             summary="Themed digest post",
+             summary="Themed digest draft (no schedule)",
              description=(
-                 "Build a themed digest: the theme text is embedded and matched "
-                 "against event embeddings, the result is diversified and rendered "
-                 "into a length-budgeted MarkdownV2 post. Without filter_set_id the "
-                 "least-recently-posted active theme is used. dry_run returns the "
-                 "rendered post without writing anything."
+                 "Render a themed digest DRAFT. Writes the selection and the "
+                 "generated post but NOT a PostingSchedule row, so on its own it "
+                 "never reaches the channel — use /schedule-theme-post/ for that. "
+                 "Without filter_set_id the least-recently-posted active theme is "
+                 "used. dry_run returns the rendered post without writing anything."
              ))
 async def content_generator_theme_post(body: ContentGeneratorThemePostRequest):
     task = celery_app.send_task(
@@ -79,7 +79,8 @@ async def content_generator_theme_post(body: ContentGeneratorThemePostRequest):
                  "Top the publication plan back up: build themed drafts for the "
                  "next `days_ahead` free slots and write a PostingSchedule row for "
                  "each. Unlike /theme-post/, which only renders a draft, this is "
-                 "what makes a post actually go out. Idempotent — a day that "
+                 "what makes a post actually go out. Pass filter_set_id to publish "
+                 "one chosen theme in the next free slot. Idempotent — a day that "
                  "already holds an unposted schedule is skipped."
              ))
 async def content_generator_schedule_theme_post(
@@ -88,6 +89,7 @@ async def content_generator_schedule_theme_post(
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.schedule_theme_post',
         kwargs={
+            'filter_set_id': body.filter_set_id,
             'days_ahead': body.days_ahead,
             'platform': body.platform,
             'publish_hour': body.publish_hour,

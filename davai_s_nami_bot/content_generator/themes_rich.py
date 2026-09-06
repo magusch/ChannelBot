@@ -37,7 +37,7 @@ PLACE_MAX_CHARS = 0
 
 _GFM_SPECIAL_RE = re.compile(r"([\\`*_\[\]])")
 
-HARD_BREAK = "  \n"
+HARD_BREAK = "\\\n"
 
 
 def escape(text):

@@ -237,19 +237,22 @@ def pick_theme(filter_sets, recent_filter_ids, weekday=None, exclude_ids=()):
     if not filter_sets:
         return None
 
-    # Without this a two-day plan runs the same theme twice whenever the
-    # narrowed pool has only one member.
-    excluded = set(exclude_ids or ())
-    candidates = [fs for fs in filter_sets if fs["id"] not in excluded] or filter_sets
+    # Hard filter first: a day-restricted theme cannot run on another day.
+    eligible = [
+        fs for fs in filter_sets
+        if weekday is None or runs_on_weekday(fs, weekday)
+    ]
+    if not eligible:
+        return None
 
-    if weekday is not None:
-        candidates = [fs for fs in candidates if runs_on_weekday(fs, weekday)]
-        if not candidates:
-            return None
-        if weekday in WEEKEND_PLANNING_WEEKDAYS:
-            weekend = [fs for fs in candidates if is_weekend_theme(fs)]
-            if weekend:
-                candidates = weekend
+    excluded = set(exclude_ids or ())
+    fresh = [fs for fs in eligible if fs["id"] not in excluded]
+
+    candidates = fresh or eligible
+    if weekday in WEEKEND_PLANNING_WEEKDAYS:
+        weekend = [fs for fs in fresh if is_weekend_theme(fs)]
+        if weekend:
+            candidates = weekend
 
     def staleness(fs):
         try:

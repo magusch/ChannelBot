@@ -100,6 +100,9 @@ class ContentGeneratorGeneratePostAIRequest(BaseModel):
 class ContentGeneratorScheduleThemePostRequest(BaseModel):
     """Request to run the theme-post planner (draft + PostingSchedule row)."""
 
+    filter_set_id: Optional[int] = Field(
+        None, description="Build this theme for the next free slot; omit to use rotation"
+    )
     days_ahead: Optional[int] = Field(
         None, description="How many upcoming publication slots to keep filled (default: settings)"
     )

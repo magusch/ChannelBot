@@ -764,7 +764,7 @@ class Posting:
 
         try:
 
-            post_text = generated_post['content']
+            post_text = (generated_post['content'] or '').replace('\r\n', '\n')
 
             # Choose client by platform
             platform = (schedule.get('platform') or 'telegram').lower()
@@ -793,6 +793,7 @@ class Posting:
                     'image_path': image_path,
                     'buttons': self._buttons_from(blob),
                     'format': (blob.get('format') or 'plain'),
+                    'mark_event_ids': self._events_to_mark(generated_post, blob),
                 }
                 if post['format'] == 'rich' and platform == 'telegram':
                     # In collage mode media_files holds the source posters and the
@@ -831,6 +832,30 @@ class Posting:
             self.log.warning(f"Could not read settings for selection {selection_id}: {e}")
             return {}
         return blob if isinstance(blob, dict) else {}
+
+    def _events_to_mark(self, generated_post, blob):
+        """Events to take off the channel queue once this post goes out.
+
+        ``mark_used``: "shown" (default) — only the events the post describes;
+        "all" — the whole stored pool; "none" — leave the queue alone. The tail
+        of a digest is a mention, not a feature, so it does not cost the event
+        its own post by default.
+        """
+        mode = str(blob.get('mark_used') or 'shown').lower()
+        if mode == 'none':
+            return []
+        if mode == 'all':
+            selection_id = generated_post.get('event_selection_id')
+            if not selection_id:
+                return []
+            try:
+                return crud.get_selected_events(selection_id)
+            except Exception as e:
+                self.log.warning(f"Could not read selection events: {e}")
+                return []
+        shown = blob.get('shown_ids') or []
+        return [int(i) for i in shown if str(i).isdigit() or isinstance(i, int)]
+
 
     @staticmethod
     def _buttons_from(settings_blob):
