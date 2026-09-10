@@ -1,6 +1,6 @@
-"""Adaptive scoring: learn source_scores, category_scores from real posting decisions.
+"""Adaptive scoring: learn source_scores from real posting decisions.
 
-Runs weekly. Compares posted events (Events2Posts with post_url) vs rejected
+Runs daily (beat: 03:00). Compares posted events (Events2Posts with post_url) vs rejected
 (EventsNotApproved not extracted/approved, or stale 'new' older than 7 days).
 Saves learned config to Redis; calculate_score reads it as overlay on settings.json.
 """
@@ -103,7 +103,8 @@ def calculate_adaptive_config(
     Returns
     -------
     dict
-        Adaptive overrides: source_scores, category_scores, suggested_boost, suggested_penalty.
+        Applied override: source_scores. Review-only: suggested_category_scores,
+        suggested_boost_keywords, suggested_penalty_keywords.
     """
     result = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -118,12 +119,12 @@ def calculate_adaptive_config(
     if source_scores:
         result["source_scores"] = source_scores
 
-    # 2. Adaptive category_scores
+    # 2. Category scores — computed for review only, never auto-applied.
     category_scores = _calc_adaptive_category_scores(
         positive_events, negative_events, current_config.get("category_scores", {})
     )
     if category_scores:
-        result["category_scores"] = category_scores
+        result["suggested_category_scores"] = category_scores
 
     # 3. Keyword suggestions (not auto-applied, just stored for review)
     suggested_boost, suggested_penalty = _suggest_keywords(
@@ -163,20 +164,33 @@ def _calc_adaptive_source_scores(
     return adaptive if adaptive else {}
 
 
+def _event_category_id(event: dict) -> Optional[int]:
+    """Resolve an event's category the same way scoring does.
+    """
+    from .scoring import resolve_category_id
+
+    return resolve_category_id(
+        event.get("main_category_id"),
+        event.get("category"),
+        event.get("title") or "",
+        event.get("full_text") or "",
+    )
+
+
 def _calc_adaptive_category_scores(
     positive: list[dict], negative: list[dict], base_scores: dict
 ) -> dict:
-    """Calculate category_scores based on acceptance rate per main_category_id."""
+    """Calculate category_scores based on acceptance rate per category."""
     pos_by_cat = Counter()
     neg_by_cat = Counter()
 
     for e in positive:
-        cat_id = e.get("main_category_id")
+        cat_id = _event_category_id(e)
         if cat_id is not None:
             pos_by_cat[str(cat_id)] += 1
 
     for e in negative:
-        cat_id = e.get("main_category_id")
+        cat_id = _event_category_id(e)
         if cat_id is not None:
             neg_by_cat[str(cat_id)] += 1
 
@@ -273,8 +287,10 @@ def _suggest_keywords(
 def merge_adaptive_config(base_config: dict, adaptive: Optional[dict]) -> dict:
     """Merge adaptive overrides into base scoring config.
 
-    Adaptive values override base for source_scores and category_scores.
-    Keywords are NOT auto-merged (only suggested).
+    Adaptive values override base for source_scores only. Category scores and
+    keywords are NOT auto-merged (only suggested) — see
+    `_calc_adaptive_category_scores` for why the category rate is circular.
+    Older Redis blobs may still carry a `category_scores` key; it is ignored.
     """
     if not adaptive:
         return base_config
@@ -285,11 +301,6 @@ def merge_adaptive_config(base_config: dict, adaptive: Optional[dict]) -> dict:
         merged_sources = dict(base_config.get("source_scores", {}))
         merged_sources.update(adaptive["source_scores"])
         merged["source_scores"] = merged_sources
-
-    if "category_scores" in adaptive:
-        merged_cats = dict(base_config.get("category_scores", {}))
-        merged_cats.update(adaptive["category_scores"])
-        merged["category_scores"] = merged_cats
 
     return merged
 

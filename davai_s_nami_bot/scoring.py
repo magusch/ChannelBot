@@ -46,7 +46,7 @@ DEFAULT_PRICE_RANGES = [
 DEFAULT_PLACE_REPUTATION_WEIGHTS = {
     "w_posted": 1.0,
     "w_ready": 0.5,
-    "w_onlyapi": 0.3,
+    "w_onlyapi": 0.0,
     "w_rejected": 1.0,
     "w_spam": 1.5,
 }

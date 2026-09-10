@@ -1879,14 +1879,14 @@ def update_adaptive_scoring(days: int = 30):
 
     log.info(
         f"update_adaptive_scoring done: {adaptive.get('source_scores', {})} sources, "
-        f"{adaptive.get('category_scores', {})} categories"
+        f"{adaptive.get('suggested_category_scores', {})} categories (suggested only)"
     )
     return {
         "status": "ok",
         "positive": pos_count,
         "negative": neg_count,
         "adaptive_source_scores": adaptive.get("source_scores"),
-        "adaptive_category_scores": adaptive.get("category_scores"),
+        "suggested_category_scores": adaptive.get("suggested_category_scores"),
         "suggested_boost": adaptive.get("suggested_boost_keywords"),
         "suggested_penalty": adaptive.get("suggested_penalty_keywords"),
     }
