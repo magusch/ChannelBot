@@ -346,7 +346,7 @@ def schedule_posting_tasks():
 
 GENERATED_POST_SCHEDULE_WINDOW = timedelta(hours=1)
 
-THEME_ATTEMPTS_PER_SLOT = 3
+THEME_ATTEMPTS_PER_SLOT = 5
 
 
 @celery_app.task

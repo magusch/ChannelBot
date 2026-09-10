@@ -62,6 +62,7 @@ DEFAULT_THEME_PARAMS = {
     "pool": 40,
     "min_events": 3,
     "per_place": 1,
+    "per_title": 1,
     "per_day": 2,
     "per_category": None,
     "cooldown_selections": 20,
@@ -367,6 +368,7 @@ def select_feed_events(params, *, recent_ids=None, today=None):
     candidates = _apply_window_rules(candidates, params, date_from, date_to)
     candidates = themes.drop_recent(candidates, recent_ids or ())
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
+    candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
     shown = candidates[: int(params["shown"])]
     return shown, candidates
@@ -423,6 +425,7 @@ def select_theme_events(params, *, recent_ids=None, today=None):
     candidates = _apply_window_rules(candidates, params, date_from, date_to)
     candidates = themes.drop_recent(candidates, recent_ids or ())
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
+    candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
     # `_diverse_order`, not `select_diverse_events`: the latter re-sorts its
     # slice by score, throwing away the theme's own ranking.
@@ -707,6 +710,7 @@ def render_rich_post(filter_set, params, layout, shown, tail_events):
             body, photos = themes_rich.build_prose(
                 title, emoji, paragraphs, photos_by_paragraph, intro=intro,
                 max_photos=max_photos,
+                photos_mode=str(params.get("photos") or "each").lower(),
             )
             kept = [e for e in shown if e.get("id") in set(used_ids)]
         else:

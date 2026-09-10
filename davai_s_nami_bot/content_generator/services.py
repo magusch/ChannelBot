@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 import logging
 
 from . import crud
+from . import themes_rich
 from davai_s_nami_bot import crud as dsn_crud
 
 from ..settings.settings_loader import settings
@@ -806,6 +807,14 @@ class Posting:
                         post['image_paths'] = self._materialise_media(
                             media_files, schedule_id
                         )
+                    attached = len(post['image_paths'])
+                    synced = themes_rich.sync_photo_refs(post['text'], attached)
+                    if synced != post['text']:
+                        self.log.warning(
+                            f"Schedule {schedule_id}: text referenced more photos "
+                            f"than the {attached} attached; extra refs dropped"
+                        )
+                        post['text'] = synced
                 return post
             else:
                 self.log.info(f"Unsupported platform: {platform}")

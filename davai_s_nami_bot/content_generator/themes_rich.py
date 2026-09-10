@@ -55,6 +55,9 @@ def link(label, url):
     return f"[{label}]({str(url).replace(' ', '%20')})"
 
 
+_PHOTO_REF_RE = re.compile(r"!\[\]\(tg://photo\?id=[A-Za-z0-9_-]+\)")
+
+
 def photo_ref(media_id):
     """The in-text reference that pulls a photo into the message body."""
     return f"![](tg://photo?id={media_id})"
@@ -206,15 +209,26 @@ def _event_block(event, comments):
 
 def build_prose(
     title, emoji, paragraphs, photos_by_paragraph, intro="",
-    max_photos=DEFAULT_MAX_PHOTOS,
+    max_photos=DEFAULT_MAX_PHOTOS, photos_mode="each",
 ):
-    """Heading, one-sentence intro, then prose paragraphs with photos between them."""
+    """Heading, intro, then prose paragraphs with photos between them.
+    """
     parts = [f"## {escape(f'{emoji} {title}'.strip())}"]
     if intro:
         parts.append(f"_{escape(intro)}_")
+
     photos = []
+    mode = (photos_mode or "each").lower()
+
+    if mode == "collage":
+        photos = [url for url in photos_by_paragraph.values() if url]
+        if photos:
+            parts.append(photo_ref(media_id(0)))
+        parts.extend(paragraphs)
+        return "\n\n".join(p for p in parts if p), photos
+
     for index, paragraph in enumerate(paragraphs):
-        url = photos_by_paragraph.get(index)
+        url = photos_by_paragraph.get(index) if mode != "none" else None
         if url and len(photos) < max_photos:
             parts.append(photo_ref(media_id(len(photos))))
             photos.append(url)
@@ -265,6 +279,22 @@ def build_tail(events, label=""):
         meta = event_line(event, with_place=False)
         lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
     return HARD_BREAK.join(lines)
+
+
+def sync_photo_refs(text, photo_count):
+    """Drop photo references beyond ``photo_count``, renumbering what remains.
+    """
+    kept = {"n": 0}
+
+    def replace(match):
+        if kept["n"] >= max(int(photo_count), 0):
+            return ""
+        ref = photo_ref(media_id(kept["n"]))
+        kept["n"] += 1
+        return ref
+
+    out = _PHOTO_REF_RE.sub(replace, text or "")
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
 def join_sections(*sections):

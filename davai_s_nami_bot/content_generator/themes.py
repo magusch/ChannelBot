@@ -9,6 +9,8 @@ import math
 import re
 from datetime import datetime
 
+from ..scoring import title_containment
+
 # Telegram limits: photo caption vs plain text.
 TELEGRAM_CAPTION_LIMIT = 1024
 TELEGRAM_TEXT_LIMIT = 4096
@@ -173,6 +175,32 @@ def cap_per_place(events, max_per_place):
             continue
         seen[key] = seen.get(key, 0) + 1
         kept.append(event)
+    return kept
+
+
+SAME_TITLE_THRESHOLD = 0.8
+
+
+def cap_per_title(events, max_per_title, threshold=SAME_TITLE_THRESHOLD):
+    """Keep at most ``max_per_title`` runs of the same show, preserving order.
+    """
+    if not max_per_title or max_per_title <= 0:
+        return list(events)
+
+    kept, counts = [], []
+    for event in events:
+        title = event.get("title") or ""
+        matched = False
+        for index, (seen_title, count) in enumerate(counts):
+            if title_containment(title, seen_title) >= threshold:
+                matched = True
+                if count < max_per_title:
+                    counts[index] = (seen_title, count + 1)
+                    kept.append(event)
+                break
+        if not matched:
+            counts.append((title, 1))
+            kept.append(event)
     return kept
 
 
