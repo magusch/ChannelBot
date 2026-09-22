@@ -39,6 +39,8 @@ _GFM_SPECIAL_RE = re.compile(r"([\\`*_\[\]])")
 
 HARD_BREAK = "\\\n"
 
+PARAGRAPH_GAP = HARD_BREAK * 2
+
 
 def escape(text):
     """Neutralise GFM markup in text that came from an event, not from us."""
@@ -169,8 +171,9 @@ def build_detailed(
             parts.append(photo_ref(media_id(0)))
         if picks_label:
             parts.append(f"**{escape(picks_label)}**")
-        for event in events:
-            parts.append(_event_block(event, comments))
+        blocks = [_event_block(event, comments) for event in events]
+        if blocks:
+            parts.append(PARAGRAPH_GAP.join(blocks))
         return "\n\n".join(parts), collage_sources
 
     if picks_label:
@@ -187,24 +190,34 @@ def build_detailed(
     photos = []
     for event in events:
         url = event_photo_url(event)
+        block = _event_block(event, comments)
         if url and id(event) in chosen:
             parts.append(photo_ref(media_id(len(photos))))
             photos.append(url)
-
-        parts.append(_event_block(event, comments))
+            parts.append(block)
+        elif parts and not parts[-1].startswith("!["):
+            # No photo between them: keep the blank line instead of a bare break.
+            parts[-1] = parts[-1] + PARAGRAPH_GAP + block
+        else:
+            parts.append(block)
 
     return "\n\n".join(parts), photos
 
 
 def _event_block(event, comments):
-    """One described event: bold title, the AI's lines, then the labelled facts."""
+    """One described event: what it is, then — set apart — when, where, how much.
+    """
     title = themes.shorten(event.get("title") or "", 80)
-    block = [f"**{escape(title)}**"]
+    head = [f"**{escape(title)}**"]
     comment = (comments.get(event.get("id")) or "").strip()
     if comment:
-        block.append(escape(comment))
-    block.extend(event_facts(event))
-    return HARD_BREAK.join(block)
+        head.append(escape(comment))
+
+    facts = event_facts(event)
+    chunks = [HARD_BREAK.join(head)]
+    if facts:
+        chunks.append(HARD_BREAK.join(facts))
+    return PARAGRAPH_GAP.join(chunks)
 
 
 def build_prose(
@@ -224,15 +237,23 @@ def build_prose(
         photos = [url for url in photos_by_paragraph.values() if url]
         if photos:
             parts.append(photo_ref(media_id(0)))
-        parts.extend(paragraphs)
+        body = PARAGRAPH_GAP.join(p for p in paragraphs if p)
+        if body:
+            parts.append(body)
         return "\n\n".join(p for p in parts if p), photos
 
     for index, paragraph in enumerate(paragraphs):
+        if not paragraph:
+            continue
         url = photos_by_paragraph.get(index) if mode != "none" else None
         if url and len(photos) < max_photos:
             parts.append(photo_ref(media_id(len(photos))))
             photos.append(url)
-        parts.append(paragraph)
+            parts.append(paragraph)
+        elif parts and not parts[-1].startswith("!["):
+            parts[-1] = parts[-1] + PARAGRAPH_GAP + paragraph
+        else:
+            parts.append(paragraph)
     return "\n\n".join(p for p in parts if p), photos
 
 
@@ -249,6 +270,7 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
         if photos:
             parts.append(photo_ref(media_id(0)))
 
+    chunks = []
     for day, day_events in themes.group_by_day(events):
         lines = [f"**{escape(themes.fmt_day_header(day))}**"]
         for event in day_events:
@@ -263,8 +285,10 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
                 bits.append(price)
             meta = " · ".join(bits)
             lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
-        parts.append(HARD_BREAK.join(lines))
+        chunks.append(HARD_BREAK.join(lines))
 
+    if chunks:
+        parts.append(PARAGRAPH_GAP.join(chunks))
     return "\n\n".join(parts), photos
 
 
@@ -273,12 +297,13 @@ def build_tail(events, label=""):
     events = list(events)
     if not events:
         return ""
-    lines = [f"**{escape(label)}**"] if label else []
+    lines = []
     for event in events:
         head = link(themes.shorten(event.get("title") or "", 60), themes.event_link(event))
         meta = event_line(event, with_place=False)
         lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
-    return HARD_BREAK.join(lines)
+    body = HARD_BREAK.join(lines)
+    return f"**{escape(label)}**{PARAGRAPH_GAP}{body}" if label else body
 
 
 def sync_photo_refs(text, photo_count):
@@ -298,5 +323,17 @@ def sync_photo_refs(text, photo_count):
 
 
 def join_sections(*sections):
-    """Join non-empty sections with a blank line between them."""
-    return "\n\n".join(s.strip() for s in sections if s and s.strip())
+    """Join non-empty sections with a blank line between them.
+    """
+    out = ""
+    for section in sections:
+        section = (section or "").strip()
+        if not section:
+            continue
+        if not out:
+            out = section
+        elif out.endswith(")") and _PHOTO_REF_RE.search(out.rsplit("\n", 1)[-1]):
+            out += "\n\n" + section
+        else:
+            out += PARAGRAPH_GAP + section
+    return out

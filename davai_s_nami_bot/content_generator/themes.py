@@ -257,11 +257,70 @@ def drop_long_runners(events, max_duration_days):
     return kept
 
 
+def balance_by_day(events, limit, min_per_day=0):
+    """Pick ``limit`` events spread across the days they fall on.
+    """
+    limit = int(limit or 0)
+    if limit <= 0:
+        return []
+
+    grouped = group_by_day(events)
+    if len(grouped) <= 1:
+        return list(events)[:limit]
+
+    sizes = [len(day_events) for _, day_events in grouped]
+    total = sum(sizes)
+    if total <= limit:
+        return list(events)[:limit]
+
+    # Largest-remainder proportional allocation.
+    exact = [limit * size / total for size in sizes]
+    quota = [min(int(value), size) for value, size in zip(exact, sizes)]
+    floors = [min(int(min_per_day or 0), size) for size in sizes]
+    quota = [max(q, f) for q, f in zip(quota, floors)]
+
+    while sum(quota) > limit:
+        movable = [i for i in range(len(quota)) if quota[i] > floors[i]]
+        if not movable:
+            break
+        index = max(movable, key=lambda i: (quota[i] - exact[i], quota[i]))
+        quota[index] -= 1
+    while sum(quota) < limit:
+        index = max(
+            range(len(quota)),
+            key=lambda i: (
+                exact[i] - quota[i] if quota[i] < sizes[i] else float("-inf")
+            ),
+        )
+        if quota[index] >= sizes[index]:
+            break
+        quota[index] += 1
+
+    picked = []
+    for (_, day_events), take in zip(grouped, quota):
+        picked.extend(day_events[:take])
+
+    order = {id(event): position for position, event in enumerate(events)}
+    picked.sort(key=lambda event: order.get(id(event), len(order)))
+    return picked
+
+
 def fmt_day_header(day):
     """``Сб, 8 августа`` — the day label for a by-day digest."""
     if day is None:
         return "Скоро"
     return f"{_WEEKDAYS_TITLE[day.weekday()]}, {day.day} {_MONTHS_GEN[day.month]}"
+
+
+def sort_chronologically(events):
+    """Order events by start time, undated ones last.
+    """
+    dated, undated = [], []
+    for event in events:
+        start = event.get("from_date")
+        (dated if hasattr(start, "timestamp") else undated).append(event)
+    dated.sort(key=lambda e: e["from_date"])
+    return dated + undated
 
 
 def group_by_day(events):

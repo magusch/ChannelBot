@@ -64,6 +64,8 @@ DEFAULT_THEME_PARAMS = {
     "per_place": 1,
     "per_title": 1,
     "per_day": 2,
+    "balance_days": True,
+    "min_per_day": 0,
     "per_category": None,
     "cooldown_selections": 20,
     "post_limit": themes.DEFAULT_POST_LIMIT,
@@ -336,6 +338,14 @@ def window_for(params, target_date):
     return date_from, date_to
 
 
+def _pick_shown(pool, params):
+    """The events the post will describe, spread across the days in the window."""
+    limit = int(params["shown"])
+    if not params.get("balance_days", True):
+        return pool[:limit]
+    return themes.balance_by_day(pool, limit, params.get("min_per_day") or 0)
+
+
 def _apply_window_rules(candidates, params, date_from, date_to):
     """Trim candidates to what actually *happens* in the window."""
     candidates = themes.drop_categories(candidates, params.get("exclude_category_ids"))
@@ -370,7 +380,7 @@ def select_feed_events(params, *, recent_ids=None, today=None):
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
     candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
-    shown = candidates[: int(params["shown"])]
+    shown = _pick_shown(candidates, params)
     return shown, candidates
 
 
@@ -434,7 +444,7 @@ def select_theme_events(params, *, recent_ids=None, today=None):
         per_category=params.get("per_category"),
         per_day=params.get("per_day"),
     )
-    shown = pool[: int(params["shown"])]
+    shown = _pick_shown(pool, params)
     return shown, pool
 
 
@@ -783,6 +793,7 @@ def build_theme_post(
 
     tail_count = max(int(params.get("tail") or 0), 0)
     tail_events = pool[len(shown) : len(shown) + tail_count] if tail_count else []
+    tail_events = themes.sort_chronologically(tail_events)
 
     # Same window the selection used — the footer link must filter identically.
     date_from, date_to = window_for(params, target_date)

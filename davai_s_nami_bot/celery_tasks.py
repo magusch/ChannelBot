@@ -717,6 +717,57 @@ def prepare_unprepared_events(limit: int = 15):
 
 
 @celery_app.task
+def prepare_api_events(limit: int = None):
+    """Beat task: AI-prepare `OnlyApi` events so digests don't quote raw source text.`
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    features = settings.raw.get("features", {}) or {}
+    if limit is None:
+        limit = features.get("prepare_api_events_limit", 0)
+    limit = int(limit or 0)
+    if limit <= 0:
+        log.info("prepare_api_events: disabled (prepare_api_events_limit=0)")
+        return {"message": "disabled", "count": 0}
+
+    channel_backlog = crud.count_unprepared_events(statuses=("ReadyToPost",))
+    channel_limit = int(features.get("prepare_events_limit", 0) or 0)
+    if channel_limit and channel_backlog >= channel_limit:
+        log.info(
+            f"prepare_api_events: skipped, channel backlog {channel_backlog} "
+            f">= prepare_events_limit {channel_limit}"
+        )
+        return {
+            "message": "skipped: channel queue has priority",
+            "count": 0,
+            "channel_backlog": channel_backlog,
+        }
+
+    events = crud.get_unprepared_events(
+        limit=limit, statuses=("OnlyApi",), queue_head=0
+    )
+    if not events:
+        log.info("No unprepared OnlyApi events found.")
+        return {"message": "No unprepared OnlyApi events.", "count": 0}
+
+    log.info(
+        f"Preparing {len(events)} OnlyApi events "
+        f"(ids={[e.get('id') for e in events]})."
+    )
+    task_group = chord(
+        (
+            chain(ai_update_event.s(event), update_event.s(event['id']))
+            for event in events
+        ),
+        remake_events.s(),
+    ).apply_async()
+    return {
+        "message": f"AI prepare started for {len(events)} OnlyApi events.",
+        "task_id": task_group.id,
+    }
+
+
+@celery_app.task
 def embed_single_event(event_id: int, table: str = "events2posts"):
     """On-demand embedding for one event (e.g. dispatched by the /similar API on a miss).
 

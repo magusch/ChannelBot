@@ -955,6 +955,7 @@ def get_unprepared_events(
     nearest_count: int | None = None,
     nearest_pool_size: int | None = None,
     top_score_count: int | None = None,
+    statuses: tuple = ("ReadyToPost",),
 ):
     """Select unprepared events (status=ReadyToPost, is_ready IS NULL) in 3 tiers:
 
@@ -979,7 +980,9 @@ def get_unprepared_events(
 
     base_filters = [
         Events2Posts.is_ready.is_(None),
-        Events2Posts.status == "ReadyToPost",
+        Events2Posts.status.in_(tuple(statuses)),
+        func.coalesce(Events2Posts.to_date, Events2Posts.from_date)
+        >= datetime.now(timezone.utc),
     ]
 
     selected: list = []
@@ -1053,6 +1056,22 @@ def get_unprepared_events(
         event_dict_list.append(event_data)
 
     return event_dict_list
+
+
+@db_session
+def count_unprepared_events(db, statuses: tuple = ("ReadyToPost",)):
+    """How many upcoming events still wait for AI prep — same predicate as
+    ``get_unprepared_events``, without building the payload."""
+    return (
+        db.query(Events2Posts)
+        .filter(
+            Events2Posts.is_ready.is_(None),
+            Events2Posts.status.in_(tuple(statuses)),
+            func.coalesce(Events2Posts.to_date, Events2Posts.from_date)
+            >= datetime.now(timezone.utc),
+        )
+        .count()
+    )
 
 
 @db_session

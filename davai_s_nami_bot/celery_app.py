@@ -97,6 +97,12 @@ def create_celery_app():
         'kwargs': {'protect_first': 8},
     }
 
+    if settings.raw.get('features', {}).get('prepare_api_events_limit', 0):
+        beat_schedules['prepare-api-events'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.prepare_api_events',
+            'schedule': crontab(minute=35, hour=5),
+        }
+
     # Safety net: re-fire daily pipeline tasks that beat missed (container
     # restart, broker hiccup). Skips anything already run today (success or
     # error) via marker set in task_postrun. Cheap when nothing's missing.
