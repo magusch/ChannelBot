@@ -188,6 +188,37 @@ def date_range_human(date_from, date_to):
     return f"{_plain_date(date_from)} – {_plain_date(date_to)}"
 
 
+def heading_dates(date_from, date_to):
+    """Dates for the post title: ``26 и 27 сентября``, ``с 26 сентября по 9 октября``.
+
+    ``""`` for an empty (inverted) window or no dates at all.
+    """
+    if not date_from and not date_to:
+        return ""
+    if date_from and date_to:
+        if date_from > date_to:
+            return ""
+        if (date_to - date_from).days == 1:
+            if date_from.month == date_to.month:
+                return f"{date_from.day} и {date_to.day} {_MONTHS_GEN[date_to.month]}"
+            return f"{_plain_date(date_from)} и {_plain_date(date_to)}"
+        if date_from != date_to:
+            # "с … по …", not "26 сентября – 9 октября": the title already has a dash.
+            if (date_from.year, date_from.month) == (date_to.year, date_to.month):
+                return f"с {date_from.day} по {_plain_date(date_to)}"
+            return f"с {_plain_date(date_from)} по {_plain_date(date_to)}"
+    return date_range_human(date_from, date_to)
+
+
+def theme_heading(title, date_from, date_to, sep=" — "):
+    """``Выходные — 26 и 27 сентября``: the post says which days it is about.
+
+    Without it a digest read a day later, or forwarded, gave no hint of its dates.
+    """
+    dates = heading_dates(date_from, date_to)
+    return f"{title}{sep}{dates}" if dates else title
+
+
 _NEXT_DAYS_RANGE_RE = re.compile(r"^next_(\d{1,2})_days$")
 
 _RANGE_NAMES = {

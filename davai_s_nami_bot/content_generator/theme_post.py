@@ -105,6 +105,7 @@ DEFAULT_THEME_PARAMS = {
     "footer_link": "filter",
     "footer_label": "",
     "emoji": "\u2728",
+    "title_dates": True,
     "category_ids": None,
     "price_max": None,
     "free_only": False,
@@ -795,10 +796,15 @@ def theme_webapp_url(params, date_from, date_to):
 
 
 def render_rich_post(
-    filter_set, params, layout, shown, tail_events, context=None, tail_label=""
+    filter_set, params, layout, shown, tail_events, context=None, tail_label="",
+    heading=None,
 ):
-    """Build a rich message: ``(markdown, photo_urls, kept_events)``."""
+    """Build a rich message: ``(markdown, photo_urls, kept_events)``.
+
+    ``title`` goes to the AI (bare theme name), ``heading`` onto the post.
+    """
     title, emoji = filter_set["name"], params["emoji"]
+    heading = heading or title
     limit = int(params.get("rich_limit") or themes_rich.DEFAULT_RICH_LIMIT)
     max_photos = int(params.get("max_photos") or themes_rich.DEFAULT_MAX_PHOTOS)
 
@@ -812,7 +818,7 @@ def render_rich_post(
         )
         if paragraphs:
             body, photos = themes_rich.build_prose(
-                title, emoji, paragraphs, photos_by_paragraph, intro=intro,
+                heading, emoji, paragraphs, photos_by_paragraph, intro=intro,
                 max_photos=max_photos,
                 photos_mode=str(params.get("photos") or "each").lower(),
             )
@@ -826,7 +832,7 @@ def render_rich_post(
             title, params, shown, also=tail_events, context=context
         )
         body, photos = themes_rich.build_by_day(
-            title, emoji, intro, shown,
+            heading, emoji, intro, shown,
             photos_mode=str(params.get("photos") or "collage").lower(),
             max_photos=max_photos,
         )
@@ -841,7 +847,7 @@ def render_rich_post(
             title, params, shown, comment_max, also=tail_events, context=context
         )
         body, photos = themes_rich.build_detailed(
-            title, emoji, intro, shown, comments,
+            heading, emoji, intro, shown, comments,
             max_photos=max_photos,
             picks_label=params.get("picks_label") or "",
             photos_mode=str(params.get("photos") or "each").lower(),
@@ -952,13 +958,17 @@ def build_theme_post(
         footer = ""
 
     layout = str(params.get("layout") or themes.LAYOUT_DETAILED).lower()
-    header_probe = themes.build_header(params["emoji"], filter_set["name"], "")
+    heading = (
+        themes.theme_heading(filter_set["name"], date_from, date_to)
+        if params.get("title_dates", True) else filter_set["name"]
+    )
+    header_probe = themes.build_header(params["emoji"], heading, "")
     post_format = str(params.get("format") or "plain").lower()
 
     if post_format == "rich":
         text, photos, kept = render_rich_post(
             filter_set, params, layout, shown, tail_events,
-            context=context, tail_label=tail_label,
+            context=context, tail_label=tail_label, heading=heading,
         )
         buttons = _post_buttons(button, params, shown, kept, selection_id)
         return _finish_theme_post(
@@ -966,6 +976,7 @@ def build_theme_post(
                 "status": "ok",
                 "filter_set_id": filter_set["id"],
                 "theme": filter_set["name"],
+                "heading": heading,
                 "content": text,
                 "buttons": buttons,
                 "format": "rich",
@@ -1016,7 +1027,7 @@ def build_theme_post(
             also=tail_events, context=context,
         )
 
-    header = themes.build_header(params["emoji"], filter_set["name"], intro)
+    header = themes.build_header(params["emoji"], heading, intro)
     text, kept = themes.assemble_post(
         header,
         [] if layout == themes.LAYOUT_PROSE else shown,
@@ -1050,6 +1061,7 @@ def build_theme_post(
             "status": "ok",
             "filter_set_id": filter_set["id"],
             "theme": filter_set["name"],
+            "heading": heading,
             "content": text,
             "buttons": buttons,
             "format": "plain",
@@ -1107,7 +1119,7 @@ def _finish_theme_post(
 
     post = crud.create_generated_post(
         {
-            "title": themes.shorten(filter_set["name"], 295),
+            "title": themes.shorten(result.get("heading") or filter_set["name"], 295),
             "content": result["content"],
             "status": "draft",
             "event_selection_id": selection_id,
