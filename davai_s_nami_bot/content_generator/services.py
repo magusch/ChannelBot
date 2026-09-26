@@ -881,7 +881,8 @@ class Posting:
             raw = [raw]
         buttons = [
             b for b in (raw or [])
-            if isinstance(b, dict) and b.get('text') and b.get('url')
+            if isinstance(b, dict) and b.get('text')
+            and (b.get('url') or b.get('callback_data'))
         ]
         return buttons or None
 

@@ -100,6 +100,188 @@ def shorten(text, max_chars):
     return cut.rstrip(" ,.;:—-") + "…"
 
 
+_SUBTITLE_SEPS = (": ", ". ", " — ", " – ", " | ", " / ", "! ", "? ")
+_DANGLING_WORDS = frozenset(
+    "в во и с со на для по о об от к ко из за у а но или при до про без через "
+    "над под перед между".split()
+)
+
+
+def _cut_at_words(text, max_chars):
+    """Word-boundary cut that never ends on a preposition or conjunction."""
+    cut = shorten(text, max_chars)
+    if not cut.endswith("…"):
+        return cut
+    words = cut[:-1].split()
+    while len(words) > 1 and words[-1].lower() in _DANGLING_WORDS:
+        words.pop()
+    return " ".join(words).rstrip(" ,.;:—-") + "…"
+
+
+def _matching_close_quote(text, open_at):
+    """Index of the ``»`` closing the ``«`` at ``open_at`` (nesting-aware), or -1."""
+    depth = 0
+    for i in range(open_at, len(text)):
+        if text[i] == "«":
+            depth += 1
+        elif text[i] == "»":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def short_title(title, max_chars):
+    """Shorten an event title the way an editor would, not mid-phrase.
+    """
+    title = (title or "").strip()
+    if max_chars is None or max_chars <= 0:
+        return ""
+    if len(title) <= max_chars:
+        return title
+
+    open_at = title.find("«")
+    if open_at >= 0:
+        prefix = title[: open_at + 1]
+        close_at = _matching_close_quote(title, open_at)
+        inner = title[open_at + 1 : close_at if close_at >= 0 else len(title)]
+        whole = f"{prefix}{inner}»"
+        if len(whole) <= max_chars:
+            return whole
+        for sep in _SUBTITLE_SEPS:
+            idx = inner.find(sep)
+            if idx < 4:
+                continue
+            # Keep "!"/"?" — they belong to the name; drop ":" "." and dashes.
+            name = inner[: idx + 1] if sep[0] in "!?" else inner[:idx].rstrip()
+            candidate = f"{prefix}{name}»"
+            if len(candidate) <= max_chars:
+                return candidate
+        if len(prefix) + 6 < max_chars:
+            name = _cut_at_words(inner, max_chars - len(prefix) - 1)
+            return f"{prefix}{name}»"
+
+    floor = max(12, int(max_chars * 0.35))
+    best = ""
+    for sep in _SUBTITLE_SEPS:
+        idx = title.rfind(sep, 0, max_chars + 1)
+        if idx >= floor and idx > len(best):
+            best = title[: idx + 1] if sep[0] in "!?" else title[:idx].rstrip()
+    if best:
+        return best
+    return _cut_at_words(title, max_chars)
+
+
+def _plain_date(day):
+    """``26 сентября``."""
+    return f"{day.day} {_MONTHS_GEN[day.month]}"
+
+
+def date_range_human(date_from, date_to):
+    """``26–27 сентября`` / ``30 сентября – 9 октября`` / ``26 сентября`` / ``""``."""
+    if not date_from or not date_to:
+        return _plain_date(date_from or date_to) if (date_from or date_to) else ""
+    if date_from == date_to:
+        return _plain_date(date_from)
+    if (date_from.year, date_from.month) == (date_to.year, date_to.month):
+        return f"{date_from.day}–{date_to.day} {_MONTHS_GEN[date_to.month]}"
+    return f"{_plain_date(date_from)} – {_plain_date(date_to)}"
+
+
+_NEXT_DAYS_RANGE_RE = re.compile(r"^next_(\d{1,2})_days$")
+
+_RANGE_NAMES = {
+    "today": "сегодня",
+    "tomorrow": "завтра",
+    "this_weekend": "выходные",
+    "next_weekend": "следующие выходные",
+    "this_week": "эта неделя",
+    "next_week": "следующая неделя",
+}
+
+_TAIL_LABELS = {
+    "today": "А ещё сегодня:",
+    "tomorrow": "А ещё завтра:",
+    "this_weekend": "А ещё на выходных:",
+    "next_weekend": "А ещё на выходных:",
+    "this_week": "А ещё на этой неделе:",
+    "next_week": "А ещё на следующей неделе:",
+}
+
+
+def _horizon_days(range_name):
+    match = _NEXT_DAYS_RANGE_RE.match(str(range_name or "").lower())
+    return int(match.group(1)) if match else None
+
+
+def period_label(range_name, date_from, date_to):
+    """What the digest covers, in words the AI may quote: ``выходные, 26–27 сентября``.
+
+    Without it the model defaulted to "на этой неделе" — for a weekend digest
+    and for a two-week one alike.
+    """
+    if date_from and date_to and date_from > date_to:
+        return ""
+    key = str(range_name or "").lower()
+    name = _RANGE_NAMES.get(key, "")
+    days = _horizon_days(key)
+    if days:
+        name = {7: "ближайшая неделя", 14: "ближайшие две недели",
+                21: "ближайшие три недели"}.get(days, f"ближайшие {days} дней")
+    human = date_range_human(date_from, date_to)
+    return ", ".join(p for p in (name, human) if p)
+
+
+def tail_label_for(range_name, date_to=None):
+    """Heading of the one-liner tail, matching the window it lists.
+    """
+
+    key = str(range_name or "").lower()
+    if key in _TAIL_LABELS:
+        return _TAIL_LABELS[key]
+    days = _horizon_days(key)
+    if days and days <= 7:
+        return "А ещё на неделе:"
+    if date_to:
+        return f"А ещё до {_plain_date(date_to)}:"
+    return "А ещё:"
+
+
+def is_thin_description(description, title="", min_chars=120):
+    """True when the text says little beyond the title — too little to comment on.
+
+    Given nothing, the model paraphrased the title ("разговор про то, как из
+    почвы, процесса и кумиров…") or guessed out loud ("похоже, решается по ходу").
+    """
+    text = (description or "").strip()
+    bare_title = re.sub(r"^[^\w«]+", "", title or "").strip()
+    if bare_title:
+        text = text.replace(bare_title, "")
+    return len(text.strip()) < min_chars
+
+
+_MD_ESCAPE_RE = re.compile(r"\\(.)")
+
+
+def extract_intro(content):
+    """The intro paragraph of an already rendered digest, as plain text, or ``""``.
+
+    Both formats put it in the second ``\\n\\n`` block: rich — after ``## title``,
+    plain — after ``emoji *title*``.
+    """
+    blocks = [b.strip() for b in (content or "").split("\n\n")]
+    if len(blocks) < 2:
+        return ""
+    intro = blocks[1]
+    if not intro or intro.startswith(("![", "**", "*", "#")):
+        return ""
+    intro = intro.replace("\\\n", " ")
+    intro = _MD_ESCAPE_RE.sub(r"\1", intro).strip()
+    if len(intro) >= 2 and intro[0] == intro[-1] == "_":
+        intro = intro[1:-1].strip()
+    return intro
+
+
 def fmt_compact_date(from_date, to_date=None):
     """Short human date for a digest line: ``сб 9 авг, 19:00``."""
     if not isinstance(from_date, datetime):
@@ -257,6 +439,14 @@ def drop_long_runners(events, max_duration_days):
     return kept
 
 
+def remaining_events(pool, taken, limit):
+    """The first ``limit`` events of ``pool`` that are not in ``taken``.
+    """
+    taken_ids = {e.get("id") for e in taken}
+    rest = [e for e in pool if e.get("id") not in taken_ids]
+    return rest[: max(int(limit or 0), 0)]
+
+
 def balance_by_day(events, limit, min_per_day=0):
     """Pick ``limit`` events spread across the days they fall on.
     """
@@ -352,7 +542,7 @@ def _event_meta(event):
 
 def _linked_title(event, max_chars=MAX_TITLE_CHARS):
     """Bold, linked, escaped event title."""
-    title = shorten(event.get("title") or "", max_chars)
+    title = short_title(event.get("title") or "", max_chars)
     link = event_link(event)
     if link:
         return f"*[{escape_md2(title)}]({escape_md2_url(link)})*"
@@ -368,7 +558,7 @@ def render_day_line(event):
 
 def render_event_block(event, comment, comment_max, compact=False):
     """One event, either as a three-line block or as a single compact line."""
-    title = shorten(event.get("title") or "", MAX_TITLE_CHARS)
+    title = short_title(event.get("title") or "", MAX_TITLE_CHARS)
     link = event_link(event)
     if link:
         head = f"*[{escape_md2(title)}]({escape_md2_url(link)})*"
@@ -431,7 +621,7 @@ def render_prose(text, events, max_title=MAX_TITLE_CHARS):
             continue
 
         link = event_link(event)
-        label = shorten(label or (event.get("title") or ""), max_title)
+        label = short_title(label or event.get("title") or "", max_title)
         if link:
             out.append(f"[{escape_md2(label)}]({escape_md2_url(link)})")
         else:
@@ -501,7 +691,7 @@ def is_mentioned(event, text):
     link = event_link(event)
     if link:
         return escape_md2_url(link) in text
-    title = shorten(event.get("title") or "", MAX_TITLE_CHARS)
+    title = short_title(event.get("title") or "", MAX_TITLE_CHARS)
     return bool(title) and escape_md2(title) in text
 
 

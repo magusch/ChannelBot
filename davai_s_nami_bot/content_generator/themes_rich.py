@@ -137,7 +137,7 @@ def render_prose_paragraphs(text, events):
                 out.append(escape(label))
                 continue
 
-            label = themes.shorten(label or (event.get("title") or ""), 80)
+            label = themes.short_title(label or event.get("title") or "", 80)
             out.append(link(label, themes.event_link(event)))
             mentioned.append(event)
             if event.get("id") not in used:
@@ -207,7 +207,7 @@ def build_detailed(
 def _event_block(event, comments):
     """One described event: what it is, then — set apart — when, where, how much.
     """
-    title = themes.shorten(event.get("title") or "", 80)
+    title = themes.short_title(event.get("title") or "", 80)
     head = [f"**{escape(title)}**"]
     comment = (comments.get(event.get("id")) or "").strip()
     if comment:
@@ -274,7 +274,7 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
     for day, day_events in themes.group_by_day(events):
         lines = [f"**{escape(themes.fmt_day_header(day))}**"]
         for event in day_events:
-            head = link(themes.shorten(event.get("title") or "", 60),
+            head = link(themes.short_title(event.get("title") or "", 60),
                         themes.event_link(event))
             when = event.get("from_date")
             bits = []
@@ -299,7 +299,7 @@ def build_tail(events, label=""):
         return ""
     lines = []
     for event in events:
-        head = link(themes.shorten(event.get("title") or "", 60), themes.event_link(event))
+        head = link(themes.short_title(event.get("title") or "", 60), themes.event_link(event))
         meta = event_line(event, with_place=False)
         lines.append(f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}")
     body = HARD_BREAK.join(lines)

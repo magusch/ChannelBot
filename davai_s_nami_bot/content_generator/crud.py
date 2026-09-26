@@ -181,6 +181,19 @@ def create_generated_post(db, new_generated_post: dict):
 
 
 @db_session
+def get_recent_generated_post_contents(db, limit: int = 5) -> list:
+    """``content`` of the latest generated posts, newest first."""
+    rows = (
+        db.query(ContentGeneratorGeneratedPost.content)
+        .filter(ContentGeneratorGeneratedPost.content.isnot(None))
+        .order_by(ContentGeneratorGeneratedPost.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+@db_session
 def get_post_template(db, post_template_id: int) -> ContentGeneratorPostTemplate:
     """Getting post template by ID"""
     if post_template_id:

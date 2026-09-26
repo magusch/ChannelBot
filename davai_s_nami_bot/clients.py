@@ -106,18 +106,25 @@ class Telegram(BaseClient):
 
     @staticmethod
     def _inline_keyboard(buttons):
-        """``[{"text": ..., "url": ...}]`` → an inline keyboard, one button a row.
+        """``[{"text": ..., "url"|"callback_data": ...}]`` → an inline keyboard,
+        one button a row.
 
-        A URL button is the one keyboard kind a channel post can carry, and it
-        costs nothing against the caption limit — Telegram counts the text only.
+        Buttons cost nothing against the caption limit — Telegram counts the text
+        only. A callback button on a channel post reaches the bot that sent it:
+        the channel and DavaiSNami_bot share one token, so ``save_event:<id>`` is
+        handled there.
         """
         if not buttons:
             return None
         markup = InlineKeyboardMarkup()
         for button in buttons:
-            text, url = (button or {}).get("text"), (button or {}).get("url")
+            button = button or {}
+            text, url = button.get("text"), button.get("url")
+            callback = button.get("callback_data")
             if text and url:
                 markup.add(InlineKeyboardButton(text=text, url=url))
+            elif text and callback:
+                markup.add(InlineKeyboardButton(text=text, callback_data=callback))
         return markup if markup.keyboard else None
 
     def send_text(self, text: str, *, destination_id: Union[int, str], buttons=None):

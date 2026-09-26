@@ -90,6 +90,40 @@ def resolve_prompts(dsn_param):
     return system, editorial
 
 
+def _period_block(period):
+    """The window the digest covers — the model otherwise assumes "this week"."""
+    if not period:
+        return ""
+    return f"""
+Период подборки: {period}. Говори о нём только так или конкретными днями
+(«в субботу», «27 сентября»). Не называй его «неделей», если это не неделя, и
+не пиши «на этой неделе» про выходные или про две недели вперёд."""
+
+
+def _recent_intros_block(recent_intros):
+    """Intros of the latest digests, so the new one does not start the same way."""
+    intros = [str(i).strip() for i in recent_intros or [] if str(i).strip()]
+    if not intros:
+        return ""
+    listed = "\n".join(f"- {i}" for i in intros)
+    return f"""
+Вступления прошлых подборок канала. Не начинай так же, как любое из них, и не
+повторяй их обороты и конструкции — читатель видит их подряд в ленте:
+{listed}"""
+
+
+FACTS_RULE = """
+Пиши только то, что есть в полях мероприятия. Не додумывай программу, формат и
+участников. Если у мероприятия "thin": true — описания почти нет: одно короткое
+предложение по тому, что известно (формат, место, для кого), без пересказа
+названия другими словами. Слова-догадки «похоже», «видимо», «наверное», «судя по
+названию», «обещают» запрещены: не знаешь — не пиши."""
+
+
+def _context(period, recent_intros):
+    return _period_block(period) + _recent_intros_block(recent_intros) + "\n" + FACTS_RULE
+
+
 def _also_block(also):
     """Titles that are in the post but not described — context for the intro."""
     titles = [str(e.get("title") or "").strip() for e in also or []]
@@ -99,15 +133,19 @@ def _also_block(also):
     listed = "\n".join(f"- {t}" for t in titles)
     return (
         "\nЭто тоже есть в подборке, но комментировать их не надо — используй "
-        f"только чтобы понять контекст недели:\n{listed}"
+        f"только чтобы понять контекст подборки:\n{listed}"
     )
 
 
-def comments_contract(theme_title, payload, comment_max, intro_max=260, also=()):
+def comments_contract(
+    theme_title, payload, comment_max, intro_max=260, also=(), period="",
+    recent_intros=(),
+):
     """Response contract for the list layouts. Always from code."""
     return f"""
 
 Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
 
 Верни СТРОГО JSON без markdown-обёртки, вида:
 {{"intro": "...", "comments": [{{"id": <id>, "text": "..."}}]}}
@@ -122,11 +160,15 @@ text — до {comment_max} символов.
 {_also_block(also)}"""
 
 
-def prose_contract(theme_title, payload, prose_max, paragraph_max, intro_max=260, also=()):
+def prose_contract(
+    theme_title, payload, prose_max, paragraph_max, intro_max=260, also=(),
+    period="", recent_intros=(),
+):
     """Response contract for the flowing-text layout. Always from code."""
     return f"""
 
 Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
 
 Верни СТРОГО JSON: {{"intro": "...", "paragraphs": ["...", "..."]}}
 
@@ -151,3 +193,18 @@ paragraphs — 2–3 абзаца сплошного текста, каждый 
 Мероприятия (JSON):
 {json.dumps(payload, ensure_ascii=False, default=str)}
 {_also_block(also)}"""
+
+
+def intro_contract(theme_title, titles, intro_max=260, also=(), period="", recent_intros=()):
+    """Response contract for layouts that only need an intro. Always from code."""
+    listed = "\n".join(f"- {t}" for t in titles if t)
+    return f"""
+
+Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
+
+Мероприятия:
+{listed}
+{_also_block(also)}
+Верни СТРОГО JSON: {{"intro": "..."}} — только вступление, до {intro_max} символов,
+по правилам выше. Не используй слова из заголовка «{theme_title}» и однокоренные с ними."""

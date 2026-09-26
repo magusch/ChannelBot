@@ -22,7 +22,6 @@ from ..helper.ai_helper import AIHelper
 from ..helper.ai.query_analyzer import _resolve_relative_range
 from ..helper.dsn_parameters import DSNParameters
 from ..helper.embeddings import EmbeddingClient, current_embedding_model_label
-from ..scoring import CATEGORY_ID_TO_NAME
 from ..settings.settings_loader import settings
 
 log = logging.getLogger(__name__)
@@ -50,6 +49,8 @@ def _clean_intro(raw, intro_max):
         return themes.shorten(trimmed, limit)
     return trimmed
 
+PICKER_LABEL = "⭐ Сохранить в избранное"
+
 #: No count: the web-app list is live, so its size is unknown when rendering.
 DEFAULT_FOOTER_LABEL = "Все мероприятия — в приложении"
 
@@ -73,10 +74,10 @@ DEFAULT_THEME_PARAMS = {
     "layout": "detailed",
     # Extra events named as one-liners after the described ones.
     "tail": 0,
-    "tail_label": "\u0410 \u0435\u0449\u0451 \u043d\u0430 \u043d\u0435\u0434\u0435\u043b\u0435:",
+    "tail_label": "",
     # "button" costs no characters: Telegram counts only the message text.
     "footer_style": "link",
-    # "save" needs a `/start fav_<id>` handler bot-side.
+    # "picker" = one "⭐ Сохранить в избранное" button → bot `?start=save_<selection
     "event_buttons": "none",
     # plain | rich (Bot API 10.1: photos inside the text, 32768-byte ceiling)
     "format": "plain",
@@ -98,6 +99,7 @@ DEFAULT_THEME_PARAMS = {
     "location_scope": "venue",
     # Publication weekdays: [3, 4] / "3-4" / "0,2,4" / None = any.
     "weekdays": None,
+    "season": None,
     "min_lead_days": 1,
     # filter = live web-app list (no bot handler). selection = frozen pool.
     "footer_link": "filter",
@@ -235,15 +237,80 @@ def planning_slots(now, days_ahead, resolve_time, lead_minutes=5, max_days=14):
     return slots
 
 
-def pick_theme(filter_sets, recent_filter_ids, weekday=None, exclude_ids=()):
+def _season_day(value, year):
+    """``"10-31"`` (every year) or ``"2027-03-14"`` (one date) → ``date``."""
+    text = str(value).strip()
+    if len(text) == 5:
+        return datetime.strptime(f"{year}-{text}", "%Y-%m-%d").date()
+    return datetime.strptime(text, "%Y-%m-%d").date()
+
+
+def parse_season(value):
+    """``season`` param → list of ``(from, to)`` string pairs, ``[]`` = all year.
+
+    ``{"from": "10-20", "to": "10-31"}`` repeats every year (and may wrap over
+    New Year: ``"12-20"``–``"01-08"``). Holidays that move — Масленица, Ночь
+    музеев — take full dates, one window per year: a list of such dicts.
+    """
+    if not value:
+        return []
+    windows = value if isinstance(value, list) else [value]
+    return [
+        (w["from"], w["to"]) for w in windows
+        if isinstance(w, dict) and w.get("from") and w.get("to")
+    ]
+
+
+def in_season(filter_set, day):
+    """True if the theme may run on ``day``: no ``season`` or ``day`` inside one.
+
+    A broken window is logged and treated as out of season — a holiday theme
+    must not leak into the regular rotation because of a typo.
+    """
+    windows = parse_season(_theme_params(filter_set).get("season"))
+    if not windows:
+        return True
+    for start, end in windows:
+        try:
+            if len(str(start).strip()) == 5:
+                # Annual window: try this year's and, for a wrap, last year's start.
+                for year in (day.year, day.year - 1):
+                    lo, hi = _season_day(start, year), _season_day(end, year)
+                    if hi < lo:
+                        hi = _season_day(end, year + 1)
+                    if lo <= day <= hi:
+                        return True
+            elif _season_day(start, day.year) <= day <= _season_day(end, day.year):
+                return True
+        except (ValueError, TypeError):
+            log.warning(
+                f"Theme {filter_set.get('id')}: bad season window {start!r}–{end!r}"
+            )
+    return False
+
+
+def is_seasonal(filter_set):
+    return bool(parse_season(_theme_params(filter_set).get("season")))
+
+
+#: An in-season theme is pushed ahead of the rotation until it has run, then
+#: waits this many digests before it is pushed again.
+SEASON_REPEAT_AFTER = 7
+
+
+def pick_theme(
+    filter_sets, recent_filter_ids, weekday=None, exclude_ids=(), day=None
+):
     """Least-recently-posted active theme."""
     if not filter_sets:
         return None
 
-    # Hard filter first: a day-restricted theme cannot run on another day.
+    # Hard filters first: a day-restricted theme cannot run on another day, a
+    # seasonal one sleeps outside its dates (it stays is_active in Django).
     eligible = [
         fs for fs in filter_sets
-        if weekday is None or runs_on_weekday(fs, weekday)
+        if (weekday is None or runs_on_weekday(fs, weekday))
+        and (day is None or in_season(fs, day))
     ]
     if not eligible:
         return None
@@ -256,6 +323,20 @@ def pick_theme(filter_sets, recent_filter_ids, weekday=None, exclude_ids=()):
         weekend = [fs for fs in fresh if is_weekend_theme(fs)]
         if weekend:
             candidates = weekend
+
+    # A holiday window is short: without a push, least-recently-posted rotation
+    # can let it pass without a single post. Wins over the weekend preference.
+    if day is not None:
+        recent = list(recent_filter_ids or [])
+        seasonal = [
+            fs for fs in fresh
+            if is_seasonal(fs)
+            and fs["id"] not in recent[: int(
+                _theme_params(fs).get("season_repeat_after") or SEASON_REPEAT_AFTER
+            )]
+        ]
+        if seasonal:
+            candidates = seasonal
 
     def staleness(fs):
         try:
@@ -457,13 +538,15 @@ def _event_payload(events):
             "id": e.get("id"),
             "title": e.get("title"),
             "when": themes.fmt_compact_date(e.get("from_date"), e.get("to_date")),
-            "place": themes.event_place_name(e),
+            "place": themes.event_place_name(e, max_chars=None),
             "price": themes.fmt_price(e),
-            "description": themes.shorten(
-                (e.get("prepared_text") or e.get("full_text") or "").strip(), 600
-            ),
+            "description": description,
+            **({"thin": True} if themes.is_thin_description(description, e.get("title")) else {}),
         }
-        for e in events
+        for e, description in (
+            (e, themes.shorten((e.get("prepared_text") or e.get("full_text") or "").strip(), 600))
+            for e in events
+        )
     ]
 
 
@@ -553,7 +636,7 @@ def _intro_max(params):
     return int((params or {}).get("intro_chars") or 260)
 
 
-def generate_comments(theme_title, params, events, comment_max, also=()):
+def generate_comments(theme_title, params, events, comment_max, also=(), context=None):
     """``(intro, {event_id: comment})`` from the AI — empty on any failure."""
     if not events:
         return "", {}
@@ -563,7 +646,7 @@ def generate_comments(theme_title, params, events, comment_max, also=()):
         editorial
         + theme_prompts.comments_contract(
             theme_title, _event_payload(events), comment_max,
-            intro_max=_intro_max(params), also=also,
+            intro_max=_intro_max(params), also=also, **(context or {}),
         ),
         system,
     )
@@ -583,7 +666,9 @@ def generate_comments(theme_title, params, events, comment_max, also=()):
     return intro, comments
 
 
-def generate_prose(theme_title, params, events, prose_max, paragraph_max=320, also=()):
+def generate_prose(
+    theme_title, params, events, prose_max, paragraph_max=320, also=(), context=None
+):
     """``(intro, [paragraph, ...])`` from the AI — empty on any failure."""
     if not events:
         return "", []
@@ -593,7 +678,7 @@ def generate_prose(theme_title, params, events, prose_max, paragraph_max=320, al
         editorial
         + theme_prompts.prose_contract(
             theme_title, _event_payload(events), prose_max, paragraph_max,
-            intro_max=_intro_max(params), also=also,
+            intro_max=_intro_max(params), also=also, **(context or {}),
         ),
         system,
     )
@@ -608,22 +693,18 @@ def generate_prose(theme_title, params, events, prose_max, paragraph_max=320, al
     return intro, paragraphs
 
 
-def generate_intro_only(theme_title, params, events, also=()):
+def generate_intro_only(theme_title, params, events, also=(), context=None):
     """Just the intro, for compact layouts that have no per-event comments."""
     if not events:
         return "", {}
 
     system, editorial = theme_prompts.resolve_prompts(DSNParameters())
-    titles = "\n".join(f"- {e.get('title')}" for e in events)
     raw = _ask_ai(
         editorial
-        + f"""
-
-Тема подборки: «{theme_title}». Мероприятия:
-{titles}
-{theme_prompts._also_block(also)}
-Верни СТРОГО JSON: {{"intro": "..."}} — только вступление, до {_intro_max(params)} символов,
-по правилам выше. Не используй слова из заголовка «{theme_title}» и однокоренные с ними.""",
+        + theme_prompts.intro_contract(
+            theme_title, [e.get("title") for e in events],
+            intro_max=_intro_max(params), also=also, **(context or {}),
+        ),
         system,
     )
     return _clean_intro(_parse_ai_json(raw).get("intro"), _intro_max(params)), {}
@@ -631,29 +712,33 @@ def generate_intro_only(theme_title, params, events, also=()):
 
 # --- Orchestration ----------------------------------------------------------
 
+#: How many latest digests the AI sees so it does not open the same way again.
+RECENT_INTROS = 5
+
+
+def _recent_intros(limit=RECENT_INTROS):
+    """Intros of the latest generated digests, newest first — ``[]`` on failure."""
+    try:
+        contents = crud.get_recent_generated_post_contents(limit)
+    except Exception as e:  # noqa: BLE001 — context only, the post must still go out
+        log.warning(f"Theme post: failed to read recent intros: {e}")
+        return []
+    return [i for i in (themes.extract_intro(c) for c in contents) if i]
+
 def _bot_url():
     return (settings.content_generator or {}).get("bot_url") or ""
 
 
-def _bot_favourite_url(event_id):
-    """Deep link that saves one event to the reader's favourites in the bot."""
-    bot_url = _bot_url()
-    if not bot_url:
-        return ""
-    return f"{bot_url.rstrip('/')}?start=fav_{event_id}"
-
-
 def event_save_buttons(events, max_buttons=5, label_chars=30):
-    """One "save to favourites" button per event, or ``[]``."""
-    buttons = []
-    for event in events[:max_buttons]:
-        url = _bot_favourite_url(event.get("id"))
-        if not url:
-            continue
-        buttons.append(
-            {"text": f"⭐ {button_label(event, label_chars)}", "url": url}
-        )
-    return buttons
+    """One "save to favourites" callback button per event, or ``[]``."""
+    return [
+        {
+            "text": f"⭐ {button_label(event, label_chars)}",
+            "callback_data": f"save_event:{event.get('id')}",
+        }
+        for event in events[:max_buttons]
+        if event.get("id")
+    ]
 
 
 _QUOTED_NAME_RE = re.compile(r"«([^»]{2,})»")
@@ -678,24 +763,30 @@ def _bot_selection_url(selection_id):
 
 
 def _theme_category_filter(params):
-    """Category section for the web-app link, honouring `exclude_category_ids`."""
+    """Category section for the web-app link: only explicit `category_ids`.
+
+    `exclude_category_ids` is deliberately not expanded into "every other
+    category": the web app then opens with a dozen category chips selected,
+    which reads as a random category filter rather than "the weekend".
+    """
     include = [int(c) for c in (params.get("category_ids") or []) if c]
     exclude = {int(c) for c in (params.get("exclude_category_ids") or []) if c}
+    return themes.webapp_category_filter([c for c in include if c not in exclude])
 
-    if include:
-        return themes.webapp_category_filter([c for c in include if c not in exclude])
-    if exclude:
-        return themes.webapp_category_filter(
-            [c for c in sorted(CATEGORY_ID_TO_NAME) if c not in exclude]
-        )
-    return ""
+
+_WEBAPP_DATE_ALIASES = {"this_weekend": "date-weekend"}
+
+
+def _theme_date_filter(params, date_from, date_to):
+    alias = _WEBAPP_DATE_ALIASES.get(str(params.get("range") or "").lower())
+    return alias or themes.webapp_date_filter(date_from, date_to)
 
 
 def theme_webapp_url(params, date_from, date_to):
     """Web-app link reproducing the theme's own filters (dates, categories, price)."""
     return themes.webapp_link(
         _bot_url(),
-        themes.webapp_date_filter(date_from, date_to),
+        _theme_date_filter(params, date_from, date_to),
         _theme_category_filter(params),
         themes.webapp_price_filter(
             params.get("price_max"), bool(params.get("free_only"))
@@ -703,7 +794,9 @@ def theme_webapp_url(params, date_from, date_to):
     )
 
 
-def render_rich_post(filter_set, params, layout, shown, tail_events):
+def render_rich_post(
+    filter_set, params, layout, shown, tail_events, context=None, tail_label=""
+):
     """Build a rich message: ``(markdown, photo_urls, kept_events)``."""
     title, emoji = filter_set["name"], params["emoji"]
     limit = int(params.get("rich_limit") or themes_rich.DEFAULT_RICH_LIMIT)
@@ -711,7 +804,8 @@ def render_rich_post(filter_set, params, layout, shown, tail_events):
 
     if layout == themes.LAYOUT_PROSE:
         intro, raw_paragraphs = generate_prose(
-            title, params, shown, limit, int(params.get("paragraph_max") or 320)
+            title, params, shown, limit, int(params.get("paragraph_max") or 320),
+            also=tail_events, context=context,
         )
         paragraphs, photos_by_paragraph, used_ids = (
             themes_rich.render_prose_paragraphs("\n\n".join(raw_paragraphs), shown)
@@ -728,7 +822,9 @@ def render_rich_post(filter_set, params, layout, shown, tail_events):
             layout = themes.LAYOUT_DETAILED
 
     if layout == themes.LAYOUT_BY_DAY:
-        intro, _ = generate_intro_only(title, params, shown, also=tail_events)
+        intro, _ = generate_intro_only(
+            title, params, shown, also=tail_events, context=context
+        )
         body, photos = themes_rich.build_by_day(
             title, emoji, intro, shown,
             photos_mode=str(params.get("photos") or "collage").lower(),
@@ -741,7 +837,9 @@ def render_rich_post(filter_set, params, layout, shown, tail_events):
             max(int(limit / max(len(shown), 1)) - 90, 60),
             themes.DEFAULT_COMMENT_STEPS[0],
         )
-        intro, comments = generate_comments(title, params, shown, comment_max)
+        intro, comments = generate_comments(
+            title, params, shown, comment_max, also=tail_events, context=context
+        )
         body, photos = themes_rich.build_detailed(
             title, emoji, intro, shown, comments,
             max_photos=max_photos,
@@ -750,7 +848,7 @@ def render_rich_post(filter_set, params, layout, shown, tail_events):
         )
         kept = list(shown)
 
-    tail = themes_rich.build_tail(tail_events, params.get("tail_label") or "")
+    tail = themes_rich.build_tail(tail_events, tail_label)
     text = themes_rich.join_sections(body, tail)
     return text, photos, kept + list(tail_events)
 
@@ -772,9 +870,10 @@ def build_theme_post(
             crud.get_recent_selection_filter_ids(),
             weekday=target_date.weekday(),
             exclude_ids=exclude_filter_ids,
+            day=target_date,
         )
         if filter_set is None:
-            # Every active theme is restricted to other weekdays.
+            # Every active theme is restricted to other weekdays or out of season.
             return {"status": "no_theme_for_day", "weekday": target_date.weekday()}
 
     params = _theme_params(filter_set)
@@ -792,11 +891,18 @@ def build_theme_post(
     shown, pool = select(params, recent_ids=recent_ids, today=target_date)
 
     tail_count = max(int(params.get("tail") or 0), 0)
-    tail_events = pool[len(shown) : len(shown) + tail_count] if tail_count else []
+    tail_events = themes.remaining_events(pool, shown, tail_count)
     tail_events = themes.sort_chronologically(tail_events)
 
     # Same window the selection used — the footer link must filter identically.
     date_from, date_to = window_for(params, target_date)
+    context = {
+        "period": themes.period_label(params.get("range"), date_from, date_to),
+        "recent_intros": _recent_intros(),
+    }
+    tail_label = params.get("tail_label") or themes.tail_label_for(
+        params.get("range"), date_to
+    )
 
     if len(shown) < int(params["min_events"]):
         log.info(
@@ -851,9 +957,10 @@ def build_theme_post(
 
     if post_format == "rich":
         text, photos, kept = render_rich_post(
-            filter_set, params, layout, shown, tail_events
+            filter_set, params, layout, shown, tail_events,
+            context=context, tail_label=tail_label,
         )
-        buttons = _post_buttons(button, params, shown, kept)
+        buttons = _post_buttons(button, params, shown, kept, selection_id)
         return _finish_theme_post(
             result_base={
                 "status": "ok",
@@ -883,7 +990,7 @@ def build_theme_post(
         )
         prose_intro, raw_paragraphs = generate_prose(
             filter_set["name"], params, shown, max(prose_max, 200),
-            int(params.get("paragraph_max") or 320),
+            int(params.get("paragraph_max") or 320), also=tail_events, context=context,
         )
         prose, _ = themes.render_prose("\n\n".join(raw_paragraphs), shown)
         if not prose:
@@ -893,7 +1000,9 @@ def build_theme_post(
     if layout == themes.LAYOUT_PROSE:
         intro, comments = prose_intro, {}
     elif layout != themes.LAYOUT_DETAILED:
-        intro, comments = generate_intro_only(filter_set["name"], params, shown)
+        intro, comments = generate_intro_only(
+            filter_set["name"], params, shown, also=tail_events, context=context
+        )
     else:
         comment_max = int(params.get("comment_chars") or 0) or themes.comment_char_budget(
             int(params["post_limit"]),
@@ -904,7 +1013,7 @@ def build_theme_post(
         )
         intro, comments = generate_comments(
             filter_set["name"], params, shown, max(comment_max, 40),
-            also=tail_events,
+            also=tail_events, context=context,
         )
 
     header = themes.build_header(params["emoji"], filter_set["name"], intro)
@@ -917,7 +1026,7 @@ def build_theme_post(
         min_events=int(params["min_events"]),
         layout=layout,
         tail_events=tail_events,
-        tail_label=params.get("tail_label") or "",
+        tail_label=tail_label,
         prose=prose,
     )
     if layout == themes.LAYOUT_PROSE:
@@ -935,7 +1044,7 @@ def build_theme_post(
             except Exception as e:
                 log.warning(f"Theme post: collage failed, continuing without: {e}")
 
-    buttons = _post_buttons(button, params, shown, kept)
+    buttons = _post_buttons(button, params, shown, kept, selection_id)
     return _finish_theme_post(
         result_base={
             "status": "ok",
@@ -960,10 +1069,25 @@ def build_theme_post(
     )
 
 
-def _post_buttons(footer_button, params, shown, kept):
-    """The post's inline keyboard: the "everything else" link plus per-event saves."""
+def _bot_picker_url(selection_id):
+    """Deep link to "save from this post" in the bot, or "" if not configured."""
+    bot_url = _bot_url()
+    if not bot_url:
+        return ""
+    return f"{bot_url.rstrip('/')}?start=save_{selection_id}"
+
+
+def _post_buttons(footer_button, params, shown, kept, selection_id=None):
+    """The post's inline keyboard: the "everything else" link plus saving."""
     buttons = [footer_button] if footer_button else []
-    if str(params.get("event_buttons") or "none").lower() == "save":
+    mode = str(params.get("event_buttons") or "none").lower()
+    if mode == "picker":
+        # One row whatever the post size: the bot lists this post's events,
+        # each with its own ⭐. A dry run has no selection yet — same as the footer.
+        url = _bot_picker_url(selection_id or 0)
+        if url:
+            buttons.append({"text": params.get("picker_label") or PICKER_LABEL, "url": url})
+    elif mode == "save":
         shown_ids = {e.get("id") for e in shown}
         described = [e for e in kept if e.get("id") in shown_ids]
         buttons.extend(event_save_buttons(described))
