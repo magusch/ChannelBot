@@ -238,6 +238,56 @@ def planning_slots(now, days_ahead, resolve_time, lead_minutes=5, max_days=14):
     return slots
 
 
+def slots_on_day(slots, day, tzinfo):
+    """Aware datetimes of the ``(start_wd, end_wd, time)`` slots that run on ``day``.
+
+    Same rule as Django's ``next_slot``: ``start_weekday <= weekday <= end_weekday``.
+    """
+    weekday = day.weekday()
+    return sorted(
+        datetime.combine(day, slot_time, tzinfo=tzinfo)
+        for start, end, slot_time in slots or ()
+        if start <= weekday <= end
+    )
+
+
+def digest_slot_plan(now, days_ahead, slots, lead_minutes=5, max_days=14):
+    """Every digest slot of the next ``days_ahead`` days that still has one ahead.
+
+    A day with two digest slots yields two entries — that is how two digests a day
+    get planned. Days with no (remaining) slot are skipped, not counted. Pure.
+    """
+    plan, days_taken = [], 0
+    day = now.date()
+    cutoff = now + timedelta(minutes=lead_minutes)
+    for _ in range(max_days):
+        if days_taken >= int(days_ahead):
+            break
+        todays = [t for t in slots_on_day(slots, day, now.tzinfo) if t > cutoff]
+        if todays:
+            plan.extend(todays)
+            days_taken += 1
+        day += timedelta(days=1)
+    return plan
+
+
+def slots_per_weekday(slots):
+    """How many slots run on each weekday, Mon..Sun, as a list of 7."""
+    return [
+        sum(1 for start, end, _ in slots or () if start <= weekday <= end)
+        for weekday in range(7)
+    ]
+
+
+SLOT_MATCH_MINUTES = 30
+
+
+def slot_is_taken(slot, scheduled_times, match_minutes=SLOT_MATCH_MINUTES):
+    """True if an unposted schedule already sits within ``match_minutes`` of ``slot``."""
+    window = timedelta(minutes=match_minutes)
+    return any(abs(t - slot) <= window for t in scheduled_times if t is not None)
+
+
 def _season_day(value, year):
     """``"10-31"`` (every year) or ``"2027-03-14"`` (one date) → ``date``."""
     text = str(value).strip()

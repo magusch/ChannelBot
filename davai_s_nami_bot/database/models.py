@@ -279,6 +279,21 @@ class DsnBotUser(Base):
     bot_user_events = relationship("DsnBotUserEvents", back_populates="user")
 
 
+class PostingTime(Base):
+    """Channel posting slots — Django-owned, read-only here.
+
+    ``kind``: ``event`` (individual events, laid out by Django over the queue),
+    ``digest`` (generated posts) or ``inactive``. ``posting_time`` is local time
+    (the city's timezone). Weekday range is inclusive, Mon=0.
+    """
+    __tablename__ = 'events_postingtime'
+    id = Column(Integer, primary_key=True)
+    start_weekday = Column(Integer, nullable=False)
+    end_weekday = Column(Integer, nullable=False)
+    posting_time = Column(Time, nullable=True)
+    kind = Column(String(16), nullable=True)
+
+
 class ApiRequestLog(Base):
     __tablename__ = 'api_request_log'
     id = Column(Integer, primary_key=True)

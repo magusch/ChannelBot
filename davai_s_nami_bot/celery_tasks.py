@@ -1223,10 +1223,18 @@ def route_unschedulable_events():
     from davai_s_nami_bot.settings.settings_loader import settings
 
     cfg = settings.route_unschedulable or {}
+    event_slots = crud.get_posting_slots('event')
+    per_weekday = None
+    if event_slots is not None:
+        if not event_slots:
+            log.warning("route_unschedulable: no event posting slots, skipping")
+            return {"routed_count": 0, "routed_ids": [], "skipped": "no_event_slots"}
+        per_weekday = theme_post.slots_per_weekday(event_slots)
     routed_ids = crud.route_unschedulable_events(
         protect_first=cfg.get('protect_first', 5),
         weekday_slots=cfg.get('weekday_slots', 4),
         weekend_slots=cfg.get('weekend_slots', 3),
+        slots_per_weekday=per_weekday,
         min_runway_days=cfg.get('min_runway_days', 1),
         limit=cfg.get('limit', 0),
     )
@@ -1515,7 +1523,16 @@ def schedule_theme_post(
         )
 
     now = datetime.now(theme_post.MSK_TZ)
-    slots = theme_post.planning_slots(now, days_ahead, resolve_time)
+    digest_slots = crud.get_posting_slots('digest')
+    by_slot = bool(digest_slots)
+    if by_slot:
+        slots = theme_post.digest_slot_plan(now, days_ahead, digest_slots)
+    else:
+        slots = theme_post.planning_slots(now, days_ahead, resolve_time)
+    log.info(
+        f"Theme post planner: {len(slots)} slot(s), "
+        f"{'PostingTime digest slots' if by_slot else 'after-last-event fallback'}"
+    )
     if not slots:
         log.info("Theme post planner: nothing to schedule (days_ahead=0)")
         return {'status': 'ok', 'planned': []}
@@ -1534,16 +1551,23 @@ def schedule_theme_post(
                 f"{repeat_days} days, excluded from rotation"
             )
 
-    taken = cg_crud.get_scheduled_dates(
-        platform,
-        slots[0].replace(hour=0, minute=0, second=0, microsecond=0),
-        slots[-1].replace(hour=23, minute=59, second=59, microsecond=0),
-    )
+    since = slots[0].replace(hour=0, minute=0, second=0, microsecond=0)
+    until = slots[-1].replace(hour=23, minute=59, second=59, microsecond=0)
+    if by_slot:
+        scheduled = cg_crud.get_scheduled_times(platform, since, until)
+
+        def is_taken(slot):
+            return theme_post.slot_is_taken(slot, scheduled)
+    else:
+        taken_dates = cg_crud.get_scheduled_dates(platform, since, until)
+
+        def is_taken(slot):
+            return slot.date() in taken_dates
 
     planned, used_filter_ids = [], list(recent_themes)
     for slot in slots:
-        if slot.date() in taken:
-            log.info(f"Theme post planner: {slot.date()} already scheduled, skipping")
+        if is_taken(slot):
+            log.info(f"Theme post planner: {slot} already scheduled, skipping")
             continue
 
         if filter_set_id:
@@ -1590,7 +1614,9 @@ def schedule_theme_post(
 
         result['schedule_id'] = schedule['id']
         used_filter_ids.append(result['filter_set_id'])
-        planned.append({'date': str(slot.date()), **result})
+        if by_slot:
+            scheduled.append(slot)
+        planned.append({'date': str(slot.date()), 'time': slot.strftime('%H:%M'), **result})
         log.info(
             f"Theme post {result['id']} ({result.get('theme')!r}) scheduled for "
             f"{slot} ({platform})"

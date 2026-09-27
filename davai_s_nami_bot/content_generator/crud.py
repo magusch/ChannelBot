@@ -3,6 +3,8 @@ from .models import ContentGeneratorEventSelection, ContentGeneratorFilterSet, \
     ContentGeneratorEventSelectionSelectedEvents, ContentGeneratorPostTemplate, \
     ContentGeneratorGeneratedPost, PostingSchedule
 
+from datetime import timezone
+
 from sqlalchemy import func
 
 
@@ -271,6 +273,25 @@ def get_scheduled_dates(db, platform: str, since, until) -> set:
         return value.date()
 
     return {_date(row[0]) for row in rows if row[0] is not None}
+
+
+@db_session
+def get_scheduled_times(db, platform: str, since, until) -> list:
+    """Aware (UTC) ``scheduled_time`` of unposted schedules in ``[since, until]``."""
+    rows = (
+        db.query(PostingSchedule.scheduled_time)
+        .filter(
+            PostingSchedule.is_posted == False,  # noqa: E712
+            PostingSchedule.platform == platform,
+            PostingSchedule.scheduled_time >= since,
+            PostingSchedule.scheduled_time <= until,
+        )
+        .all()
+    )
+    return [
+        value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        for (value,) in rows if value is not None
+    ]
 
 
 @db_session

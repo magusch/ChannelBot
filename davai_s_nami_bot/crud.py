@@ -25,6 +25,7 @@ from .database.models import (
     Exhibitions,
     Place,
     PlaceKeyword,
+    PostingTime,
     SubCategory,
 )
 from .events import Event
@@ -3869,6 +3870,33 @@ def route_events_to_api(
     return routed_ids
 
 
+
+@db_session
+def get_posting_slots(db, kind: str):
+    """Posting slots of ``kind`` as ``[(start_weekday, end_weekday, time)]``.
+
+    ``None`` means "slot kinds are not known here": the ``kind`` column is not
+    migrated yet (or the query failed), and callers fall back to their old
+    behaviour. ``[]`` means the table is migrated but has no slot of this kind.
+    The two must not be conflated: an empty event list is a real "post nothing".
+    """
+    try:
+        rows = (
+            db.query(
+                PostingTime.start_weekday,
+                PostingTime.end_weekday,
+                PostingTime.posting_time,
+            )
+            .filter(PostingTime.kind == kind, PostingTime.posting_time.isnot(None))
+            .all()
+        )
+    except exc.SQLAlchemyError as e:
+        db.rollback()
+        log.warning(f"Posting slots ({kind}) unavailable, using fallback: {e}")
+        return None
+    return [(int(r[0]), int(r[1]), r[2]) for r in rows]
+
+
 @db_session
 def find_unschedulable_events(
     db,
@@ -3876,6 +3904,7 @@ def find_unschedulable_events(
     weekday_slots: int = 4,
     weekend_slots: int = 3,
     min_runway_days: int = 1,
+    slots_per_weekday: Optional[List[int]] = None,
 ) -> List[dict]:
     """Return ReadyToPost events that cannot be posted before their ``to_date``
     even under an optimal (earliest-deadline-first) arrangement of the queue.
@@ -3896,6 +3925,10 @@ def find_unschedulable_events(
     We only flag events that do not fit even when packed optimally — the genuine
     overflow that no arrangement can save. Deadline is ``to_date`` (an event is
     still postable while it is ongoing).
+
+    ``slots_per_weekday`` (7 counts, Mon..Sun — from Django's ``kind=event``
+    PostingTime rows) overrides the two flat numbers: once a slot is handed to a
+    digest, the channel posts fewer events that day.
 
     Events ending within ``min_runway_days`` (e.g. today) are excluded — they are
     left to the regular expiry path (``update_expired_events``) rather than routed.
@@ -3924,6 +3957,10 @@ def find_unschedulable_events(
             return 0
         n = (target_date - today).days + 1
         full_weeks, rem = divmod(n, 7)
+        if slots_per_weekday:
+            return full_weeks * sum(slots_per_weekday) + sum(
+                slots_per_weekday[(weekday0 + i) % 7] for i in range(rem)
+            )
         weekend_days = full_weeks * 2 + sum(
             1 for i in range(rem) if (weekday0 + i) % 7 >= 5
         )
@@ -4000,6 +4037,7 @@ def route_unschedulable_events(
     weekend_slots: int = 3,
     min_runway_days: int = 1,
     limit: int = 0,
+    slots_per_weekday: Optional[List[int]] = None,
 ) -> List[int]:
     """Route events that cannot be posted before their ``to_date`` off the
     channel into the ``OnlyApi`` status.
@@ -4019,6 +4057,7 @@ def route_unschedulable_events(
         weekday_slots=weekday_slots,
         weekend_slots=weekend_slots,
         min_runway_days=min_runway_days,
+        slots_per_weekday=slots_per_weekday,
     )
     ids = [e['id'] for e in events]
     if limit and limit > 0:
