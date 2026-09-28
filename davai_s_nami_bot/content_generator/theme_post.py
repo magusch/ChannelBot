@@ -95,6 +95,7 @@ DEFAULT_THEME_PARAMS = {
     "require_start_in_window": True,
     "max_duration_days": 0,
     "exclude_category_ids": [],
+    "must_contain": [],
     "location": "",
     "location_scope": "venue",
     # Publication weekdays: [3, 4] / "3-4" / "0,2,4" / None = any.
@@ -344,6 +345,17 @@ def is_seasonal(filter_set):
     return bool(parse_season(_theme_params(filter_set).get("season")))
 
 
+def has_window(filter_set, day):
+    """False when the theme's date window is empty for a post on ``day``.
+
+    ``range: this_week`` on a Sunday with ``min_lead_days=1`` starts on Monday and
+    ends on Sunday — nothing to show. Such themes used to be picked anyway and
+    burn a planner attempt each on ``not_enough_events``.
+    """
+    date_from, date_to = window_for(_theme_params(filter_set), day)
+    return not (date_from and date_to and date_from > date_to)
+
+
 #: An in-season theme is pushed ahead of the rotation until it has run, then
 #: waits this many digests before it is pushed again.
 SEASON_REPEAT_AFTER = 7
@@ -362,6 +374,7 @@ def pick_theme(
         fs for fs in filter_sets
         if (weekday is None or runs_on_weekday(fs, weekday))
         and (day is None or in_season(fs, day))
+        and (day is None or has_window(fs, day))
     ]
     if not eligible:
         return None
@@ -481,6 +494,7 @@ def _pick_shown(pool, params):
 def _apply_window_rules(candidates, params, date_from, date_to):
     """Trim candidates to what actually *happens* in the window."""
     candidates = themes.drop_categories(candidates, params.get("exclude_category_ids"))
+    candidates = themes.keep_containing(candidates, params.get("must_contain"))
     if params.get("require_start_in_window"):
         candidates = themes.keep_starting_within(candidates, date_from, date_to)
     return themes.drop_long_runners(candidates, params.get("max_duration_days"))
@@ -992,7 +1006,10 @@ def build_theme_post(
     # On a dry run there is no selection id, but the footer still has to take
     # its share of the budget or the preview would look roomier than reality.
     footer_label = params.get("footer_label") or DEFAULT_FOOTER_LABEL
-    if str(params.get("footer_link") or "filter").lower() == "selection":
+    footer_link = str(params.get("footer_link") or "filter").lower()
+    if footer_link == "none":
+        footer_url, footer = "", ""
+    elif footer_link == "selection":
         footer_url = _bot_selection_url(selection_id if selection_id else 0)
         rest = len(pool) - len(shown) - len(tail_events)
         footer = themes.build_footer(footer_url, rest)

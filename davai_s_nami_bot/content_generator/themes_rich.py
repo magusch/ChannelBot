@@ -271,7 +271,7 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
             parts.append(photo_ref(media_id(0)))
 
     chunks = []
-    for day, day_events in themes.group_by_day(events):
+    for day, day_events in themes.day_schedule(events):
         lines = [f"**{escape(themes.fmt_day_header(day))}**"]
         for event in day_events:
             head = link(themes.short_title(event.get("title") or "", 60),

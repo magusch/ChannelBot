@@ -433,6 +433,20 @@ def drop_categories(events, category_ids):
     return [e for e in events if e.get("main_category_id") not in excluded]
 
 
+def keep_containing(events, phrases):
+    """Keep events whose title or text mentions any of ``phrases`` (case-insensitive)."""
+    needles = [str(p).strip().lower() for p in phrases or () if str(p).strip()]
+    if not needles:
+        return list(events)
+
+    def text_of(event):
+        return " ".join(
+            str(event.get(k) or "") for k in ("title", "full_text", "prepared_text", "post")
+        ).lower()
+
+    return [e for e in events if any(n in text_of(e) for n in needles)]
+
+
 def keep_starting_within(events, date_from, date_to):
     """Keep only events that *start* inside the window."""
     if date_from is None and date_to is None:
@@ -557,6 +571,15 @@ def group_by_day(events):
     if None in buckets:
         ordered.append((None, buckets[None]))
     return ordered
+
+
+def day_schedule(events):
+    """``group_by_day`` with each day in time order — for rendering a day's list.
+
+    ``group_by_day`` keeps the ranking order inside a day (``balance_by_day``
+    relies on it), which printed Sunday as 13:00, 19:00, 15:30.
+    """
+    return [(day, sort_chronologically(day_events)) for day, day_events in group_by_day(events)]
 
 
 # --- Rendering --------------------------------------------------------------
@@ -691,7 +714,7 @@ def compose_post(
         body = (prose or "").strip()
     elif layout == LAYOUT_BY_DAY:
         chunks = []
-        for day, day_events in group_by_day(events):
+        for day, day_events in day_schedule(events):
             lines = [f"*{escape_md2(fmt_day_header(day))}*"]
             lines.extend(render_day_line(event) for event in day_events)
             chunks.append("\n".join(lines))

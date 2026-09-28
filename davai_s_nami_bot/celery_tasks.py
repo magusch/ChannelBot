@@ -346,7 +346,7 @@ def schedule_posting_tasks():
 
 GENERATED_POST_SCHEDULE_WINDOW = timedelta(hours=1)
 
-THEME_ATTEMPTS_PER_SLOT = 5
+THEME_ATTEMPTS_PER_SLOT = 15
 
 
 @celery_app.task
@@ -1475,7 +1475,7 @@ def content_generator_theme_post(filter_set_id: int = None, dry_run: bool = Fals
     return result
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=1800, time_limit=1920)
 def schedule_theme_post(
     days_ahead: int = None, platform: str = 'telegram', publish_hour: int = None,
     publish_minute: int = None, filter_set_id: int = None,
