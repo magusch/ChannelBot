@@ -1280,10 +1280,15 @@ def distribute_event_queue(protect_first: int = 10):
 def auto_moderate_mid_score_events(
     min_score: int = 40, max_score: int = 69, sample_size: int = 10
 ):
-    """AI moderation of a random sample of mid-score events."""
+    """Auto-reject score < min_score, then AI-moderate a random mid-score sample.
+
+    sample_size=0 keeps only the auto-reject.
+    """
     # Auto-reject junk (score < min_score)
     rejected_count = crud.auto_reject_low_score_events(max_score=min_score - 1)
     log.info(f"Auto-rejected {rejected_count} events with score < {min_score}")
+    if sample_size <= 0:
+        return {"rejected_count": rejected_count, "moderated_count": 0, "approved_ids": []}
 
     # Random sample for AI moderation
     events = crud.get_mid_score_events_sample(
