@@ -1152,6 +1152,12 @@ def auto_promote_by_score(
     # auto_promote_high_score_events has vectors to compare (the nightly
     # embed_unembedded_events run happens later, at 05:45).
     taste_pool_min = min_score - 10
+    # route_mid_score_to_api selects on taste too — score its pool as well.
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    mid_cfg = settings.route_mid_score_to_api or {}
+    if mid_cfg.get('enabled'):
+        taste_pool_min = min(taste_pool_min, mid_cfg.get('min_score', 55))
     try:
         embed_unembedded_events(
             limit=150, table="not_approved", min_score=taste_pool_min, only_future=True
@@ -1186,6 +1192,26 @@ def auto_promote_by_score(
         log.info(f"Scheduled S3 image upload for {len(promoted_ids)} events")
 
     return {"promoted_count": len(promoted_ids), "promoted_ids": promoted_ids}
+
+
+@celery_app.task
+def route_mid_score_to_api(dry_run: bool = False):
+    """Move evidenced mid-score NotApproved events (55-69) into OnlyApi.
+
+    Config: settings.route_mid_score_to_api, policy: helper.mid_score_filter.
+    dry_run=True returns the selection without writing.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.route_mid_score_to_api or {}
+    result = crud.route_mid_score_to_api(cfg=cfg, dry_run=dry_run)
+    log.info(
+        f"Mid-score → OnlyApi: promoted={len(result['promoted_ids'])} "
+        f"selected={len(result['selected'])} dry_run={dry_run}"
+    )
+    if result['promoted_ids']:
+        upload_event_images_to_s3.apply_async(args=[result['promoted_ids']])
+    return result
 
 
 @celery_app.task
@@ -1302,7 +1328,11 @@ def update_event(new_event_data, event_id):
     if new_event_data.get('prepared_text'):
         new_event_data['is_ready'] = True
         if crud.update_approved_event(event_id, new_event_data):
-            crud.remake_event_post(event_id, save=True)
+            crud.remake_event_post(
+                event_id,
+                save=True,
+                prefer_category_str=bool(new_event_data.get('category')),
+            )
             return {**new_event_data, "event_id": event_id}
 
     return {"message": f"Skipping event {event_id}, no update data"}

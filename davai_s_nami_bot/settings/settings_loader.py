@@ -40,6 +40,9 @@ class Settings:
         self.prepare_events_limit = self.raw['features'].get('prepare_events_limit', 0)
         self.auto_route_to_api = self.raw['features'].get('auto_route_to_api', {})
         self.route_unschedulable = self.raw['features'].get('route_unschedulable', {})
+        self.route_mid_score_to_api = self.raw['features'].get(
+            'route_mid_score_to_api', {}
+        )
         self.query_analyzer = self.raw['features'].get('query_analyzer', {})
         self.metro_adjacency = self.raw['features'].get('metro_adjacency', {})
 

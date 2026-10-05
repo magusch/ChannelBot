@@ -89,6 +89,7 @@ DEFAULT_THEME_PARAMS = {
     # 0 = derive from the remaining budget.
     "comment_chars": 0,
     "intro_chars": 260,
+    "lead_line": True,
     "paragraph_max": 320,
     # feed = scored/diversified, no embedding. semantic = embedding match.
     "selection": "semantic",
@@ -696,9 +697,27 @@ def _ask_ai(prompt_body, system_message):
         return ""
 
 
+#: The intro now names 2–3 picks with a detail each; 260 chars fit barely one.
+INTRO_MIN_CHARS = 380
+
+
 def _intro_max(params):
-    """Character target for the intro, from the theme's ``intro_chars``."""
-    return int((params or {}).get("intro_chars") or 260)
+    """Character target for the intro: the theme's ``intro_chars``, at least 380."""
+    return max(int((params or {}).get("intro_chars") or 0), INTRO_MIN_CHARS)
+
+
+def _compose_intro(ai_intro, params, events):
+    """Code-written lead line + the AI's "where to go" sentences."""
+    events = list(events)
+    if ai_intro and not themes.mentioned_events(ai_intro, events):
+        log.warning(f"Theme post: intro names no event from the post, dropped: {ai_intro!r}")
+        ai_intro = ""
+    # A free-only theme says "бесплатно" in its title already.
+    lead = (
+        themes.lead_line(events, mention_free=not params.get("free_only"))
+        if params.get("lead_line", True) else ""
+    )
+    return " ".join(p for p in (lead, ai_intro) if p)
 
 
 def generate_comments(theme_title, params, events, comment_max, also=(), context=None):
@@ -717,7 +736,9 @@ def generate_comments(theme_title, params, events, comment_max, also=(), context
     )
 
     data = _parse_ai_json(raw)
-    intro = _clean_intro(data.get("intro"), _intro_max(params))
+    intro = _compose_intro(
+        _clean_intro(data.get("intro"), _intro_max(params)), params, [*events, *also]
+    )
 
     comments = {}
     for item in data.get("comments") or []:
@@ -749,7 +770,9 @@ def generate_prose(
     )
 
     data = _parse_ai_json(raw)
-    intro = _clean_intro(data.get("intro"), _intro_max(params))
+    intro = _compose_intro(
+        _clean_intro(data.get("intro"), _intro_max(params)), params, [*events, *also]
+    )
     paragraphs = [
         str(p).strip() for p in (data.get("paragraphs") or []) if str(p).strip()
     ]
@@ -767,12 +790,13 @@ def generate_intro_only(theme_title, params, events, also=(), context=None):
     raw = _ask_ai(
         editorial
         + theme_prompts.intro_contract(
-            theme_title, [e.get("title") for e in events],
+            theme_title, _event_payload(events),
             intro_max=_intro_max(params), also=also, **(context or {}),
         ),
         system,
     )
-    return _clean_intro(_parse_ai_json(raw).get("intro"), _intro_max(params)), {}
+    intro = _clean_intro(_parse_ai_json(raw).get("intro"), _intro_max(params))
+    return _compose_intro(intro, params, [*events, *also]), {}
 
 
 # --- Orchestration ----------------------------------------------------------
@@ -788,7 +812,8 @@ def _recent_intros(limit=RECENT_INTROS):
     except Exception as e:  # noqa: BLE001 — context only, the post must still go out
         log.warning(f"Theme post: failed to read recent intros: {e}")
         return []
-    return [i for i in (themes.extract_intro(c) for c in contents) if i]
+    intros = (themes.strip_lead_line(themes.extract_intro(c)) for c in contents)
+    return [i for i in intros if i]
 
 def _bot_url():
     return (settings.content_generator or {}).get("bot_url") or ""

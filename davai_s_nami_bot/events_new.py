@@ -477,6 +477,17 @@ mts_parser = MTS(use_proxy=_use_proxy("mts"))
 culture_parser = Culture(use_proxy=_use_proxy("culture"))
 tg_parser = Telegram(use_proxy=_use_proxy("tg"))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy("cfg"))
+
+#: Weekdays (Mon=0) the venue-site scraper runs in the daily rotation.
+DEFAULT_CFG_WEEKDAYS = (0, 3)
+
+
+def _cfg_weekdays():
+    """``escraper_parameters.cfg.weekdays`` or Mon/Thu."""
+    value = (settings.escraper_parameters or {}).get("cfg", {}).get("weekdays")
+    if value is None:
+        return DEFAULT_CFG_WEEKDAYS
+    return tuple(int(d) % 7 for d in value)
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
@@ -590,11 +601,11 @@ class ScrapeEvents:
         weekday = date.today().weekday()
         if weekday % 2 != 0:
             return []
-        return self.run_scraper(
-            "timepad",
-            days,
-            request_params=self._timepad_request_params(approved=True),
-        )
+        request_params = self._timepad_request_params(approved=True)
+        if not request_params.get("organization_ids"):
+            log.warning("No approved Timepad organizations configured, skipping.")
+            return []
+        return self.run_scraper("timepad", days, request_params=request_params)
 
     def from_not_approved_organizations(self, days: int) -> List[ParserEvent]:
         """Get events from non-approved organizations, alternating by weekday."""
@@ -619,6 +630,9 @@ class ScrapeEvents:
             events_list += self.run_scraper("afisha", days)
         elif weekday == 1:
             events_list += self.run_scraper("yandex", days)
+
+        if weekday in _cfg_weekdays():
+            events_list += self.run_scraper("cfg", days)
 
         return events_list
 
@@ -668,11 +682,11 @@ class ScrapeEvents:
                         timepad_params["bad_keywords"]
                     )
             else:
-                params["organization_ids"] = timepad_params.get(
-                    "approved_organization", []
+                params["organization_ids"] = ", ".join(
+                    timepad_params.get("approved_organization", [])
                 )
         elif approved:
-            params["organization_ids"] = []
+            params["organization_ids"] = ""
 
         if params["limit"] > 100:
             params["limit"] = 100

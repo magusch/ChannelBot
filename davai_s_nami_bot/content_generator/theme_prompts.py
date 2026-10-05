@@ -124,6 +124,25 @@ def _context(period, recent_intros):
     return _period_block(period) + _recent_intros_block(recent_intros) + "\n" + FACTS_RULE
 
 
+def intro_rules(theme_title, intro_max):
+    """What the intro is for and how it names events. Always from code."""
+
+    return f"""intro — 2–3 предложения, до {intro_max} символов: куда сходить.
+Перед вступлением код уже пишет строку «N мероприятий: столько-то концертов…» —
+не повторяй её и не описывай подборку в целом.
+— Назови 2–3 мероприятия из списка, каждое его коротким названием в «ёлочках» —
+  так, как оно стоит в списке: «Знаки отсутствия», а не «лекция о смерти в кино».
+— К каждому — одна конкретная деталь из его описания: кто ведёт, что покажут,
+  чем отличается от остальных. Деталь не может пересказывать название
+  («фестиваль собирает фестивальную программу»). Выбирай мероприятия, у которых
+  есть что сказать: с "thin": true — только если других нет.
+— Каждое предложение — про конкретное мероприятие. Не заканчивай общей фразой
+  о подборке («тут есть и музыка, и текст», «тут не только показы»).
+— Никаких метафор и обобщений («формы одного хаоса», «про следы и утраты»),
+  никакого «начать с … а потом …».
+— Не используй слова из заголовка «{theme_title}» и однокоренные с ними."""
+
+
 def _also_block(also):
     """Titles that are in the post but not described — context for the intro."""
     titles = [str(e.get("title") or "").strip() for e in also or []]
@@ -150,8 +169,7 @@ def comments_contract(
 Верни СТРОГО JSON без markdown-обёртки, вида:
 {{"intro": "...", "comments": [{{"id": <id>, "text": "..."}}]}}
 
-intro — до {intro_max} символов, по правилам выше. Не используй слова из
-заголовка «{theme_title}» и однокоренные с ними.
+{intro_rules(theme_title, intro_max)}
 comments — по одному на каждое мероприятие из списка, с тем же id.
 text — до {comment_max} символов.
 
@@ -172,8 +190,7 @@ def prose_contract(
 
 Верни СТРОГО JSON: {{"intro": "...", "paragraphs": ["...", "..."]}}
 
-intro — до {intro_max} символов, по правилам выше. Не используй слова из
-заголовка «{theme_title}» и однокоренные с ними.
+{intro_rules(theme_title, intro_max)}
 paragraphs — 2–3 абзаца сплошного текста, каждый объединяет 2–3 мероприятия по
 смыслу: одна тема, один день, один формат, «на выбор». Не по одному мероприятию
 на абзац, не список.
@@ -195,16 +212,15 @@ paragraphs — 2–3 абзаца сплошного текста, каждый 
 {_also_block(also)}"""
 
 
-def intro_contract(theme_title, titles, intro_max=260, also=(), period="", recent_intros=()):
+def intro_contract(theme_title, payload, intro_max=260, also=(), period="", recent_intros=()):
     """Response contract for layouts that only need an intro. Always from code."""
-    listed = "\n".join(f"- {t}" for t in titles if t)
     return f"""
 
 Тема подборки: «{theme_title}».
 {_context(period, recent_intros)}
 
-Мероприятия:
-{listed}
+Мероприятия (JSON):
+{json.dumps(payload, ensure_ascii=False, default=str)}
 {_also_block(also)}
-Верни СТРОГО JSON: {{"intro": "..."}} — только вступление, до {intro_max} символов,
-по правилам выше. Не используй слова из заголовка «{theme_title}» и однокоренные с ними."""
+Верни СТРОГО JSON: {{"intro": "..."}} — только вступление.
+{intro_rules(theme_title, intro_max)}"""

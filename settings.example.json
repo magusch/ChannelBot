@@ -50,6 +50,19 @@
       "min_runway_days": 1,
       "limit": 0
     },
+    "route_mid_score_to_api": {
+      "enabled": false,
+      "min_score": 55,
+      "max_score": 69,
+      "listed_min_score": 40,
+      "min_taste": 75,
+      "min_posted": 3,
+      "history_days": 180,
+      "max_per_organizer": 3,
+      "max_per_listed_organizer": 10,
+      "limit": 30,
+      "onlyapi_organizers": ["5f5a3a5e50f7d892d28ffdb5", "shkaf--art-rezidentsiya-b"]
+    },
     "escraper_parameters": {
       "timepad": {
         "city": "Санкт-Петербург",

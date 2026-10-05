@@ -164,6 +164,36 @@ def test_get_events_by_date_and_category_includes_only_api(db_session_fixture):
     assert 'only-api-evt' in titles
 
 
+def test_valid_events_overnight_party_only_on_start_day(db_session_fixture):
+    db = db_session_fixture
+    base = (datetime.now(MSK) + timedelta(days=5)).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+
+    def add(event_id, start, end):
+        db.add(Events2Posts(
+            title=event_id, event_id=event_id, status='OnlyApi', is_ready=None,
+            from_date=start, to_date=end,
+            source='test', url='', post='', full_text='', ticket_url='',
+        ))
+
+    add('party', base + timedelta(hours=23), base + timedelta(days=1, hours=6))
+    add('two-day', base + timedelta(hours=12), base + timedelta(days=1, hours=20))
+    add('long', base - timedelta(days=3), base + timedelta(days=1, hours=3))
+    db.commit()
+
+    next_day = base + timedelta(days=1)
+    params = EventRequestParameters(
+        date_from=next_day, date_to=next_day, status='active', limit=50,
+    )
+    titles = {e['title'] for e in crud_module.get_events_by_date_and_category(params)['events']}
+    assert titles == {'two-day', 'long'}
+
+    params = EventRequestParameters(date_from=base, date_to=base, status='active', limit=50)
+    titles = {e['title'] for e in crud_module.get_events_by_date_and_category(params)['events']}
+    assert titles == {'party', 'two-day', 'long'}
+
+
 # --- find_exhibition_duplicate --------------------------------------------
 
 

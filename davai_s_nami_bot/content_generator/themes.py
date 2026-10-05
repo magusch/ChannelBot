@@ -278,6 +278,116 @@ def tail_label_for(range_name, date_to=None):
     return "А ещё:"
 
 
+def _plural(n, one, few, many):
+    """Russian plural form for ``n``: 1 концерт, 2 концерта, 5 концертов."""
+    if 11 <= n % 100 <= 14:
+        return many
+    return {1: one, 2: few, 3: few, 4: few}.get(n % 10, many)
+
+
+# Category id → plural forms, for the lead line. "Без категории" (2) and
+# "Культура" (5) have no countable noun and go into "ещё N".
+_CATEGORY_NOUNS = {
+    1: ("концерт", "концерта", "концертов"),
+    3: ("кинопоказ", "кинопоказа", "кинопоказов"),
+    4: ("лекция", "лекции", "лекций"),
+    6: ("фестиваль", "фестиваля", "фестивалей"),
+    7: ("спектакль", "спектакля", "спектаклей"),
+    8: ("вечеринка", "вечеринки", "вечеринок"),
+    9: ("перформанс", "перформанса", "перформансов"),
+    10: ("стендап", "стендапа", "стендапов"),
+    11: ("выставка", "выставки", "выставок"),
+    12: ("мастер-класс", "мастер-класса", "мастер-классов"),
+    13: ("экскурсия", "экскурсии", "экскурсий"),
+}
+
+
+def _is_free(event):
+    price = event.get("price_int")
+    if price is not None:
+        return price == 0
+    return (event.get("price") or "").strip().lower() in ("бесплатно", "free", "0")
+
+
+def lead_line(events, max_kinds=3, mention_free=True):
+    """First line of a digest, written by code: what this list is."""
+    events = list(events)
+    total = len(events)
+    if not total:
+        return ""
+
+    counts = {}
+    for event in events:
+        cid = event.get("main_category_id")
+        if cid in _CATEGORY_NOUNS:
+            counts[cid] = counts.get(cid, 0) + 1
+    kinds = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    parts = [f"{n} {_plural(n, *_CATEGORY_NOUNS[cid])}" for cid, n in kinds[:max_kinds]]
+    rest = total - sum(n for _, n in kinds[:max_kinds])
+
+    head = f"{total} {_plural(total, 'мероприятие', 'мероприятия', 'мероприятий')}"
+    # A single kind that covers the whole list adds nothing: "8 кинопоказов".
+    if len(parts) == 1 and rest == 0:
+        sentence = parts[0]
+    elif parts:
+        if rest > 0:
+            parts.append(f"ещё {rest}")
+        listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " и " + parts[-1]
+        sentence = f"{head}: {listed}"
+    else:
+        sentence = head
+
+    free = sum(1 for e in events if _is_free(e)) if mention_free else 0
+    if free == total and total > 1:
+        tail = " Всё бесплатно."
+    elif free:
+        tail = f" Бесплатно — {free}."
+    else:
+        tail = ""
+    return f"{sentence}.{tail}"
+
+
+_LEAD_LINE_RE = re.compile(r"^\d+ [^.]*\.(\s*(Всё бесплатно|Бесплатно — \d+)\.)?\s*")
+
+
+def strip_lead_line(intro):
+    """The AI part of a rendered intro: without the code-written lead line."""
+    return _LEAD_LINE_RE.sub("", intro or "", count=1).strip()
+
+
+_GUILLEMET_NAME_RE = re.compile(r"«([^»]{3,})»")
+
+
+def event_names(event):
+    """Short names a reader would recognise an event by, lowercased.
+
+    The quoted name when there is one («Знаки отсутствия» out of «Лекция «Знаки
+    отсутствия: кино и смерть»»), plus the title without its leading emoji and
+    without the format word («Leys Band» out of «Концерт Leys Band»).
+    """
+    title = re.sub(r"^[^\w«(]+", "", event.get("title") or "").strip()
+    names = set()
+    for quoted in _GUILLEMET_NAME_RE.findall(title):
+        names.add(quoted)
+        names.add(re.split(r"[:.!?]", quoted)[0])
+    if title:
+        names.add(title)
+        words = title.split(maxsplit=1)
+        if len(words) == 2:
+            names.add(words[1].strip("«»"))
+    return {n.strip().lower() for n in names if len(n.strip()) >= 4}
+
+
+def mentioned_events(text, events):
+    """Events from ``events`` whose name appears in ``text`` (case-insensitive)."""
+    haystack = (text or "").lower().replace("ё", "е")
+    found = []
+    for event in events:
+        if any(name.replace("ё", "е") in haystack for name in event_names(event)):
+            found.append(event)
+    return found
+
+
 def is_thin_description(description, title="", min_chars=120):
     """True when the text says little beyond the title — too little to comment on.
 

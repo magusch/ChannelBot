@@ -32,6 +32,7 @@ def create_celery_app():
     # Daily pipeline (MSK), order matters:
     # 04:40 full_update         — scraping (including approved-orgs to Events2Posts)
     # 05:00 auto_promote        — NotApproved.score≥70 → Events2Posts (is_ready=NULL)
+    # 05:05 route_mid_score     — evidenced NotApproved 55-69 → OnlyApi (trusted organizer / taste)
     # 05:10 auto_moderate       — MWF, AI-moderation mid-score
     # 05:15 auto_route_to_api   — low scoring ReadyToPost → OnlyApi (until prepare, not spend AI tokens)
     # 05:22 dedupe_queue_early  — embedding near-dups out before AI prep is spent
@@ -45,6 +46,12 @@ def create_celery_app():
         'schedule': crontab(minute=0, hour=5),
         'kwargs': {'min_score': 70, 'limit': 20},
     }
+
+    if settings.route_mid_score_to_api.get('enabled'):
+        beat_schedules['route-mid-score-to-api'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.route_mid_score_to_api',
+            'schedule': crontab(minute=5, hour=5),
+        }
 
     beat_schedules['auto-moderate-mid-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',

@@ -4,7 +4,7 @@ import re
 import pytz
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .dsn_parameters import DSNParameters
@@ -27,6 +27,17 @@ TELEGRAM_BOT_NAME = os.environ.get("TELEGRAM_BOT_NAME", None)
 
 EXHIBITION_CATEGORY_ID = 11
 EXHIBITION_MIN_DAYS = 8
+
+NIGHT_END_HOUR = 7
+
+
+def last_day(date_from, date_to):
+    """Local calendar date of the event's last day, ignoring a night tail."""
+    if date_to is None:
+        return date_from.date()
+    if date_to - date_from >= timedelta(days=1):
+        return date_to.date()
+    return max(date_from, date_to - timedelta(hours=NIGHT_END_HOUR)).date()
 
 
 WEEKNAMES = {
@@ -267,6 +278,10 @@ class PostHelper:
                 month=month_name(date_to),
             )
 
+        if date_to is not None and last_day(date_from, date_to) == date_from.date():
+            # Same day, or a single night that ends in the small hours.
+            date_to = None
+
         if date_to is None:
             return "{day} {month}".format(day=date_from.day, month=month_name(date_from))
         elif date_from.month != date_to.month:
@@ -307,7 +322,8 @@ class PostHelper:
             e_hour = date_to.hour
             e_minute = date_to.minute
 
-            if s_day == e_day:
+            if last_day(date_from, date_to) == date_from.date():
+                # Same day, or one night into the small hours: «Пт, 3 октября 23:00-06:00».
                 start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
                 end_format = f"{e_hour:02}:{e_minute:02}"
             elif s_month != e_month:

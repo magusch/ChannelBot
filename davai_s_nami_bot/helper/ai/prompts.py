@@ -20,6 +20,7 @@ copying the whole prompt.
 import datetime
 import json
 import logging
+import re
 
 from ...scoring import CATEGORY_ID_TO_NAME
 
@@ -152,6 +153,32 @@ def json_contract(today=None):
 """
 
 
+THIN_DESCRIPTION_CHARS = 80
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+THIN_DESCRIPTION_RULES = """
+Внимание: у этого мероприятия почти нет описания — только название и служебные поля.
+Для prepared_text в этом случае:
+- одно-два коротких предложения, а не 2-4;
+- не повторяй дату, время, длительность, цену и адрес — они уже есть в посте, и текст из них читается как пересказ подвала;
+- не пиши об отсутствии информации («подробности не раскрывают», «детали уточняются») и не гадай вслух («вероятно», «похоже», «судя по названию»);
+- общеизвестные факты использовать можно, только если уверен: классическое произведение, известный автор, известный артист или коллектив. Если имя тебе не знакомо — не придумывай ни жанр, ни биографию, ни программу;
+- если сказать нечего, кроме типа события и имени, так и напиши одним предложением: «Сольный концерт Нины Потехиной».
+"""
+
+
+def is_thin_description(event):
+    """True when the event's own description carries almost nothing."""
+    text = _TAG_RE.sub(" ", str(event.get("full_text") or ""))
+    return len(" ".join(text.split())) < THIN_DESCRIPTION_CHARS
+
+
 def build_user_message(editorial_message, event, today=None):
     """Full user message: editorial part + contract + event data."""
-    return editorial_message + json_contract(today) + format_event_info(event)
+    contract = json_contract(today)
+    if is_thin_description(event):
+        # Rules go before the event data, not after the «Исходная информация:» header.
+        head, sep, tail = contract.rpartition("Исходная информация:")
+        contract = head + THIN_DESCRIPTION_RULES.lstrip("\n") + "\n" + sep + tail
+    return editorial_message + contract + format_event_info(event)

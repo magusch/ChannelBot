@@ -237,8 +237,23 @@ _CATEGORY_KEYWORDS: list[tuple[int, list[str]]] = [
     (3,  ["кино", "фильм", "показ"]),
 ]
 
+def _guess_from_title(title: str) -> Optional[int]:
+    """Category whose keyword comes **first** in the title, or None."""
+    text = (title or "").lower()
+    best = None
+    for cat_id, keywords in _CATEGORY_KEYWORDS:
+        for kw in keywords:
+            pos = text.find(kw)
+            if pos >= 0 and (best is None or pos < best[0]):
+                best = (pos, cat_id)
+    return best[1] if best else None
+
+
 def _guess_category_from_text(title: str, full_text: str) -> Optional[int]:
-    """Infer category_id from keywords in title+text. Returns None if no match."""
+    """Infer category_id: the title's leading format word first, then title+text."""
+    from_title = _guess_from_title(title)
+    if from_title is not None:
+        return from_title
     haystack = f"{title} {full_text}".lower()
     for cat_id, keywords in _CATEGORY_KEYWORDS:
         if any(kw in haystack for kw in keywords):
