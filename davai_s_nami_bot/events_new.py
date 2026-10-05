@@ -28,11 +28,13 @@ from escraper.parsers import (
     Ticketscloud,
     Timepad,
     Tripster,
+    Vibe,
     Yandex,
 )
 
 from . import crud
-from .helper import tripster_filter
+from .helper.scraper_filters import tripster as tripster_filter
+from .helper.scraper_filters import vibe as vibe_filter
 from .helper.dsn_parameters import dsn_parameters
 from .logger import catch_exceptions, get_logger
 from .settings.settings_loader import settings
@@ -491,6 +493,16 @@ def _cfg_weekdays():
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
+vibe_parser = Vibe(use_proxy=_use_proxy("vibe"))
+
+DEFAULT_VIBE_EVERY_DAYS = 3
+DEFAULT_VIBE_DAYS = 20
+
+
+def vibe_due(today: date, every_days: int) -> bool:
+    """True on every ``every_days``-th day, counted by date ordinal."""
+    every_days = max(int(every_days or 1), 1)
+    return today.toordinal() % every_days == 0
 
 _tripster_parser = None
 _tripster_unavailable = False
@@ -544,6 +556,7 @@ class ScrapeEvents:
     _kassir_parser = kassir_parser
     _afisha_parser = afisha_parser
     _yandex_parser = yandex_parser
+    _vibe_parser = vibe_parser
 
     PARSER_URLS = {
         "timepad.ru": _timepad_parser,
@@ -574,6 +587,7 @@ class ScrapeEvents:
             "kassir": self.get_kassir_events,
             "afisha": self.get_afisha_events,
             "yandex": self.get_yandex_events,
+            "vibe": self.get_vibe_events,
             "tripster": self.get_tripster_events,
         }
 
@@ -633,6 +647,12 @@ class ScrapeEvents:
 
         if weekday in _cfg_weekdays():
             events_list += self.run_scraper("cfg", days)
+
+        vibe_settings = settings.escraper_parameters.get("vibe")
+        if vibe_settings and vibe_due(
+            date.today(), vibe_settings.get("every_days", DEFAULT_VIBE_EVERY_DAYS)
+        ):
+            events_list += self.run_scraper("vibe", days)
 
         return events_list
 
@@ -1133,6 +1153,65 @@ class ScrapeEvents:
             ),
             events_filter,
         )
+
+    # ------------------------------------------------------------------
+    # Vibe — city feed of Ticketscloud (all organizers); every few days
+    # ------------------------------------------------------------------
+
+    def get_vibe_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """TC events of every organizer of the city, via the Vibe feed.
+
+        Ids are ``TC-<id>`` like the Ticketscloud scraper, so the two dedupe
+        against each other. Ticketland events of the feed are not requested.
+        """
+        vibe_settings = settings.escraper_parameters.get("vibe", {})
+        # Own window: the rotation passes 7 days, Vibe looks further ahead.
+        days = int(vibe_settings.get("days", DEFAULT_VIBE_DAYS))
+        request_params = {
+            "city_id": str(
+                vibe_settings.get("city_id")
+                or vibe_filter.CITY_IDS.get(settings.city, "498817")
+            ),
+            "days": days,
+            "systems": ["TC"],
+            "exclude_categories": vibe_filter.merged_list(
+                vibe_settings, "exclude_categories", vibe_filter.DEFAULT_EXCLUDE_CATEGORIES
+            ),
+        }
+        if vibe_settings.get("max_pages"):
+            request_params["max_pages"] = int(vibe_settings["max_pages"])
+        if not self._vibe_parser.partner:
+            log.warning(
+                "Vibe: no partner id in TC_TOKEN — events come without the TC "
+                "widget and organizer id."
+            )
+
+        selector = vibe_filter.VibeFilter(vibe_settings.get("filter"))
+        existed_event_ids = crud.get_event_id_by_prefix("TC")
+        raw_events = self._vibe_parser.get_events(
+            request_params=request_params,
+            tags=tuple(ALL_EVENT_TAGS) + ("org_id",),
+            existed_event_ids=existed_event_ids,
+        )
+
+        def selected():
+            for raw in raw_events or []:
+                if raw is None or not raw.is_registration_open:
+                    continue
+                if selector.accept(
+                    {
+                        "title": raw.title,
+                        "place_name": raw.place_name,
+                        "price_int": _parse_price_int(raw.price),
+                        "org_id": getattr(raw, "org_id", None),
+                    }
+                ):
+                    yield ParserEvent.from_parser(raw)
+            log.info(f"Vibe filter: {selector.summary()}")
+
+        yield from _apply_filter(selected(), events_filter)
 
     # ------------------------------------------------------------------
     # Tripster (excursions) — not in the weekday rotation, run explicitly

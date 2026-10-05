@@ -75,6 +75,30 @@
         "channels": ["@example_ticketscloud_channel"],
         "use_proxy": false
       },
+      "vibe": {
+        "city_id": "498817",
+        "enabled": true,
+        "every_days": 3,
+        "days": 20,
+        "max_pages": 100,
+        "timeout_sec": 600,
+        "use_proxy": false,
+        "exclude_categories": ["Детям"],
+        "extra_exclude_categories": ["Мюзиклы"],
+        "filter": {
+          "max_price": 5000,
+          "max_per_organizer": 10,
+          "exclude_title_keywords": [
+            "при свечах", "artvibes", "арт-вечеринка", "рисуем",
+            "быстрых свиданий", "дискотек", "кавер"
+          ],
+          "extra_exclude_title_keywords": ["мастер-класс для детей"],
+          "exclude_places": [],
+          "extra_exclude_places": ["Петрикирхе"],
+          "exclude_organizers": [],
+          "extra_exclude_organizers": ["65e5d10cb732d7c529676624"]
+        }
+      },
       "culture": {"city": "spb", "enabled": false},
       "mts": {"city": "spb", "days": 15, "timeout_sec": 180},
       "vk": {"city": "spb", "days": 15},

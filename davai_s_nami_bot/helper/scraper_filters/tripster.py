@@ -46,7 +46,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pytz
 
-from ..scoring import title_containment
+from ...scoring import title_containment
 
 MSK = pytz.timezone("Europe/Moscow")
 
