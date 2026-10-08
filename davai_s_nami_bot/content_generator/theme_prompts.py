@@ -70,6 +70,22 @@ def default_editorial_message():
 Запрещены клише («погрузиться в атмосферу», «машина времени», «не пропустите», «что может быть лучше», «мы собрали для вас»), рекламные эпитеты («уникальный», «незабываемый»), восклицательные знаки, эмодзи и markdown."""
 
 
+def with_theme_rules(editorial, theme_extra):
+    """Append a theme's own voice rules (``prompt_extra`` in its filter_params).
+
+    The editorial params are shared by every theme, so standup, a weekend list
+    and a film festival all sounded the same. A theme-level slot changes one
+    theme without touching the rest; like ``theme_post_extra_rules`` it adds to
+    the editorial part and never touches the code-owned contract.
+    """
+    if isinstance(theme_extra, (list, tuple)):
+        theme_extra = "\n".join(str(r).strip() for r in theme_extra if str(r).strip())
+    theme_extra = (theme_extra or "").strip()
+    if not theme_extra:
+        return editorial
+    return f"{editorial}\n\nПравила этой подборки:\n{theme_extra}"
+
+
 def resolve_prompts(dsn_param):
     """``(system_message, editorial_message)`` for a themed digest."""
     def param(name):

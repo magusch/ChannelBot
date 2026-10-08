@@ -40,6 +40,7 @@ from .helper.embeddings import (
 from .content_generator.services import GeneratorPost, Posting
 from .content_generator import crud as cg_crud
 from .content_generator import theme_post
+from .content_generator import themes
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
@@ -202,6 +203,125 @@ def _digest_post_url(client_post, message):
     return f"{link}/{message_id}"
 
 
+def _remember_message(schedule_id, client_post, message):
+    """Store the sent message id on the schedule — pinning needs it later."""
+    message_id = (
+        message.get('message_id') if isinstance(message, dict)
+        else getattr(message, 'message_id', None)
+    )
+    if not message_id:
+        return
+    try:
+        cg_crud.save_schedule_message(
+            schedule_id, message_id, _digest_post_url(client_post, message)
+        )
+    except Exception as e:
+        log.error(f"Could not save message id for schedule {schedule_id}: {e}")
+
+
+def _digest_poll_context(schedule_id):
+    """(context, poll config) for a sent digest, or (None, None) without a poll."""
+    context = cg_crud.get_digest_poll_context(schedule_id)
+    cfg = theme_post.poll_config(context.get('settings')) if context else None
+    return (context, cfg) if cfg else (None, None)
+
+
+def _schedule_digest_poll(schedule_id):
+    """Queue the theme's «куда идёте» poll a little after the digest."""
+    try:
+        context, cfg = _digest_poll_context(schedule_id)
+        if not cfg:
+            return
+        # A short countdown: an ETA task this close is unlikely to be lost to a
+        # worker restart, unlike day-ahead ones (see GENERATED_POST_SCHEDULE_WINDOW).
+        send_digest_poll.apply_async(
+            args=[schedule_id], countdown=cfg['delay_minutes'] * 60
+        )
+        log.info(f"Digest poll for schedule {schedule_id} in {cfg['delay_minutes']} min")
+    except Exception as e:
+        log.error(f"Could not queue digest poll for schedule {schedule_id}: {e}")
+
+
+@celery_app.task
+def send_digest_poll(schedule_id: int):
+    """Send the «куда идёте» poll as a reply to the digest, once."""
+    context, cfg = _digest_poll_context(schedule_id)
+    if not cfg:
+        return {'status': 'no_poll'}
+    if context.get('poll_message_id'):
+        return {'status': 'already_sent', 'poll_message_id': context['poll_message_id']}
+    if not context.get('message_id'):
+        return {'status': 'no_message_id'}
+
+    shown = context['settings'].get('shown_ids') or []
+    events = cg_crud.get_events_brief(shown)
+    for event in events:
+        if event.get('from_date'):
+            event['from_date'] = (
+                event['from_date'].replace(tzinfo=timezone.utc).astimezone(theme_post.MSK_TZ)
+            )
+    options = themes.poll_options(events, limit=cfg['options'], other=cfg['other'])
+    if not options:
+        return {'status': 'not_enough_events'}
+
+    client = clients.Telegram()
+    destination_id = clients.Telegram.constants['prod']['destination_id']
+    message = client.send_poll(
+        cfg['question'], options, destination_id=destination_id,
+        reply_to=context['message_id'], multiple=cfg['multiple'],
+    )
+    poll_message_id = getattr(message, 'message_id', None)
+    if poll_message_id:
+        cg_crud.update_schedule_settings(schedule_id, {'poll_message_id': poll_message_id})
+    log.info(f"Digest poll sent for schedule {schedule_id}: {poll_message_id}")
+    return {'status': 'sent', 'poll_message_id': poll_message_id, 'options': options}
+
+
+PINNED_DIGEST_KEY = 'digest_pinned_message_id'
+
+
+@celery_app.task
+def pin_digests():
+    """Pin a theme's latest digest at its `pin` moment, unpinning the previous one.
+
+    `pin` in a theme's filter_params: {"weekday": 4, "time": "10:00"}
+    """
+    now = datetime.now(theme_post.MSK_TZ)
+    pinned_raw = redis_client.get(PINNED_DIGEST_KEY)
+    pinned = int(pinned_raw) if pinned_raw else None
+    client, destination_id = None, None
+    done = []
+
+    for filter_set in cg_crud.get_active_filter_sets(filter_type="semantic"):
+        pin_cfg = theme_post._theme_params(filter_set).get("pin")
+        if not theme_post.pin_is_due(pin_cfg, now):
+            continue
+        latest = cg_crud.get_latest_posted_digest(
+            filter_set["id"], (now - timedelta(days=7)).astimezone(timezone.utc)
+        )
+        message_id = latest.get("message_id")
+        if not message_id or message_id == pinned:
+            continue
+        if client is None:
+            client = clients.Telegram()
+            destination_id = clients.Telegram.constants['prod']['destination_id']
+        try:
+            if pinned:
+                try:
+                    client.unpin(pinned, destination_id=destination_id)
+                except Exception as e:  # already unpinned by hand — not fatal
+                    log.warning(f"Could not unpin digest {pinned}: {e}")
+            client.pin(message_id, destination_id=destination_id)
+        except Exception as e:
+            log.error(f"Could not pin digest {message_id} ({filter_set['name']!r}): {e}")
+            continue
+        redis_client.set(PINNED_DIGEST_KEY, message_id)
+        pinned = message_id
+        done.append({"theme": filter_set["name"], "message_id": message_id})
+        log.info(f"Pinned digest {message_id} ({filter_set['name']!r})")
+    return {"pinned": done}
+
+
 def _mark_digested_events(platform, client_post, message, postings):
     """Take the digest's events off the channel queue, pointing them at the post.
 
@@ -261,6 +381,9 @@ def post_generated_by_schedule(schedule_id: int):
                         text=postings['text'], destination_id=destination_id, **extra)
                 posting_class.schedule_posted(schedule_id)
                 log.info(f"Schedule {schedule_id} marked as posted successfully")
+                if platform == 'telegram':
+                    _remember_message(schedule_id, client_post, message)
+                    _schedule_digest_poll(schedule_id)
                 _mark_digested_events(platform, client_post, message, postings)
             except Exception as e:
                 log.error(f"Failed to post schedule {schedule_id}: {e}")

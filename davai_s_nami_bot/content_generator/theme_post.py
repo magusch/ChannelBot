@@ -290,6 +290,67 @@ def slot_is_taken(slot, scheduled_times, match_minutes=SLOT_MATCH_MINUTES):
     return any(abs(t - slot) <= window for t in scheduled_times if t is not None)
 
 
+#: How long after its pin moment a digest may still get pinned (worker downtime).
+PIN_WINDOW = timedelta(hours=6)
+
+
+def pin_moment(pin_cfg, now):
+    """This week's pin moment for ``{"weekday": 4, "time": "10:00"}``, or None."""
+    if not isinstance(pin_cfg, dict) or pin_cfg.get("weekday") is None:
+        return None
+    try:
+        weekday = int(pin_cfg["weekday"]) % 7
+        hour, minute = (int(x) for x in str(pin_cfg.get("time") or "10:00").split(":")[:2])
+    except (TypeError, ValueError):
+        return None
+    day = now.date() - timedelta(days=now.weekday()) + timedelta(days=weekday)
+    return datetime.combine(day, dt_time(hour, minute), tzinfo=now.tzinfo)
+
+
+def pin_is_due(pin_cfg, now, window=PIN_WINDOW):
+    """True inside ``[pin moment, pin moment + window)`` of the current week."""
+    moment = pin_moment(pin_cfg, now)
+    return moment is not None and moment <= now < moment + window
+
+
+POLL_DELAY_MINUTES = 25
+_POLL_QUESTIONS = {
+    "this_weekend": "Куда идёте на выходных?",
+    "next_weekend": "Куда идёте на выходных?",
+    "this_week": "Куда идёте на неделе?",
+    "next_week": "Куда идёте на неделе?",
+}
+
+
+def poll_config(params):
+    """The theme's ``poll`` normalized, or ``None`` when the theme has no poll.
+
+    ``poll: true`` takes every default; a dict overrides any of ``question``,
+    ``options`` (how many events), ``other`` (last answer, ``""`` = none),
+    ``delay_minutes`` (after the digest) and ``multiple`` (several answers).
+    The poll goes out later than the digest so it does not bury the post.
+    """
+    raw = (params or {}).get("poll")
+    if not raw:
+        return None
+    cfg = raw if isinstance(raw, dict) else {}
+    question = cfg.get("question") or _POLL_QUESTIONS.get(
+        params.get("range"), themes.POLL_DEFAULT_QUESTION
+    )
+    try:
+        delay = max(0, int(cfg.get("delay_minutes", POLL_DELAY_MINUTES)))
+        options = int(cfg.get("options", 5))
+    except (TypeError, ValueError):
+        delay, options = POLL_DELAY_MINUTES, 5
+    return {
+        "question": str(question)[:300],
+        "options": options,
+        "other": cfg.get("other", themes.POLL_DEFAULT_OTHER),
+        "delay_minutes": delay,
+        "multiple": bool(cfg.get("multiple", True)),
+    }
+
+
 def _season_day(value, year):
     """``"10-31"`` (every year) or ``"2027-03-14"`` (one date) → ``date``."""
     text = str(value).strip()
@@ -389,6 +450,10 @@ def pick_theme(
         if weekend:
             candidates = weekend
 
+    preferred = [fs for fs in fresh if _theme_params(fs).get("preferred")]
+    if preferred:
+        candidates = preferred
+
     # A holiday window is short: without a push, least-recently-posted rotation
     # can let it pass without a single post. Wins over the weekend preference.
     if day is not None:
@@ -471,6 +536,10 @@ def window_for(params, target_date):
     else:
         date_from, date_to = _resolve_relative_range(raw_range, target_date)
 
+    if params.get("weekdays_only") and date_to is not None:
+        friday = date_to - timedelta(days=(date_to.weekday() - 4) % 7)
+        date_to = min(date_to, friday)
+
     lead = int(params.get("min_lead_days") or 0)
     if lead > 0:
         earliest = target_date + timedelta(days=lead)
@@ -498,6 +567,8 @@ def _apply_window_rules(candidates, params, date_from, date_to):
     candidates = themes.keep_containing(candidates, params.get("must_contain"))
     if params.get("require_start_in_window"):
         candidates = themes.keep_starting_within(candidates, date_from, date_to)
+    if params.get("weekdays_only"):
+        candidates = themes.keep_weekday_starts(candidates)
     return themes.drop_long_runners(candidates, params.get("max_duration_days"))
 
 
@@ -710,6 +781,12 @@ def _blocked_places(params):
     }
 
 
+def _prompts(params):
+    """``(system, editorial)`` for a digest: shared params + the theme's own rules."""
+    system, editorial = theme_prompts.resolve_prompts(DSNParameters())
+    return system, theme_prompts.with_theme_rules(editorial, (params or {}).get("prompt_extra"))
+
+
 def _intro_max(params):
     """Character target for the intro: the theme's ``intro_chars``, at least 380."""
     return max(int((params or {}).get("intro_chars") or 0), INTRO_MIN_CHARS)
@@ -734,7 +811,7 @@ def generate_comments(theme_title, params, events, comment_max, also=(), context
     if not events:
         return "", {}
 
-    system, editorial = theme_prompts.resolve_prompts(DSNParameters())
+    system, editorial = _prompts(params)
     raw = _ask_ai(
         editorial
         + theme_prompts.comments_contract(
@@ -768,7 +845,7 @@ def generate_prose(
     if not events:
         return "", []
 
-    system, editorial = theme_prompts.resolve_prompts(DSNParameters())
+    system, editorial = _prompts(params)
     raw = _ask_ai(
         editorial
         + theme_prompts.prose_contract(
@@ -795,7 +872,7 @@ def generate_intro_only(theme_title, params, events, also=(), context=None):
     if not events:
         return "", {}
 
-    system, editorial = theme_prompts.resolve_prompts(DSNParameters())
+    system, editorial = _prompts(params)
     raw = _ask_ai(
         editorial
         + theme_prompts.intro_contract(
@@ -936,7 +1013,28 @@ def render_rich_post(
         )
         kept = list(shown)
 
-    if layout not in (themes.LAYOUT_PROSE, themes.LAYOUT_BY_DAY):
+    if layout == themes.LAYOUT_BY_CATEGORY:
+        # One AI call: the intro, plus a short hint per line when asked for.
+        if params.get("line_hints"):
+            hint_chars = int(params.get("hint_chars") or 70)
+            intro, hints = generate_comments(
+                title, params, shown, hint_chars, also=tail_events, context=context,
+            )
+            # A hint is one thought under a title; the model wrote two sentences.
+            hints = {k: themes.first_sentence(v, hint_chars + 30) for k, v in hints.items()}
+        else:
+            intro, _ = generate_intro_only(
+                title, params, shown, also=tail_events, context=context
+            )
+            hints = {}
+        body, photos = themes_rich.build_by_category(
+            heading, emoji, intro, shown, hints=hints,
+            photos_mode=str(params.get("photos") or "collage").lower(),
+            max_photos=max_photos,
+        )
+        kept = list(shown)
+
+    if layout not in (themes.LAYOUT_PROSE, themes.LAYOUT_BY_DAY, themes.LAYOUT_BY_CATEGORY):
         comment_max = int(params.get("comment_chars") or 0) or min(
             max(int(limit / max(len(shown), 1)) - 90, 60),
             themes.DEFAULT_COMMENT_STEPS[0],
@@ -1061,7 +1159,9 @@ def build_theme_post(
         button = {"text": footer_label, "url": footer_url}
         footer = ""
 
-    layout = str(params.get("layout") or themes.LAYOUT_DETAILED).lower()
+    layout = themes.pick_layout(params.get("layout"), target_date)
+    if layout == themes.LAYOUT_BY_CATEGORY and str(params.get("format") or "plain").lower() != "rich":
+        layout = themes.LAYOUT_BY_DAY  # rubrics are rendered for rich posts only
     heading = (
         themes.theme_heading(filter_set["name"], date_from, date_to)
         if params.get("title_dates", True) else filter_set["name"]

@@ -41,6 +41,7 @@ _WEEKDAYS_TITLE = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 LAYOUT_DETAILED = "detailed"
 LAYOUT_COMPACT = "compact"
 LAYOUT_BY_DAY = "by_day"
+LAYOUT_BY_CATEGORY = "by_category"
 LAYOUT_PROSE = "prose"
 
 # Sentence end used when prose has to be trimmed to fit the budget.
@@ -565,6 +566,25 @@ def keep_containing(events, phrases):
     return [e for e in events if any(n in text_of(e) for n in needles)]
 
 
+def first_sentence(text, max_chars):
+    """The first sentence of ``text``, cut on a word boundary past ``max_chars``."""
+    text = (text or "").strip()
+    match = re.match(r"(.+?[.!?…])(\s|$)", text)
+    sentence = match.group(1) if match else text
+    return shorten(sentence, max_chars)
+
+
+def keep_weekday_starts(events):
+    """Keep events that start Mon–Fri (MSK); undated ones stay."""
+    kept = []
+    for event in events:
+        start = event.get("from_date")
+        if hasattr(start, "weekday") and start.weekday() >= 5:
+            continue
+        kept.append(event)
+    return kept
+
+
 def keep_starting_within(events, date_from, date_to):
     """Keep only events that *start* inside the window."""
     if date_from is None and date_to is None:
@@ -600,6 +620,53 @@ def drop_long_runners(events, max_duration_days):
             continue
         kept.append(event)
     return kept
+
+
+_RUBRICS = {
+    1: "🎸 Послушать",
+    3: "🎬 Посмотреть кино",
+    4: "🧠 Узнать новое",
+    6: "🎪 На фестиваль",
+    7: "🎭 На сцене",
+    9: "🎭 На сцене",
+    8: "🪩 Потанцевать",
+    10: "😂 Посмеяться",
+    11: "🖼 Посмотреть выставку",
+    12: "🛠 Сделать руками",
+    13: "🚶 Пройтись с гидом",
+}
+OTHER_RUBRIC = "✨ И ещё"
+
+
+def group_by_rubric(events):
+    """``[(rubric, [event, ...]), ...]``: biggest rubric first, «И ещё» last.
+
+    Inside a rubric events go in time order — it is a list to plan by.
+    """
+    buckets = {}
+    for event in events:
+        rubric = _RUBRICS.get(event.get("main_category_id"), OTHER_RUBRIC)
+        buckets.setdefault(rubric, []).append(event)
+    named = sorted(
+        (r for r in buckets if r != OTHER_RUBRIC), key=lambda r: (-len(buckets[r]), r)
+    )
+    if OTHER_RUBRIC in buckets:
+        named.append(OTHER_RUBRIC)
+    return [(r, sort_chronologically(buckets[r])) for r in named]
+
+
+def pick_layout(layout, day):
+    """A theme's layout for the post on ``day``.
+
+    A list rotates by ISO week — ``["by_day", "by_category"]`` alternates the
+    weekend digest between the two shapes without anyone remembering to switch.
+    """
+    if isinstance(layout, (list, tuple)):
+        options = [str(x).lower() for x in layout if x]
+        if not options:
+            return LAYOUT_DETAILED
+        return options[day.isocalendar()[1] % len(options)] if day else options[0]
+    return str(layout or LAYOUT_DETAILED).lower()
 
 
 def remaining_events(pool, taken, limit):
@@ -1073,3 +1140,66 @@ def comment_char_budget(limit, header, footer, event_count, tail_count=0, tail_c
     per_event_fixed = 90
     free = limit - overhead - per_event_fixed * event_count
     return max(0, min(DEFAULT_COMMENT_STEPS[0], math.floor(free / event_count)))
+
+
+# Telegram limits: poll option text 1..100 chars, 2..10 options.
+POLL_OPTION_MAX = 100
+POLL_MAX_OPTIONS = 10
+POLL_DEFAULT_QUESTION = "Куда идёте?"
+POLL_DEFAULT_OTHER = "Пока не решил(а)"
+_LEADING_JUNK_RE = re.compile(r"^[^\w«\"(]+")
+
+
+def poll_option(event, max_title=80):
+    title = _LEADING_JUNK_RE.sub("", (event.get("title") or "").strip())
+    title = short_title(title, max_title)
+    if not title:
+        return ""
+    start = event.get("from_date")
+    if isinstance(start, datetime):
+        title = f"{_WEEKDAYS_TITLE[start.weekday()]} · {title}"
+    return title[:POLL_OPTION_MAX]
+
+
+def _round_robin_by_day(events):
+    """Events taken one per day in turn, keeping each day's own order.
+
+    The digest's ``shown_ids`` follow relevance, and its head is often one
+    day — a weekend poll of five Saturday events leaves Sunday out.
+    """
+    days = {}
+    for event in events:
+        start = event.get("from_date")
+        key = start.date() if isinstance(start, datetime) else None
+        days.setdefault(key, []).append(event)
+    queues = [days[k] for k in sorted(days, key=lambda d: (d is None, d or datetime.min.date()))]
+    ordered = []
+    while any(queues):
+        for queue in queues:
+            if queue:
+                ordered.append(queue.pop(0))
+    return ordered
+
+
+def poll_options(events, limit=5, other=POLL_DEFAULT_OTHER):
+    """Answers for the «куда идёте» poll: the first ``limit`` distinct events.
+
+    Days alternate (Sat, Sun, Sat, …) so no day is left out of the poll.
+    Returns ``[]`` when fewer than two events make it — a one-answer poll is
+    not a question. ``other`` (e.g. «Пока не решил(а)») goes last when set.
+    """
+    slots = max(1, min(int(limit or 0), POLL_MAX_OPTIONS - (1 if other else 0)))
+    options, seen = [], set()
+    for event in _round_robin_by_day(events):
+        text = poll_option(event)
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        options.append(text)
+        if len(options) >= slots:
+            break
+    if len(options) < 2:
+        return []
+    if other:
+        options.append(str(other)[:POLL_OPTION_MAX])
+    return options

@@ -336,6 +336,138 @@ def count_stale_schedules(db, before) -> int:
     )
 
 
+def _settings_dict(value):
+    """``platform_settings`` as a dict: jsonb comes back decoded, text does not."""
+    import json
+
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            data = json.loads(value)
+            return data if isinstance(data, dict) else {}
+        except ValueError:
+            return {}
+    return {}
+
+
+@db_session
+def save_schedule_message(db, schedule_id: int, message_id: int, post_url: str = None):
+    """Remember which channel message a schedule became — needed to pin it later."""
+    import json
+
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule is None or not message_id:
+        return
+    data = _settings_dict(schedule.platform_settings)
+    data["message_id"] = int(message_id)
+    if post_url:
+        data["post_url"] = post_url
+    schedule.platform_settings = json.dumps(data)
+    db.commit()
+
+
+@db_session
+def get_latest_posted_digest(db, filter_set_id: int, since) -> dict:
+    """The theme's most recent posted digest with a known message id, or ``{}``."""
+    rows = (
+        db.query(PostingSchedule.id, PostingSchedule.posted_at, PostingSchedule.platform_settings)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.id == PostingSchedule.generated_post_id,
+        )
+        .join(
+            ContentGeneratorEventSelection,
+            ContentGeneratorEventSelection.id == ContentGeneratorGeneratedPost.event_selection_id,
+        )
+        .filter(
+            ContentGeneratorEventSelection.filter_set_id == filter_set_id,
+            PostingSchedule.is_posted == True,  # noqa: E712
+            PostingSchedule.platform == "telegram",
+            PostingSchedule.posted_at >= since,
+        )
+        .order_by(PostingSchedule.posted_at.desc())
+        .all()
+    )
+    for schedule_id, posted_at, blob in rows:
+        message_id = _settings_dict(blob).get("message_id")
+        if message_id:
+            return {"schedule_id": schedule_id, "posted_at": posted_at, "message_id": int(message_id)}
+    return {}
+
+
+@db_session
+def update_schedule_settings(db, schedule_id: int, fields: dict):
+    """Merge ``fields`` into the schedule's ``platform_settings``."""
+    import json
+
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule is None:
+        return
+    data = _settings_dict(schedule.platform_settings)
+    data.update(fields)
+    schedule.platform_settings = json.dumps(data)
+    db.commit()
+
+
+@db_session
+def get_digest_poll_context(db, schedule_id: int) -> dict:
+    """What the delayed digest poll needs: the sent message and the post's settings.
+
+    ``{"message_id", "poll_message_id", "settings"}`` — ``settings`` is the
+    selection's ``generation_settings`` (theme params + ``shown_ids``).
+    ``{}`` when the schedule or its post is gone.
+    """
+    import json
+
+    row = (
+        db.query(PostingSchedule.platform_settings, ContentGeneratorEventSelection.generation_settings)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.id == PostingSchedule.generated_post_id,
+        )
+        .join(
+            ContentGeneratorEventSelection,
+            ContentGeneratorEventSelection.id == ContentGeneratorGeneratedPost.event_selection_id,
+        )
+        .filter(PostingSchedule.id == schedule_id)
+        .first()
+    )
+    if row is None:
+        return {}
+    platform, generation = row
+    sent = _settings_dict(platform)
+    settings = _settings_dict(generation)
+    # generation_settings is sometimes double-encoded JSON
+    if not settings and isinstance(generation, str):
+        try:
+            settings = _settings_dict(json.loads(generation))
+        except ValueError:
+            settings = {}
+    return {
+        "message_id": sent.get("message_id"),
+        "poll_message_id": sent.get("poll_message_id"),
+        "settings": settings,
+    }
+
+
+@db_session
+def get_events_brief(db, event_ids: list) -> list:
+    """``[{id, title, from_date}]`` in the order of ``event_ids`` (UTC-naive dates)."""
+    from ..database.models import Events2Posts
+
+    ids = [int(i) for i in event_ids if str(i).isdigit()]
+    if not ids:
+        return []
+    rows = (
+        db.query(Events2Posts.id, Events2Posts.title, Events2Posts.from_date)
+        .filter(Events2Posts.id.in_(ids))
+        .all()
+    )
+    by_id = {r.id: {"id": r.id, "title": r.title, "from_date": r.from_date} for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 @db_session
 def mark_schedule_posted(db, schedule_id: int, *, posted_at):
     schedule = db.query(PostingSchedule).get(schedule_id)

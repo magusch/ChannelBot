@@ -292,6 +292,42 @@ def build_by_day(title, emoji, intro, events, photos_mode="collage",
     return "\n\n".join(parts), photos
 
 
+def build_by_category(title, emoji, intro, events, hints=None, photos_mode="collage",
+                      max_photos=DEFAULT_MAX_PHOTOS):
+    hints = hints or {}
+    parts = [f"## {escape(f'{emoji} {title}'.strip())}"]
+    if intro:
+        parts.append(escape(intro))
+
+    photos = []
+    if photos_mode == "collage":
+        photos = [url for url in (event_photo_url(e) for e in events) if url]
+        if photos:
+            parts.append(photo_ref(media_id(0)))
+
+    chunks = []
+    for rubric, rubric_events in themes.group_by_rubric(events):
+        lines = [f"**{escape(rubric)}**"]
+        for event in rubric_events:
+            head = link(themes.short_title(event.get("title") or "", 60),
+                        themes.event_link(event))
+            meta = " · ".join(p for p in (
+                themes.fmt_compact_date(event.get("from_date"), event.get("to_date")),
+                themes.fmt_price(event),
+            ) if p)
+            line = f"🔹 {head} — {escape(meta)}" if meta else f"🔹 {head}"
+            hint = (hints.get(event.get("id")) or "").strip()
+            if hint:
+                # Under the title, not after the meta: «…шуткой. — сб 18:00» read badly.
+                line += f"{HARD_BREAK}_{escape(hint)}_"
+            lines.append(line)
+        chunks.append(HARD_BREAK.join(lines))
+
+    if chunks:
+        parts.append(PARAGRAPH_GAP.join(chunks))
+    return "\n\n".join(parts), photos
+
+
 def build_tail(events, label=""):
     """The "also this week" list — one bullet per event, no photos."""
     events = list(events)

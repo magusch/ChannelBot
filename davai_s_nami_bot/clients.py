@@ -6,7 +6,7 @@ from typing import Any, Dict, Union
 import requests
 
 from telebot import TeleBot
-from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters
 
 from . import events
 from . import crud
@@ -126,6 +126,34 @@ class Telegram(BaseClient):
             elif text and callback:
                 markup.add(InlineKeyboardButton(text=text, callback_data=callback))
         return markup if markup.keyboard else None
+
+    def pin(self, message_id: int, *, destination_id: Union[int, str]):
+        """Pin a channel message silently (the bot needs the «pin messages» right)."""
+        return self._client.pin_chat_message(
+            destination_id, message_id, disable_notification=True
+        )
+
+    def unpin(self, message_id: int, *, destination_id: Union[int, str]):
+        return self._client.unpin_chat_message(destination_id, message_id)
+
+    def send_poll(
+        self, question: str, options: list, *, destination_id: Union[int, str],
+        reply_to: int = None, multiple: bool = True,
+    ):
+        """Anonymous poll (channels allow no other kind), as a reply when given."""
+        reply = (
+            ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)
+            if reply_to else None
+        )
+        return self._client.send_poll(
+            destination_id,
+            question,
+            options,
+            is_anonymous=True,
+            allows_multiple_answers=multiple,
+            disable_notification=True,
+            reply_parameters=reply,
+        )
 
     def send_text(self, text: str, *, destination_id: Union[int, str], buttons=None):
         return self._client.send_message(
