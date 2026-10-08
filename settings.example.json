@@ -13,6 +13,7 @@
     "timezone": "Europe/Moscow",
     "metro_adjacency": {},
     "content_generator": {
+      "exclude_place_ids": [473],
       "ai_model_name": "openai",
       "bot_url": "https://t.me/YourBot",
       "theme_post_enabled": false,

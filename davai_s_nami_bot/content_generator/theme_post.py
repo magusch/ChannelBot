@@ -89,7 +89,7 @@ DEFAULT_THEME_PARAMS = {
     # 0 = derive from the remaining budget.
     "comment_chars": 0,
     "intro_chars": 260,
-    "lead_line": True,
+    "lead_line": False,
     "paragraph_max": 320,
     # feed = scored/diversified, no embedding. semantic = embedding match.
     "selection": "semantic",
@@ -501,7 +501,7 @@ def _apply_window_rules(candidates, params, date_from, date_to):
     return themes.drop_long_runners(candidates, params.get("max_duration_days"))
 
 
-def select_feed_events(params, *, recent_ids=None, today=None):
+def select_feed_events(params, *, recent_ids=None, today=None, blocked_places=None):
     """Pick events for a broad window from the scored, diversified feed."""
     today = today or datetime.now(MSK_TZ).date()
     date_from, date_to = window_for(params, today)
@@ -524,6 +524,7 @@ def select_feed_events(params, *, recent_ids=None, today=None):
 
     candidates = _apply_window_rules(candidates, params, date_from, date_to)
     candidates = themes.drop_recent(candidates, recent_ids or ())
+    candidates = themes.drop_places(candidates, blocked_places)
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
     candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
@@ -555,7 +556,7 @@ def _resolve_place_ids(params):
     return ids
 
 
-def select_theme_events(params, *, recent_ids=None, today=None):
+def select_theme_events(params, *, recent_ids=None, today=None, blocked_places=None):
     """Run the theme's semantic query and reduce it to a pool and a shown set."""
     today = today or datetime.now(MSK_TZ).date()
     date_from, date_to = window_for(params, today)
@@ -581,6 +582,7 @@ def select_theme_events(params, *, recent_ids=None, today=None):
 
     candidates = _apply_window_rules(candidates, params, date_from, date_to)
     candidates = themes.drop_recent(candidates, recent_ids or ())
+    candidates = themes.drop_places(candidates, blocked_places)
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
     candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
@@ -701,6 +703,13 @@ def _ask_ai(prompt_body, system_message):
 INTRO_MIN_CHARS = 380
 
 
+def _blocked_places(params):
+    """Places no digest describes: ``content_generator.exclude_place_ids``."""
+    return {
+        int(p) for p in ((settings.content_generator or {}).get("exclude_place_ids") or [])
+    }
+
+
 def _intro_max(params):
     """Character target for the intro: the theme's ``intro_chars``, at least 380."""
     return max(int((params or {}).get("intro_chars") or 0), INTRO_MIN_CHARS)
@@ -715,7 +724,7 @@ def _compose_intro(ai_intro, params, events):
     # A free-only theme says "бесплатно" in its title already.
     lead = (
         themes.lead_line(events, mention_free=not params.get("free_only"))
-        if params.get("lead_line", True) else ""
+        if params.get("lead_line") else ""
     )
     return " ".join(p for p in (lead, ai_intro) if p)
 
@@ -983,7 +992,10 @@ def build_theme_post(
         if str(params.get("selection") or "semantic").lower() == "feed"
         else select_theme_events
     )
-    shown, pool = select(params, recent_ids=recent_ids, today=target_date)
+    shown, pool = select(
+        params, recent_ids=recent_ids, today=target_date,
+        blocked_places=_blocked_places(params),
+    )
 
     tail_count = max(int(params.get("tail") or 0), 0)
     tail_events = themes.remaining_events(pool, shown, tail_count)

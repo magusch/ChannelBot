@@ -535,6 +535,14 @@ def drop_recent(events, recent_ids):
     return [e for e in events if e.get("id") not in recent]
 
 
+def drop_places(events, place_ids):
+    """Drop events at any of ``place_ids``."""
+    if not place_ids:
+        return list(events)
+    blocked = set(place_ids)
+    return [e for e in events if e.get("place_id") not in blocked]
+
+
 def drop_categories(events, category_ids):
     """Drop whole categories from a selection."""
     if not category_ids:
