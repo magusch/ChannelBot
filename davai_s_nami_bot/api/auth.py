@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Response, Cookie
 
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status
 
-from ..core.security import create_access_token, create_refresh_token_cookie, oauth2_scheme, decode_access_token,\
+from .dependencies import CurrentUser
+
+from ..core.security import create_access_token, create_refresh_token_cookie, decode_access_token,\
     check_telegram_auth_data
 from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate, TelegramLoginData
 from .. import crud
@@ -94,39 +96,19 @@ def refresh_access_token(
 
 
 @router.get("/me", response_model=UserOut)
-def read_users_me(token: str = Depends(oauth2_scheme)):
+def read_users_me(user: CurrentUser):
     """Return the current authorized user information"""
-
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    nickname = decode_access_token(token)
-    if nickname is None:
-        raise credentials_exception
-
-    current_user = crud.get_user_by_nickname(nickname=nickname)
-    return current_user
+    return user
 
 
 @router.put("/me", response_model=UserOut)
 def update_user(
     user_update: UserUpdate,
-    token: str = Depends(oauth2_scheme)
+    user: CurrentUser
 ):
     """Updates the current authorized user's information"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
 
-    nickname = decode_access_token(token)
-    if nickname is None:
-        raise credentials_exception
-    updated_user = crud.update_user(nickname=nickname, user_update=user_update)
+    updated_user = crud.update_user(nickname=user.nickname, user_update=user_update)
     return updated_user
 
 

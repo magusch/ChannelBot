@@ -3,10 +3,20 @@ import json
 import hashlib
 from datetime import datetime
 
-from fastapi import HTTPException, Depends, Request
+from fastapi import HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from sqlalchemy.orm import Session
+from ..database.database_orm import get_db_session
+
+from typing import Annotated
+
 from ..celery_app import celery_app, redis_client
+from ..core.security import oauth2_scheme, decode_access_token
+from .. import crud
+
+from ..pydantic_models import UserOut
+
 
 security = HTTPBearer()
 
@@ -52,3 +62,41 @@ async def log_api_request(request: Request, data=None):
             'request_data': json.dumps(data) if data is not None else None,
         }]
     )
+
+
+def get_db():
+    """Yield one SQLAlchemy session per request; commit/rollback/close live in get_db_session."""
+    with get_db_session() as db:
+        yield db
+
+DbSession = Annotated[Session, Depends(get_db)]
+
+def get_current_user(db: DbSession, token: str = Depends(oauth2_scheme)) -> UserOut:
+    """Decode the token to get the current user."""
+    nickname = decode_access_token(token)
+    if not nickname:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = crud.get_user_by_nickname(db=db, nickname=nickname)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return UserOut.model_validate(user)
+
+
+CurrentUser = Annotated[UserOut, Depends(get_current_user)]
+
+
+def get_current_active_user(user: CurrentUser) -> UserOut:
+    """Reject users deactivated after the token was issued."""
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
+    return user
+
+ActiveCurrentUser = Annotated[UserOut, Depends(get_current_active_user)]

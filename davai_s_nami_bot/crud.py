@@ -3031,7 +3031,7 @@ def update_user(db, nickname: str, user_update: UserUpdate) -> dict:
         setattr(db_user, key, value)
     db.commit()
     db.refresh(db_user)
-    return db_user.__dict__
+    return orm_to_dict(db_user)
 
 
 @db_session
@@ -3041,7 +3041,7 @@ def get_or_create_user_by_telegram_id(db, telegram_id: int, telegram_user_info: 
     db_user = db.query(DsnUser).filter(DsnUser.telegram_id == telegram_id).first()
 
     if db_user:
-        return db_user.__dict__
+        return orm_to_dict(db_user)
 
     full_name = ''
     if telegram_user_info.get('first_name', ''):

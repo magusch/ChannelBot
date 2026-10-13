@@ -1,7 +1,10 @@
+import asyncio
 import json
+import time
 
-from fastapi import APIRouter, Depends, Request
+from celery import states
 from celery.result import AsyncResult
+from fastapi import APIRouter, Depends, Query, Request
 
 from ..celery_app import celery_app, redis_client
 from .dependencies import verify_token, serialize_datetime, log_api_request
@@ -63,20 +66,50 @@ async def new_event_from_sites(body: NewEventFromSitesRequest):
     return TaskResponse(message='Task for escrape new event from sites added to queue', task_id=task.id)
 
 
-@router.get("/status/{task_id}",
-             summary="Task status",
-             description="Check the status of a Celery task. Returns: success (with result), failure (with error), or the current state (PENDING/STARTED).")
-async def get_status(task_id: str):
-    params = redis_client.get(task_id)
+# Long-poll knobs for GET /tasks/status/{task_id}?wait=N.
+STATUS_MAX_WAIT_SEC = 30
+STATUS_POLL_INTERVAL_SEC = 0.1
+
+
+def _task_status(task_id: str) -> tuple[bool, dict]:
+    """Read the task state once. Returns (is_final, response body)."""
     result = AsyncResult(task_id, app=celery_app)
-    if result.state == 'SUCCESS':
+    state = result.state
+    if state == states.SUCCESS:
+        params = redis_client.get(task_id)
         if params:
             redis_client.setex(params, 60 * 60, json.dumps(result.result, default=serialize_datetime))
-        return {"status": "success", "result": result.result}
-    elif result.state == 'FAILURE':
-        return {"status": "failure", "error": str(result.info)}
-    else:
-        return {"status": result.state}
+        return True, {"status": "success", "result": result.result}
+    if state == states.FAILURE:
+        return True, {"status": "failure", "error": str(result.info)}
+    if state == states.RETRY:
+        # result.info is the exception that triggered the retry (rate limit, API error).
+        return False, {"status": state, "error": str(result.info)}
+    # REVOKED is final too; PENDING/STARTED/RETRY are not.
+    return state in states.READY_STATES, {"status": state}
+
+
+@router.get("/status/{task_id}",
+             summary="Task status",
+             description=(
+                 "Check the status of a Celery task. Returns: success (with result), "
+                 "failure (with error), or the current state (PENDING/STARTED/RETRY/REVOKED; "
+             ))
+async def get_status(
+    task_id: str,
+    request: Request,
+    wait: float = Query(0, ge=0, le=STATUS_MAX_WAIT_SEC,
+                        description="Long-poll timeout in seconds (0 = answer immediately)"),
+):
+    deadline = time.monotonic() + wait
+    while True:
+        is_final, body = _task_status(task_id)
+        if is_final or time.monotonic() >= deadline:
+            return body
+        # The client may have given up (bot timeout, user left) — stop polling.
+        if await request.is_disconnected():
+            return body
+        await asyncio.sleep(min(STATUS_POLL_INTERVAL_SEC, max(deadline - time.monotonic(), 0)))
 
 
 @router.delete("/{task_id}",
