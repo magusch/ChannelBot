@@ -6,6 +6,8 @@ from fastapi.concurrency import run_in_threadpool
 from ..pydantic_models import PlaceRequestParameters
 from ..celery_app import redis_client
 from .. import crud
+from ..database.models import Place
+from .city import enter_city_of
 from .dependencies import verify_token, get_cache_key, serialize_datetime, log_api_request, DbSession
 
 router = APIRouter(
@@ -42,6 +44,7 @@ async def get_places(body: PlaceRequestParameters, request: Request, db: DbSessi
               description="Retrieve a place by ID. Cached for 10 min.")
 async def get_place_by_id(place_id: int, request: Request, db: DbSession):
     await log_api_request(request, {'place_id': place_id})
+    await enter_city_of(Place, [place_id])
     cached_data = redis_client.get(f"place_{place_id}")
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}

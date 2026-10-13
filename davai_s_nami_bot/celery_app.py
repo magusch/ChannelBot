@@ -1,9 +1,14 @@
+import logging
 import os
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import before_task_publish, task_postrun, task_prerun
 from redis import Redis
 
+from . import city_context
 from .settings.settings_loader import settings
+
+log = logging.getLogger(__name__)
 
 
 def create_celery_app():
@@ -14,6 +19,56 @@ def create_celery_app():
         broker_connection_retry_on_startup=True,
     )
 
+    beat_schedules = {}
+    for index, city in enumerate(settings.scheduled_cities()):
+        with city_context.use_city(city):
+            city_schedules = _city_beat_schedules()
+        offset = settings.beat_offset_minutes(city)
+        for name, entry in city_schedules.items():
+            entry = dict(entry)
+            entry['options'] = {**entry.get('options', {}), 'headers': {'city': city}}
+            if index:
+                entry['schedule'] = _shift(entry['schedule'], offset)
+                name = f'{name}:{city}'
+            beat_schedules[name] = entry
+
+    celery_app.conf.update(
+        result_backend=os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+        timezone=settings.timezone if settings.timezone else ['UTC'],
+        enable_utc=True,
+        beat_schedule=beat_schedules,
+        beat_schedule_filename='/tmp/celerybeat-schedule',
+        include=['davai_s_nami_bot.celery_tasks'],
+        task_soft_time_limit=600,
+        task_time_limit=1200,
+        task_track_started=True,
+    )
+
+    return celery_app
+
+
+def _shift(schedule, offset_minutes):
+    """Move a daily ``crontab(hour=H, minute=M)`` by ``offset_minutes``
+    (``settings.beat_offset_minutes``).
+
+    Only schedules with a single fixed hour and minute are shifted; frequent ones
+    (every 5/30 minutes, hour ranges) already interleave and are left as is.
+    """
+    hours, minutes = schedule.hour, schedule.minute
+    if len(hours) != 1 or len(minutes) != 1:
+        return schedule
+    total = next(iter(hours)) * 60 + next(iter(minutes))
+    total = (total + offset_minutes) % (24 * 60)
+    return crontab(
+        hour=total // 60, minute=total % 60,
+        day_of_week=schedule._orig_day_of_week,
+        day_of_month=schedule._orig_day_of_month,
+        month_of_year=schedule._orig_month_of_year,
+    )
+
+
+def _city_beat_schedules():
+    """Beat entries of the current city (settings resolve per city)."""
     beat_schedules = {
         'update-events': {
             'task': 'davai_s_nami_bot.celery_tasks.full_update',
@@ -108,7 +163,7 @@ def create_celery_app():
         'kwargs': {'protect_first': 8},
     }
 
-    if settings.raw.get('features', {}).get('prepare_api_events_limit', 0):
+    if settings.features.get('prepare_api_events_limit', 0):
         beat_schedules['prepare-api-events'] = {
             'task': 'davai_s_nami_bot.celery_tasks.prepare_api_events',
             'schedule': crontab(minute=35, hour=5),
@@ -132,6 +187,10 @@ def create_celery_app():
             'task': 'davai_s_nami_bot.celery_tasks.schedule_generated_posting_tasks',
             'schedule': crontab(minute='*/30')
         }
+        beat_schedules['pin-digests'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.pin_digests',
+            'schedule': crontab(minute=0, hour='9-21/2')
+        }
 
     theme_cfg = settings.content_generator or {}
     if theme_cfg.get('theme_post_enabled'):
@@ -144,18 +203,44 @@ def create_celery_app():
             ),
         }
 
-    celery_app.conf.update(
-        result_backend=os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
-        timezone=settings.timezone if settings.timezone else ['UTC'],
-        enable_utc=True,
-        beat_schedule=beat_schedules,
-        beat_schedule_filename='/tmp/celerybeat-schedule',
-        include=['davai_s_nami_bot.celery_tasks'],
-        task_soft_time_limit=600,
-        task_time_limit=1200,
-    )
+    return beat_schedules
 
-    return celery_app
+
+# --- City propagation ------------------------------------------------------
+
+_city_tokens = {}
+
+
+@before_task_publish.connect
+def _attach_city_header(headers=None, **kwargs):
+    if headers is not None and not headers.get('city'):
+        headers['city'] = city_context.current_city()
+
+
+def _task_city(task):
+    request = getattr(task, 'request', None)
+    city = getattr(request, 'city', None)
+    if not city:
+        city = (getattr(request, 'headers', None) or {}).get('city')
+    return city
+
+
+@task_prerun.connect
+def _enter_task_city(task_id=None, task=None, **kwargs):
+    city = _task_city(task)
+    if not city:
+        return
+    try:
+        _city_tokens[task_id] = city_context.set_city(city)
+    except city_context.UnknownCity:
+        log.error(f"Task {getattr(task, 'name', task)} got invalid city header {city!r}")
+
+
+@task_postrun.connect
+def _leave_task_city(task_id=None, **kwargs):
+    token = _city_tokens.pop(task_id, None)
+    if token is not None:
+        city_context.reset_city(token)
 
 
 celery_app = create_celery_app()

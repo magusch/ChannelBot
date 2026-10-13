@@ -32,7 +32,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
 
 def get_cache_key(params: dict):
-    key = json.dumps(params, sort_keys=True)
+    # The city is part of the key: the same filters give different events per city.
+    from ..city_context import current_city
+
+    key = json.dumps({"__city": current_city(), **params}, sort_keys=True)
     return hashlib.md5(key.encode()).hexdigest()
 
 

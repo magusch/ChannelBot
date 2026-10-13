@@ -131,8 +131,10 @@ async def cancel_task(task_id: str):
               summary="Update parameters",
               description="Update DSN parameters from Redis.")
 async def update_parameters():
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.update_parameters',
+    from .city import send_task_per_city
+
+    task = send_task_per_city(
+        celery_app, 'davai_s_nami_bot.celery_tasks.update_parameters',
     )
     return TaskResponse(message='Task PARAMETERS added to queue', task_id=task.id)
 
@@ -166,6 +168,12 @@ async def recalculate_scores(body: RecalculateScoresRequest, request: Request):
     - ids=[...] → only those specific IDs (regardless of current score)
     """
     await log_api_request(request, body.model_dump())
+    if body.ids:
+        from ..database.models import Events2Posts, EventsNotApproved
+        from .city import enter_city_of
+
+        model = Events2Posts if body.table == 'events_events2post' else EventsNotApproved
+        await enter_city_of(model, body.ids)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.recalculate_scores_bulk',
         kwargs={"table": body.table, "ids": body.ids, "force": body.force},

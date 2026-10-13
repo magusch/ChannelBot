@@ -14,6 +14,7 @@ from typing import (
     Union,
 )
 
+from celery.exceptions import SoftTimeLimitExceeded
 from escraper.parsers import (
     ALL_EVENT_TAGS,
     MTS,
@@ -37,6 +38,7 @@ from .helper.scraper_filters import tripster as tripster_filter
 from .helper.scraper_filters import vibe as vibe_filter
 from .helper.dsn_parameters import dsn_parameters
 from .logger import catch_exceptions, get_logger
+from .city_context import run_in_context
 from .settings.settings_loader import settings
 
 log = get_logger(__name__)
@@ -58,6 +60,12 @@ def _use_proxy(parser_name: str) -> bool:
 
 
 def _is_scraper_enabled(scraper_name: str) -> bool:
+    if not settings.scraper_configured(scraper_name):
+        log.warning(
+            f"Scraper '{scraper_name}' has no escraper_parameters in "
+            f"cities.{settings.city} — skipped for this city."
+        )
+        return False
     return settings.escraper_parameters.get(scraper_name, {}).get("enabled", True)
 
 
@@ -65,7 +73,10 @@ def get_city_param():
     cities = dsn_parameters.site_parameters("city")
     if cities:
         return cities[0]
-    return settings.city
+    from .city import get_city
+
+    info = get_city()
+    return (info.dgis_slug if info else None) or settings.city
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +107,7 @@ def _call_scraper(func: Callable, days: int, name: str) -> list:
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        future = executor.submit(drain)
+        future = executor.submit(run_in_context(drain))
         try:
             future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
@@ -104,6 +115,8 @@ def _call_scraper(func: Callable, days: int, name: str) -> list:
                 f"Scraper '{name}' exceeded {timeout}s timeout — "
                 f"keeping {len(collected)} partial events"
             )
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as e:
             log.error(
                 f"Scraper '{name}' raised after {len(collected)} events: {e}",
@@ -489,7 +502,21 @@ def _cfg_weekdays():
     value = (settings.escraper_parameters or {}).get("cfg", {}).get("weekdays")
     if value is None:
         return DEFAULT_CFG_WEEKDAYS
-    return tuple(int(d) % 7 for d in value)
+    try:
+        if isinstance(value, int):
+            days = [value]
+        elif isinstance(value, str):
+            if "-" in value:
+                start, end = (int(part) for part in value.split("-", 1))
+                days = range(start, end + 1)
+            else:
+                days = [int(part) for part in value.split(",") if part.strip()]
+        else:
+            days = [int(d) for d in value]
+        return tuple(int(d) % 7 for d in days)
+    except (TypeError, ValueError):
+        log.warning(f"Bad escraper_parameters.cfg.weekdays={value!r}, using Mon/Thu.")
+        return DEFAULT_CFG_WEEKDAYS
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
@@ -621,39 +648,45 @@ class ScrapeEvents:
             return []
         return self.run_scraper("timepad", days, request_params=request_params)
 
-    def from_not_approved_organizations(self, days: int) -> List[ParserEvent]:
-        """Get events from non-approved organizations, alternating by weekday."""
-        events_list = []
-        weekday = date.today().weekday()
+    def not_approved_rotation(self, days: int, today: date = None) -> List[tuple]:
+        """Today's scrapers for non-approved organizations as ``(name, days)``"""
+        today = today or date.today()
+        weekday = today.weekday()
+        plan = []
 
         if weekday % 2 == 1:
-            for name in ("qtickets", "ticketscloud"):
-                events_list += self.run_scraper(name, days * 2)
+            plan += [("qtickets", days * 2), ("ticketscloud", days * 2)]
         else:
-            for name in ("timepad", "radario"):
-                events_list += self.run_scraper(name, days)
+            plan += [("timepad", days), ("radario", days)]
 
         if weekday == 6:
-            events_list += self.run_scraper("vk", days)
+            plan.append(("vk", days))
 
         if weekday == 0 or weekday == 4:
-            events_list += self.run_scraper("mts", days)
+            plan.append(("mts", days))
         elif weekday == 2 or weekday == 5:
-            events_list += self.run_scraper("culture", days)
+            plan.append(("culture", days))
         elif weekday == 3 or weekday == 6:
-            events_list += self.run_scraper("afisha", days)
+            plan.append(("afisha", days))
         elif weekday == 1:
-            events_list += self.run_scraper("yandex", days)
+            plan.append(("yandex", days))
 
         if weekday in _cfg_weekdays():
-            events_list += self.run_scraper("cfg", days)
+            plan.append(("cfg", days))
 
         vibe_settings = settings.escraper_parameters.get("vibe")
         if vibe_settings and vibe_due(
-            date.today(), vibe_settings.get("every_days", DEFAULT_VIBE_EVERY_DAYS)
+            today, vibe_settings.get("every_days", DEFAULT_VIBE_EVERY_DAYS)
         ):
-            events_list += self.run_scraper("vibe", days)
+            plan.append(("vibe", days))
 
+        return plan
+
+    def from_not_approved_organizations(self, days: int) -> List[ParserEvent]:
+        """Get events from non-approved organizations, alternating by weekday."""
+        events_list = []
+        for name, scraper_days in self.not_approved_rotation(days):
+            events_list += self.run_scraper(name, scraper_days)
         return events_list
 
     # ------------------------------------------------------------------
@@ -1346,6 +1379,10 @@ def from_approved_organizations(days: int) -> List[ParserEvent]:
 
 def from_not_approved_organizations(days: int) -> List[ParserEvent]:
     return _default_scraper.from_not_approved_organizations(days)
+
+
+def not_approved_rotation(days: int) -> List[tuple]:
+    return _default_scraper.not_approved_rotation(days)
 
 
 def from_url(event_url: str) -> Optional[ParserEvent]:

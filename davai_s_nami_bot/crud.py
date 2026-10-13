@@ -4,7 +4,7 @@ import math
 import random
 import re
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import and_, asc, desc, exc, func, or_
 from sqlalchemy.ext.compiler import compiles
@@ -13,6 +13,7 @@ from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.types import Date
 
 from .adaptive_scoring import load_from_redis, merge_adaptive_config
+from .city_context import current_city, use_city
 from .core.security import get_password_hash, verify_password
 from .database.database_orm import db_session, orm_to_dict
 from .database.models import (
@@ -1726,6 +1727,7 @@ def event_reminder(db):
 
     future_reminds = (
         db.query(DsnBotUserEvents)
+        .join(Events2Posts, Events2Posts.id == DsnBotUserEvents.event_id)
         .options(joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event))
         .filter(
             DsnBotUserEvents.is_remind == True, DsnBotUserEvents.remind_datetime > now
@@ -1751,8 +1753,11 @@ def event_reminder(db):
 def get_pending_reminders(db):
     now = datetime.now(timezone.utc)
 
+    # Inner join to the city-scoped event: each city's beat run handles only its
+    # own events' reminders (the reminder table itself has no city).
     query = (
         db.query(DsnBotUserEvents)
+        .join(Events2Posts, Events2Posts.id == DsnBotUserEvents.event_id)
         .options(joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event))
         .filter(
             DsnBotUserEvents.remind_datetime != None,
@@ -1888,6 +1893,10 @@ def compute_taste_score(
         )
         .order_by(distance)
         .limit(k)
+        # Taste is the shared "vibe": every city's posts and spam teach it, so
+        # a new city starts with the channel's judgement instead of none.
+        # scoring.taste_scope="city" limits it to the current city's history.
+        .execution_options(all_cities=_taste_is_shared())
         .all()
     )
 
@@ -2636,8 +2645,11 @@ def _load_place_keywords(db) -> list[tuple[str, int]]:
     Returns list of (keyword_lower, place_id) tuples ready for Python matching.
     Helper — always called with db from outer @db_session function.
     """
+    # PlaceKeyword has no city of its own: the join puts the city filter of
+    # Place on it, so a Kazan event never matches an SPb venue's keyword.
     rows = (
         db.query(PlaceKeyword.place_keyword, PlaceKeyword.place_id)
+        .join(Place, Place.id == PlaceKeyword.place_id)
         .filter(func.length(PlaceKeyword.place_keyword) >= _MIN_KEYWORD_LENGTH)
         .order_by(func.length(PlaceKeyword.place_keyword).desc())
         .all()
@@ -3104,16 +3116,19 @@ def remove_event_from_user(db, user_id, event_id):
 
 @db_session
 def get_user_favourite_events(db, user_id):
+    # A user's favourites span cities: read them all, whatever the request city.
     query = (
         db.query(DsnUserEvent)
         .options(joinedload(DsnUserEvent.event))
         .filter(DsnUserEvent.user_id == user_id)
+        .execution_options(all_cities=True)
     )
 
     result = []
     for user_event in query.all():
         event = user_event.event
-
+        if event is None:
+            continue
         result.append(event.__dict__)
     return result
 
@@ -3561,8 +3576,64 @@ def make_post_from_dict(db, event_data: dict) -> dict:
     return _make_post_pipeline(db, dict(event_data), write_subcategory=False)
 
 
+def _error_entry(message: str) -> dict:
+    return {
+        "post": None,
+        "place_id": None,
+        "main_category_id": None,
+        "price_int": None,
+        "event_id": None,
+        "saved": False,
+        "error": message,
+    }
+
+
+def _taste_is_shared() -> bool:
+    return (settings.scoring or {}).get('taste_scope', 'shared') != 'city'
+
+
 @db_session
 def bulk_make_and_save_posts(
+    db,
+    events_data: List[dict],
+    save: bool = False,
+    status: str = 'ReadyToPost',
+) -> List[dict]:
+    """bulk_create_post: each event is built and saved as its own city.
+
+    Django sends ``city`` per event item (falling back to the request's city).
+    Items are grouped by city, because place keywords and the queue tail are per
+    city, and the results come back in the input order. A bad city fails only
+    its own item.
+    """
+    from .city import validate_city
+    from .city_context import UnknownCity
+
+    results: List[Optional[dict]] = [None] * len(events_data)
+    groups: Dict[str, List[int]] = {}
+    for index, raw in enumerate(events_data):
+        code = (raw or {}).get('city') or current_city()
+        try:
+            code = validate_city(code)
+        except UnknownCity as e:
+            results[index] = _error_entry(str(e))
+            continue
+        groups.setdefault(code, []).append(index)
+
+    for code, indexes in groups.items():
+        with use_city(code):
+            city_results = _bulk_make_and_save_posts_for_city(
+                db, [events_data[i] for i in indexes], save=save, status=status
+            )
+        for index, entry in zip(indexes, city_results):
+            results[index] = entry
+
+    if save:
+        db.commit()
+    return results
+
+
+def _bulk_make_and_save_posts_for_city(
     db,
     events_data: List[dict],
     save: bool = False,
@@ -3618,6 +3689,7 @@ def bulk_make_and_save_posts(
                     k: v for k, v in event_data.items() if k in insertable_columns
                 }
                 row_data['post'] = pipeline['post']
+                row_data['city_id'] = current_city()
                 if pipeline['main_category_id'] is not None:
                     row_data['main_category_id'] = pipeline['main_category_id']
                 if pipeline['price_int'] is not None:
@@ -3634,20 +3706,8 @@ def bulk_make_and_save_posts(
 
             results.append(entry)
         except Exception as e:
-            results.append(
-                {
-                    "post": None,
-                    "place_id": None,
-                    "main_category_id": None,
-                    "price_int": None,
-                    "event_id": None,
-                    "saved": False,
-                    "error": str(e),
-                }
-            )
+            results.append(_error_entry(str(e)))
 
-    if save:
-        db.commit()
     return results
 
 

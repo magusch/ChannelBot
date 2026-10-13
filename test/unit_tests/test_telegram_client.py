@@ -16,7 +16,7 @@ test_site_params = {
     "site_token": "test_site_token",
 }
 fake_redis.setex(
-    'parameters:dsn_site',
+    'parameters:spb:dsn_site',
     3600,  # TTL в секундах
     json.dumps(test_site_params)
 )

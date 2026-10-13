@@ -7,12 +7,15 @@ from openai import OpenAIError
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery import chain, chord
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.signals import task_postrun, task_prerun
 
 from datetime import datetime, time, timedelta, timezone
 
 from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
+from . import city as city_module
+from . import city_context
 from . import crud
 from . import clients
 from . import events_new as events
@@ -54,7 +57,8 @@ CHANNEL_LINK = os.getenv('CHANNEL_LINK')
 # so `catch_up_daily_tasks` can re-queue only the ones that never started.
 
 _DAILY_MARKER_PREFIX = 'dsn:daily_task:'
-_DAILY_MARKER_TTL = 12 * 3600  # cleared by next morning's pipeline
+_DAILY_MARKER_TTL = 36 * 3600
+_CATCH_UP_GRACE = timedelta(minutes=10)
 
 
 def _daily_task_schedule():
@@ -87,11 +91,40 @@ def _daily_task_schedule():
             'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
             5, 25, None, {'limit': settings.prepare_events_limit},
         ))
-    return schedule
+    return [_shift_for_city(row) for row in schedule]
 
 
-def _daily_marker_key(task_name: str, msk_date) -> str:
-    return f'{_DAILY_MARKER_PREFIX}{task_name}:{msk_date.isoformat()}'
+def _shift_for_city(row):
+    """Move a row by the current city's beat offset (see celery_app._shift)."""
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    offset = settings.beat_offset_minutes()
+    if not offset:
+        return row
+    task_name, hour, minute, weekdays, kwargs = row
+    total = (hour * 60 + minute + offset) % (24 * 60)
+    return task_name, total // 60, total % 60, weekdays, kwargs
+
+
+def _daily_marker_key(task_name: str, msk_date, city: str = None) -> str:
+    city = city or city_context.current_city()
+    return f'{_DAILY_MARKER_PREFIX}{city}:{task_name}:{msk_date.isoformat()}'
+
+
+def _legacy_daily_marker_keys(task_name: str, msk_date, city: str = None) -> list:
+    """Marker names written before multicity (default city only)."""
+    return [
+        f'{_DAILY_MARKER_PREFIX}{name}:{msk_date.isoformat()}'
+        for name in city_module.legacy_keys(task_name, city)
+    ]
+
+
+def _signal_city(task):
+    """The task's city from its header. Not the context: the receiver that
+    leaves the task's city may already have run before ours."""
+    from davai_s_nami_bot.celery_app import _task_city
+
+    return _task_city(task) or city_context.DEFAULT_CITY
 
 
 def _tracked_daily_task_names() -> set:
@@ -115,7 +148,7 @@ def _mark_daily_task_started(sender=None, task_id=None, task=None, **kwargs):
     try:
         today = get_msk_today().date()
         redis_client.set(
-            _daily_marker_key(task.name, today),
+            _daily_marker_key(task.name, today, _signal_city(task)),
             'started',
             ex=_DAILY_MARKER_TTL,
             nx=True,
@@ -136,7 +169,7 @@ def _record_daily_task_run(sender=None, task_id=None, task=None, state=None, **k
     try:
         today = get_msk_today().date()
         redis_client.set(
-            _daily_marker_key(task.name, today),
+            _daily_marker_key(task.name, today, _signal_city(task)),
             state or 'ran',
             ex=_DAILY_MARKER_TTL,
         )
@@ -182,7 +215,7 @@ def post_to_telegram():
             log.info(f"Event {event.event_id} marked as Error (timeout)")
         raise
     finally:
-        redis_client.delete('posting_event')
+        redis_client.delete(city_module.city_key('posting_event'))
         schedule_posting_tasks.apply_async()
         try:
             dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
@@ -277,7 +310,7 @@ def send_digest_poll(schedule_id: int):
     return {'status': 'sent', 'poll_message_id': poll_message_id, 'options': options}
 
 
-PINNED_DIGEST_KEY = 'digest_pinned_message_id'
+PINNED_DIGEST_KEY = 'digest_pinned_message_id'  # per city, see city.city_key
 
 
 @celery_app.task
@@ -287,7 +320,7 @@ def pin_digests():
     `pin` in a theme's filter_params: {"weekday": 4, "time": "10:00"}
     """
     now = datetime.now(theme_post.MSK_TZ)
-    pinned_raw = redis_client.get(PINNED_DIGEST_KEY)
+    pinned_raw = city_module.get_with_legacy(redis_client, PINNED_DIGEST_KEY)
     pinned = int(pinned_raw) if pinned_raw else None
     client, destination_id = None, None
     done = []
@@ -315,7 +348,7 @@ def pin_digests():
         except Exception as e:
             log.error(f"Could not pin digest {message_id} ({filter_set['name']!r}): {e}")
             continue
-        redis_client.set(PINNED_DIGEST_KEY, message_id)
+        redis_client.set(city_module.city_key(PINNED_DIGEST_KEY), message_id)
         pinned = message_id
         done.append({"theme": filter_set["name"], "message_id": message_id})
         log.info(f"Pinned digest {message_id} ({filter_set['name']!r})")
@@ -392,7 +425,7 @@ def post_generated_by_schedule(schedule_id: int):
         log.info(f"No postings generated for schedule_id={schedule_id}")
     # Clean up Redis so schedule_generated_posting_tasks can reschedule
     if platform:
-        redis_client.delete(f'cg_posting_event:{platform}')
+        redis_client.delete(city_module.city_key(f'cg_posting_event:{platform}'))
 
 
 
@@ -402,7 +435,7 @@ def schedule_posting_tasks():
     msk_today = get_msk_today()
     event_time = dsn_site.next_posting_time(msk_today)
 
-    redis_key = 'posting_event'
+    redis_key = city_module.migrate_legacy_key(redis_client, 'posting_event')
 
     if event_time is None or event_time - msk_today > timedelta(hours=1):
         if event_time is None:
@@ -488,7 +521,9 @@ def schedule_generated_posting_tasks():
             )
             continue
 
-        redis_key = f'cg_posting_event:{platform}'
+        redis_key = city_module.migrate_legacy_key(
+            redis_client, f'cg_posting_event:{platform}'
+        )
         current_scheduled_info = redis_client.hgetall(redis_key)
         need_schedule = False
 
@@ -561,11 +596,18 @@ def update_events():
         msk_today=msk_today
     )
 
-    log.info("Getting new events from other organizations for next 7 days")
-    other_events = events.from_not_approved_organizations(days=7)
-    log.info(f"Collected {len(other_events)} events")
-
-    _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
+    for name, days in events.not_approved_rotation(days=7):
+        log.info(f"Getting new events from {name} for next {days} days")
+        try:
+            other_events = events.run_scraper(name, days)
+            log.info(f"Collected {len(other_events)} events from {name}")
+            _update_events(
+                other_events, table="events_eventsnotapprovednew", msk_today=msk_today
+            )
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:
+            log.exception(f"Scraper '{name}' failed, continuing with the next one")
 
     events_count = len(crud.get_events_from_all_tables())
 
@@ -845,16 +887,15 @@ def prepare_api_events(limit: int = None):
     """
     from davai_s_nami_bot.settings.settings_loader import settings
 
-    features = settings.raw.get("features", {}) or {}
     if limit is None:
-        limit = features.get("prepare_api_events_limit", 0)
+        limit = settings.features.get("prepare_api_events_limit", 0)
     limit = int(limit or 0)
     if limit <= 0:
         log.info("prepare_api_events: disabled (prepare_api_events_limit=0)")
         return {"message": "disabled", "count": 0}
 
     channel_backlog = crud.count_unprepared_events(statuses=("ReadyToPost",))
-    channel_limit = int(features.get("prepare_events_limit", 0) or 0)
+    channel_limit = int(settings.prepare_events_limit or 0)
     if channel_limit and channel_backlog >= channel_limit:
         log.info(
             f"prepare_api_events: skipped, channel backlog {channel_backlog} "
@@ -2148,11 +2189,17 @@ def catch_up_daily_tasks():
         if weekdays is not None and now_msk.isoweekday() not in weekdays:
             continue
         scheduled = now_msk.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if now_msk < scheduled:
+        if now_msk < scheduled + _CATCH_UP_GRACE:
             continue
 
         key = _daily_marker_key(task_name, today)
-        claimed = redis_client.set(key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True)
+        legacy_ran = any(
+            redis_client.exists(legacy)
+            for legacy in _legacy_daily_marker_keys(task_name, today)
+        )
+        claimed = not legacy_ran and redis_client.set(
+            key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True
+        )
         if not claimed:
             skipped.append(task_name)
             continue

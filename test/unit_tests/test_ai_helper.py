@@ -449,8 +449,8 @@ class TestParameterRevision:
         from davai_s_nami_bot.helper import dsn_parameters as dp
 
         store = {
-            'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']}),
-            'parameters:dsn_site:rev': '1',
+            'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:spb:dsn_site:rev': '1',
         }
         monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
 
@@ -461,8 +461,8 @@ class TestParameterRevision:
         assert params.site_parameters('ai_model', last=1) == 'gemini'
 
         # Django edit + POST /api/param/ → new blob and a bumped revision
-        store['parameters:dsn_site'] = _json.dumps({'ai_model': ['openai']})
-        store['parameters:dsn_site:rev'] = '2'
+        store['parameters:spb:dsn_site'] = _json.dumps({'ai_model': ['openai']})
+        store['parameters:spb:dsn_site:rev'] = '2'
 
         assert params.site_parameters('ai_model', last=1) == 'openai'
 
@@ -471,8 +471,8 @@ class TestParameterRevision:
         from davai_s_nami_bot.helper import dsn_parameters as dp
 
         store = {
-            'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']}),
-            'parameters:dsn_site:rev': '1',
+            'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:spb:dsn_site:rev': '1',
         }
         reads = []
 
@@ -490,13 +490,13 @@ class TestParameterRevision:
         params.site_parameters('ai_model', last=1)
 
         # only the tiny revision key is re-read, not the 60KB blob
-        assert reads == ['parameters:dsn_site:rev']
+        assert reads == ['parameters:spb:dsn_site:rev']
 
     def test_missing_revision_marker_is_not_outdated(self, monkeypatch):
         import json as _json
         from davai_s_nami_bot.helper import dsn_parameters as dp
 
-        store = {'parameters:dsn_site': _json.dumps({'ai_model': ['gemini']})}
+        store = {'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']})}
         monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
         params = dp.DSNParameters.__new__(dp.DSNParameters)
         params.sites = {}
@@ -531,3 +531,25 @@ class TestProviderSelection:
 
         helper.set_model_by_name(' OpenAI\n')
         assert helper.current_model == 'O'
+
+
+class TestThinDescriptionRules:
+    def test_rules_added_for_empty_description(self):
+        from davai_s_nami_bot.helper.ai.prompts import build_user_message
+
+        msg = build_user_message("EDIT", {"title": "Концерт", "full_text": ""})
+        assert "почти нет описания" in msg
+        # Rules sit before the event data block.
+        assert msg.index("почти нет описания") < msg.index("Исходная информация:")
+        assert "title: Концерт" in msg.split("Исходная информация:")[-1]
+
+    def test_html_only_counts_as_thin(self):
+        from davai_s_nami_bot.helper.ai.prompts import is_thin_description
+
+        assert is_thin_description({"full_text": "<p><br></p><div>  </div>"})
+
+    def test_no_rules_for_normal_description(self):
+        from davai_s_nami_bot.helper.ai.prompts import build_user_message
+
+        event = {"title": "Лекция", "full_text": "Подробный рассказ о предмете. " * 5}
+        assert "почти нет описания" not in build_user_message("EDIT", event)

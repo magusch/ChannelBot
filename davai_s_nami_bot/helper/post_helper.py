@@ -12,6 +12,17 @@ from .markdown_v2 import escape_v2, escape_v2_url
 from ..scoring import resolve_category_id
 
 
+def _dgis_slug():
+    """2GIS city slug of the current city (``city_city.dgis_slug``), else SPb."""
+    try:
+        from .. import city as city_module
+
+        info = city_module.get_city()
+        return (info.dgis_slug if info else None) or "spb"
+    except Exception:  # noqa: BLE001 — a link must not break the post
+        return "spb"
+
+
 @dataclass
 class PlaceView:
     """Pure view object for a venue, used by PostHelper. No SQLAlchemy coupling."""
@@ -264,7 +275,9 @@ class PostHelper:
 
         escaped_addr = escape_v2(raw_address)
         if need_url:
-            addr_url = escape_v2_url(f"https://2gis.ru/spb/search/{raw_address}")
+            addr_url = escape_v2_url(
+                f"https://2gis.ru/{_dgis_slug()}/search/{raw_address}"
+            )
             return f"[{escaped_addr}]({addr_url})"
         return escaped_addr
 

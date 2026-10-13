@@ -306,9 +306,11 @@ def merge_adaptive_config(base_config: dict, adaptive: Optional[dict]) -> dict:
 
 
 def save_to_redis(redis_client, adaptive_config: dict):
-    """Save adaptive config to Redis."""
+    """Save the current city's adaptive config to Redis."""
+    from .city import city_key
+
     redis_client.setex(
-        REDIS_KEY,
+        city_key(REDIS_KEY),
         REDIS_TTL_SECONDS,
         json.dumps(adaptive_config, ensure_ascii=False),
     )
@@ -316,8 +318,10 @@ def save_to_redis(redis_client, adaptive_config: dict):
 
 
 def load_from_redis(redis_client) -> Optional[dict]:
-    """Load adaptive config from Redis. Returns None if not found."""
-    data = redis_client.get(REDIS_KEY)
+    """Load the current city's adaptive config from Redis. None if not found."""
+    from .city import get_with_legacy
+
+    data = get_with_legacy(redis_client, REDIS_KEY)
     if not data:
         return None
     try:

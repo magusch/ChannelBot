@@ -1,11 +1,14 @@
 import json
 
 from fastapi import APIRouter, Request, Depends, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi import HTTPException, status
 
 from ..pydantic_models import EventOut, EventRequestParameters, EventFeedParameters
 from ..celery_app import redis_client
 from .. import crud
+from ..database.models import Events2Posts
+from .city import city_of, enter_city_of, use_city
 from .dependencies import (
     verify_token,
     get_cache_key,
@@ -20,7 +23,8 @@ router = APIRouter(prefix="/events", tags=["Events"])
 @router.get("/{event_id}", response_model=EventOut)
 def get_event(event_id: int):
     """Retrieve event details by event ID."""
-    event = crud.get_event_by_id(event_id=event_id)
+    with use_city(city_of(Events2Posts, [event_id])):
+        event = crud.get_event_by_id(event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
@@ -50,7 +54,7 @@ async def get_valid_events(body: EventRequestParameters, request: Request):
 
     params = body.with_defaults()
 
-    result = crud.get_events_by_date_and_category(params)
+    result = await run_in_threadpool(crud.get_events_by_date_and_category, params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(result, default=serialize_datetime))
     return {"status": "success", "result": result}
 
@@ -79,8 +83,9 @@ async def get_event_feed(body: EventFeedParameters, request: Request):
 
     params = body.with_defaults()
 
-    result = crud.get_diverse_event_feed(
-        params, per_category=params.per_category, per_day=params.per_day
+    result = await run_in_threadpool(
+        crud.get_diverse_event_feed,
+        params, per_category=params.per_category, per_day=params.per_day,
     )
     redis_client.setex(
         cache_key, 60 * 10, json.dumps(result, default=serialize_datetime)
@@ -123,7 +128,8 @@ def bulk_create_post(body: BulkCreatePostRequest):
     description="Generates a new post text. save=false — preview only, save=true — saves to DB.",
 )
 def remake_post(event_id: int, save: bool = False):
-    result = crud.remake_event_post(event_id=event_id, save=save)
+    with use_city(city_of(Events2Posts, [event_id])):
+        result = crud.remake_event_post(event_id=event_id, save=save)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
@@ -151,6 +157,7 @@ async def get_similar_events(event_id: int, request: Request, limit: int = 10):
             detail="limit must be between 1 and 50",
         )
 
+    await enter_city_of(Events2Posts, [event_id])
     cache_key = f"similar_events_{event_id}_{limit}"
     cached_data = redis_client.get(cache_key)
     await log_api_request(request, {"event_id": event_id, "limit": limit})
@@ -162,7 +169,7 @@ async def get_similar_events(event_id: int, request: Request, limit: int = 10):
             "result": json.loads(cached_data),
         }
 
-    result = crud.find_similar_events(event_id=event_id, limit=limit)
+    result = await run_in_threadpool(crud.find_similar_events, event_id=event_id, limit=limit)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -203,6 +210,7 @@ async def get_similar_events(event_id: int, request: Request, limit: int = 10):
 )
 async def get_valid_event_by_id(event_id: int, request: Request):
     await log_api_request(request, {"ids": [event_id]})
+    await enter_city_of(Events2Posts, [event_id])
 
     cached_data = redis_client.get(f"event_{event_id}")
     if cached_data:
@@ -215,7 +223,7 @@ async def get_valid_event_by_id(event_id: int, request: Request):
     data = {"ids": [event_id]}
 
     params = EventRequestParameters(**data).with_defaults()
-    result = crud.get_events_by_date_and_category(params)
+    result = await run_in_threadpool(crud.get_events_by_date_and_category, params)
     redis_client.setex(
         f"event_{event_id}", 60 * 10, json.dumps(result, default=serialize_datetime)
     )

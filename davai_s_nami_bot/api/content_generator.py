@@ -1,9 +1,16 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 
 from ..celery_app import celery_app, redis_client
 from ..content_generator import crud as cg_crud
+from ..content_generator.models import (
+    ContentGeneratorEventSelection,
+    ContentGeneratorFilterSet,
+)
+from ..database.models import Events2Posts
+from .city import enter_city_of
 from .dependencies import verify_token, log_api_request, serialize_datetime
 from .schemas import (
     ContentGeneratorEventSelectionRequest,
@@ -25,6 +32,7 @@ router = APIRouter(
               summary="Event selection by filter",
               description="Create an event selection by filter configuration (ContentGeneratorFilterSet).")
 async def content_generator_event_selection(body: ContentGeneratorEventSelectionRequest):
+    await enter_city_of(ContentGeneratorFilterSet, [body.filter_set_id])
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_event_selection',
         args=[body.filter_set_id],
@@ -36,6 +44,7 @@ async def content_generator_event_selection(body: ContentGeneratorEventSelection
               summary="Generate post from template",
               description="Generate a post from a template (post_template_id) and an event selection (event_selection_id).")
 async def content_generator_generate_post(body: ContentGeneratorGeneratePostRequest):
+    await enter_city_of(ContentGeneratorEventSelection, [body.event_selection_id])
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_generate_post',
         args=[body.event_selection_id, body.post_template_id, body.generated_by_id],
@@ -49,6 +58,10 @@ async def content_generator_generate_post(body: ContentGeneratorGeneratePostRequ
 async def content_generator_generate_post_ai(body: ContentGeneratorGeneratePostAIRequest):
     if not body.event_selection_id and not body.event_ids:
         raise HTTPException(status_code=400, detail="event_selection_id or event_ids required")
+    if body.event_selection_id:
+        await enter_city_of(ContentGeneratorEventSelection, [body.event_selection_id])
+    else:
+        await enter_city_of(Events2Posts, body.event_ids)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_generate_post_ai',
         args=[body.event_selection_id, body.event_ids, body.post_template_id, body.title],
@@ -66,6 +79,7 @@ async def content_generator_generate_post_ai(body: ContentGeneratorGeneratePostA
                  "used. dry_run returns the rendered post without writing anything."
              ))
 async def content_generator_theme_post(body: ContentGeneratorThemePostRequest):
+    await enter_city_of(ContentGeneratorFilterSet, [body.filter_set_id])
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_theme_post',
         kwargs={'filter_set_id': body.filter_set_id, 'dry_run': body.dry_run},
@@ -86,6 +100,7 @@ async def content_generator_theme_post(body: ContentGeneratorThemePostRequest):
 async def content_generator_schedule_theme_post(
     body: ContentGeneratorScheduleThemePostRequest,
 ):
+    await enter_city_of(ContentGeneratorFilterSet, [body.filter_set_id])
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.schedule_theme_post',
         kwargs={
@@ -117,6 +132,7 @@ async def content_generator_selection(
         )
 
     await log_api_request(request, {"selection_id": selection_id, "limit": limit})
+    await enter_city_of(ContentGeneratorEventSelection, [selection_id])
 
     cache_key = f"cg_selection_{selection_id}_{limit}"
     cached_data = redis_client.get(cache_key)
@@ -127,14 +143,14 @@ async def content_generator_selection(
             "result": json.loads(cached_data),
         }
 
-    selection = cg_crud.get_event_selection(selection_id)
+    selection = await run_in_threadpool(cg_crud.get_event_selection, selection_id)
     if not selection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event selection not found",
         )
 
-    found = cg_crud.get_selection_events(selection_id, limit=limit)
+    found = await run_in_threadpool(cg_crud.get_selection_events, selection_id, limit=limit)
 
     settings_raw = selection.get('generation_settings')
     try:

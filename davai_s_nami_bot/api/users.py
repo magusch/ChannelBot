@@ -7,6 +7,8 @@ from .dependencies import ActiveCurrentUser
 
 from ..pydantic_models import EventOut, FavouriteOut
 from .. import crud
+from ..database.models import Events2Posts
+from .city import city_of, use_city
 
 router = APIRouter(
     prefix="/users",
@@ -20,7 +22,8 @@ def add_event_to_favourites(
 ):
     """Adds an event to the user's favourites."""
 
-    success = crud.add_event_to_user(user_id=user.id, event_id=event_id)
+    with use_city(city_of(Events2Posts, [event_id])):
+        success = crud.add_event_to_user(user_id=user.id, event_id=event_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -37,7 +40,8 @@ def remove_event_from_favourites(
 ):
     """Removes an event from the user's favourites."""
 
-    success = crud.remove_event_from_user(user_id=user.id, event_id=event_id)
+    with use_city(city_of(Events2Posts, [event_id])):
+        success = crud.remove_event_from_user(user_id=user.id, event_id=event_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

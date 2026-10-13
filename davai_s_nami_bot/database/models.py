@@ -8,6 +8,8 @@ EMBEDDING_DIMENSIONS = 1536
 
 from datetime import datetime, timezone
 
+from ..city_context import SHARED_CITY, current_city
+
 
 def _utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -15,6 +17,47 @@ def _utcnow_naive():
 Base = declarative_base()
 
 WEEKDAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вск']
+
+# Multicity. A model marks itself with __city_scope__:
+#   'city'   — per-city rows; reads are filtered to the current city and inserts
+#              get it (database_orm installs both hooks);
+#   'shared' — rows of one city or `all` (shared); reads see the current city
+#              plus `all`.
+# The schema belongs to Django; the server defaults mirror its transition
+# defaults so a row inserted outside a city context still lands somewhere valid.
+
+
+def city_column():
+    return Column(
+        String(8), ForeignKey('city_city.code'), nullable=False,
+        default=current_city, server_default='spb',
+    )
+
+
+def shared_city_column():
+    return Column(
+        String(8), ForeignKey('city_city.code'), nullable=False,
+        default=SHARED_CITY, server_default=SHARED_CITY,
+    )
+
+
+class City(Base):
+    """A city (Django app `city`). `all` is the pseudo-city of shared rows."""
+    __tablename__ = 'city_city'
+    code = Column(String(8), primary_key=True)
+    name = Column(String, nullable=False)
+    name_gen = Column(String, nullable=False, default='')
+    name_loc = Column(String, nullable=False, default='')
+    timezone = Column(String, nullable=False, default='Europe/Moscow')
+    is_active = Column(Boolean, nullable=False, default=False)
+    channel_id = Column(BigInteger, nullable=True)
+    dev_channel_id = Column(BigInteger, nullable=True)
+    channel_link = Column(String, nullable=True)
+    vk_group_id = Column(BigInteger, nullable=True)
+    vk_dev_group_id = Column(BigInteger, nullable=True)
+    bot_url = Column(String, nullable=True)
+    dgis_slug = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
 
 
 class Category(Base):
@@ -34,6 +77,7 @@ class SubCategory(Base):
 
 class Place(Base):
     __tablename__ = 'place_place'
+    __city_scope__ = 'city'
     id = Column(Integer, primary_key=True, index=True)
     place_name = Column(String)
     place_address = Column(String, nullable=False)
@@ -41,6 +85,7 @@ class Place(Base):
     place_metro = Column(String, nullable=False)
     place_image = Column(String, nullable=False)
     place_city = Column(String, nullable=True)
+    city_id = city_column()
     # Forced category for every event scraped at this place. Overrides the
     # scraper's guessed category (e.g. a standup club tagged 'Стэндап' fixes
     # shows that escraper labels 'Концерты'). Empty/NULL = no override.
@@ -129,10 +174,12 @@ class District(Base):
     Django side; the bot only reads it for semantic-search location resolution."""
 
     __tablename__ = 'place_district'
+    __city_scope__ = 'city'
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     place_city = Column(String, nullable=False)
+    city_id = city_column()
     parent_id = Column(Integer, ForeignKey('place_district.id'), nullable=True)
 
     keywords = relationship("DistrictKeyword", back_populates="district")
@@ -157,6 +204,7 @@ class DistrictKeyword(Base):
 
 class Events2Posts(Base):
     __tablename__ = 'events_events2post'
+    __city_scope__ = 'city'
 
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String)
@@ -169,6 +217,7 @@ class Events2Posts(Base):
     price = Column(String, nullable=True)
     price_int = Column(Integer, nullable=True)
     status = Column(String, nullable=False)
+    city_id = city_column()
     post_url = Column(String, nullable=True)
     url = Column(String, nullable=False)
     ticket_url = Column(String, nullable=False)
@@ -211,11 +260,13 @@ class EventsNotApproved(Base):
         - 'duplicate': Дубликат существующего
     """
     __tablename__ = 'events_eventsnotapprovednew'
+    __city_scope__ = 'city'
 
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String)
     approved = Column(Boolean, nullable=True)  # deprecated, use status
     status = Column(String, nullable=True, default='new')
+    city_id = city_column()
     title = Column(String, nullable=False)
     post = Column(String, nullable=True)
     full_text = Column(String, nullable=True)
@@ -287,11 +338,13 @@ class PostingTime(Base):
     (the city's timezone). Weekday range is inclusive, Mon=0.
     """
     __tablename__ = 'events_postingtime'
+    __city_scope__ = 'city'
     id = Column(Integer, primary_key=True)
     start_weekday = Column(Integer, nullable=False)
     end_weekday = Column(Integer, nullable=False)
     posting_time = Column(Time, nullable=True)
     kind = Column(String(16), nullable=True)
+    city_id = city_column()
 
 
 class ApiRequestLog(Base):

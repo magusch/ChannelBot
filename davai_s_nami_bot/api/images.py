@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends
 
 from ..celery_app import celery_app
+from ..database.models import Events2Posts
+from .city import enter_city_of
 from .dependencies import verify_token
 from .schemas import UploadImageRequest, UploadEventImagesRequest, TaskResponse
 
@@ -26,6 +28,7 @@ async def upload_image_to_s3(body: UploadImageRequest):
               summary="Upload event images to S3",
               description="Bulk upload of event images to AWS S3 by a list of IDs.")
 async def upload_event_images_to_s3(body: UploadEventImagesRequest):
+    await enter_city_of(Events2Posts, body.event_ids)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.upload_event_images_to_s3',
         args=[body.event_ids],

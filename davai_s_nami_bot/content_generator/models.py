@@ -5,11 +5,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy import UniqueConstraint
 
 # Use the same Base as the rest of the project's models to share the mapper registry
-from ..database.models import Base, Events2Posts
+from ..database.models import Base, Events2Posts, city_column, shared_city_column
 
 
 class ContentGeneratorEventSelection(Base):
     __tablename__ = 'content_generator_eventselection'
+    __city_scope__ = 'city'
+    city_id = city_column()
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -41,6 +43,8 @@ class ContentGeneratorEventSelectionSelectedEvents(Base):
 
 class ContentGeneratorFilterSet(Base):
     __tablename__ = 'content_generator_filterset'
+    __city_scope__ = 'shared'
+    city_id = shared_city_column()
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -56,6 +60,8 @@ class ContentGeneratorFilterSet(Base):
 
 class ContentGeneratorGeneratedPost(Base):
     __tablename__ = 'content_generator_generatedpost'
+    __city_scope__ = 'city'
+    city_id = city_column()
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     title = Column(String(300), nullable=False)
@@ -85,6 +91,8 @@ class ContentGeneratorPostTemplate(Base):
 class PostingSchedule(Base):
     """Posting schedule"""
     __tablename__ = 'content_generator_postingschedule'
+    __city_scope__ = 'city'
+    city_id = city_column()
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     generated_post_id = Column(BigInteger, ForeignKey('content_generator_generatedpost.id', ondelete='CASCADE'))

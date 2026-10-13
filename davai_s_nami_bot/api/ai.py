@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Request
 
 from ..celery_app import celery_app
+from ..database.models import Events2Posts, EventsNotApproved
+from .city import enter_city_of
 from .dependencies import verify_token
 from .schemas import (
     AiUpdateEventRequest,
@@ -46,6 +48,7 @@ async def moderate_events(body: AiModerateEventsRequest):
               description="Moderate events from EventsNotApproved via AI.")
 async def moderate_not_approved_events(request: Request):
     data = await request.json()
+    await enter_city_of(EventsNotApproved, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.ai_moderate_not_approved_events',
@@ -59,6 +62,7 @@ async def moderate_not_approved_events(request: Request):
               description="Prepare event texts for publication via AI.")
 async def prepare_events(request: Request):
     data = await request.json()
+    await enter_city_of(Events2Posts, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.prepare_events',

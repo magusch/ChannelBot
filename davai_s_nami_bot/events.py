@@ -19,6 +19,7 @@ from .logger import catch_exceptions
 from .dsn_site_session import place_address
 
 from .helper.dsn_parameters import dsn_parameters
+from .city_context import run_in_context
 from .settings.settings_loader import settings
 
 from . import crud
@@ -53,7 +54,7 @@ def _call_scraper(func, days, name):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
         try:
-            return executor.submit(func, days).result(timeout=timeout) or []
+            return executor.submit(run_in_context(func), days).result(timeout=timeout) or []
         except concurrent.futures.TimeoutError:
             log.warning(f"Scraper '{name}' exceeded {timeout}s timeout — skipping (site likely down)")
             return []
@@ -85,12 +86,15 @@ PARSER_URLS = {
 
 
 def get_city_param():
-    cities = dsn_parameters.site_parameters('city')
-
+    """City slug for 2GIS links: the `city` parameter, then `city_city.dgis_slug`
+    (`kazan`, not the bot's `kzn`), then the city code."""
+    cities = dsn_parameters.site_parameters("city")
     if cities:
         return cities[0]
-    else:
-        return settings.city
+    from .city import get_city
+
+    info = get_city()
+    return (info.dgis_slug if info else None) or settings.city
 
 
 ## ESCRAPER EVENTS PARSERS

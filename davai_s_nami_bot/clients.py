@@ -8,10 +8,13 @@ import requests
 from telebot import TeleBot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters
 
+from . import city as city_module
+from . import city_context
 from . import events
 from . import crud
 
 from .helper.dsn_parameters import DSNParameters
+from .helper.markdown_v2 import escape_v2
 
 
 def format_text(text: str, style: str = None):
@@ -35,6 +38,35 @@ def format_text(text: str, style: str = None):
         formatted = text
 
     return formatted
+
+
+class _CityDestinations:
+    """``constants`` of a client, resolved for the current city on every access."""
+
+    def __init__(self, platform: str, dev_falls_back_to_default: bool = False):
+        self.platform = platform
+        self.dev_falls_back_to_default = dev_falls_back_to_default
+
+    def __get__(self, obj, owner=None):
+        destinations = city_module.channel_destinations(self.platform)
+        if self.dev_falls_back_to_default and not destinations["dev"]["destination_id"]:
+            # Logs of a city without its own dev channel still reach someone.
+            default = city_module.channel_destinations(
+                self.platform, city_context.DEFAULT_CITY
+            )
+            destinations["dev"] = default["dev"]
+        return destinations
+
+
+def _normalize_channel_link(link):
+    if not link:
+        return None
+    link = str(link).strip().rstrip("/")
+    if link.startswith("http"):
+        return link
+    if link.startswith("t.me/"):
+        return f"https://{link}"
+    return f"https://t.me/{link.lstrip('@')}"
 
 
 class BaseClient(ABC):
@@ -71,10 +103,7 @@ class BaseClient(ABC):
 
 
 class Telegram(BaseClient):
-    constants = dict(
-        prod={"destination_id": os.environ.get("CHANNEL_ID")},
-        dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
-    )
+    constants = _CityDestinations("telegram")
     name = "telegram_channel"
     formatter_style = None
 
@@ -85,15 +114,22 @@ class Telegram(BaseClient):
             parse_mode="MarkdownV2",
         )
         self.param = DSNParameters()
-        self.channel_link = self.param.site_parameters('channel_link', last=1)
+
+    @property
+    def channel_link(self):
+        info = city_module.get_city()
+        link = info.channel_link if info else None
+        if not link and city_context.current_city() == city_context.DEFAULT_CITY:
+            link = (
+                self.param.site_parameters('channel_link', last=1)
+                or city_module.city_value("channel_link")
+            )
+        return _normalize_channel_link(link)
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
         crud.add_posted_event_to_dsn_bot(event, message.message_id)
-
-        if self.channel_link is None:
-            self.channel_link = self.param.site_parameters('channel_link', last=1)
 
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
         crud.set_post_url(event_id=event.event_id, post_url=post_url)
@@ -250,14 +286,7 @@ class VKRequests(BaseClient):
         upload_photo_wall=api_base_url + "method/photos.getWallUploadServer",
         save_photo_wall=api_base_url + "method/photos.saveWallPhoto",
     )
-    constants = dict(
-        prod={
-            "destination_id": os.environ.get("VK_GROUP_ID"),
-        },
-        dev={
-            "destination_id": os.environ.get("VK_DEV_GROUP_ID"),
-        },
-    )
+    constants = _CityDestinations("vk")
     name = "vk_group"
     formatter_style = "vk"
 
@@ -365,9 +394,10 @@ class DevClient(Telegram):
     """
     Клиент для отправки сообщений в dev канал.
     """
+    constants = _CityDestinations("telegram", dev_falls_back_to_default=True)
 
     def send_text(self, text: str):
-        super().send_text(text, **super().constants["dev"])
+        super().send_text(escape_v2(text), **super().constants["dev"])
 
     def send_file(self, path: str, mode: str = "r", with_remove: bool = False):
         super().send_file(file_path=path, mode=mode, **super().constants["dev"])

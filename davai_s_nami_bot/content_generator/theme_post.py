@@ -902,7 +902,15 @@ def _recent_intros(limit=RECENT_INTROS):
     return [i for i in intros if i]
 
 def _bot_url():
-    return (settings.content_generator or {}).get("bot_url") or ""
+    """The current city's bot (``city_city.bot_url``), else the shared setting."""
+    try:
+        from davai_s_nami_bot import city as city_module
+
+        own = city_module.city_value("bot_url")
+    except Exception as e:  # noqa: BLE001 — the footer must not break the post
+        log.debug(f"Theme post: city bot_url unavailable: {e}")
+        own = None
+    return own or (settings.content_generator or {}).get("bot_url") or ""
 
 
 def event_save_buttons(events, max_buttons=5, label_chars=30):

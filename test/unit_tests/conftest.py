@@ -16,7 +16,7 @@ from test.test_config import TEST_ENV, TEST_SITE_PARAMS
 fake_redis = fakeredis.FakeRedis()
 
 fake_redis.setex(
-    'parameters:dsn_site',
+    'parameters:spb:dsn_site',
     3600,  # TTL в секундах
     json.dumps(TEST_SITE_PARAMS)
 )
