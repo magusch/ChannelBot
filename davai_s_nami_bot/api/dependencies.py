@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import secrets
 from datetime import datetime
 
 from fastapi import HTTPException, Depends, Request, status
@@ -103,3 +104,14 @@ def get_current_active_user(user: CurrentUser) -> UserOut:
     return user
 
 ActiveCurrentUser = Annotated[UserOut, Depends(get_current_active_user)]
+
+def verify_health_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Separate token for the health report only: a leaked monitoring token
+    must not open the rest of the API. Unset token = endpoint closed, there is
+    no fallback to API_TOKEN."""
+    expected = os.environ.get('HEALTH_TOKEN')
+    if not expected:
+        raise HTTPException(status_code=503, detail="HEALTH_TOKEN is not configured")
+    if not secrets.compare_digest(credentials.credentials.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="Invalid token")
+    return credentials.credentials
