@@ -1086,25 +1086,35 @@ def webapp_price_filter(price_max=None, free_only=False):
     return ""
 
 
-def webapp_startapp(*sections, max_len=TELEGRAM_STARTAPP_MAX):
-    """``events__date-…__cat-…`` payload, trimmed to Telegram's length cap.
+def webapp_city_filter(city, default_city):
+    """City section for startapp: ``city-kzn``."""
+    if not city or city == default_city:
+        return ""
+    return f"city-{city}"
+
+
+def webapp_startapp(*sections, city="", max_len=TELEGRAM_STARTAPP_MAX):
+    """``events[__city-…]__date-…__cat-…`` payload, trimmed to Telegram's length cap.
 
     Sections are given most-important-first and dropped from the end until the
     payload fits. Telegram rejects an over-long ``startapp``, so a category list
     that doesn't fit degrades to a date-only link rather than to a dead link.
+    The city section goes right after ``events`` and is never dropped: a link
+    that lost its city would open another city's events.
     """
-    parts = ["events"] + [s for s in sections if s]
-    while len(parts) > 1 and len("__".join(parts)) > max_len:
+    head = ["events"] + ([city] if city else [])
+    parts = head + [s for s in sections if s]
+    while len(parts) > len(head) and len("__".join(parts)) > max_len:
         parts.pop()
     payload = "__".join(parts)
-    return payload if len(payload) <= max_len else "events"
+    return payload if len(payload) <= max_len else "__".join(head)
 
 
-def webapp_link(bot_url, *sections):
+def webapp_link(bot_url, *sections, city=""):
     """Link to the web-app event list with filters applied."""
     if not bot_url:
         return ""
-    return f"{bot_url.rstrip('/')}?startapp={webapp_startapp(*sections)}"
+    return f"{bot_url.rstrip('/')}?startapp={webapp_startapp(*sections, city=city)}"
 
 
 def webapp_event_link(bot_url, event_id):

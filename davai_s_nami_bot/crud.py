@@ -22,7 +22,6 @@ from .database.models import (
     District,
     DistrictKeyword,
     DsnBotEvents,
-    DsnBotUserEvents,
     DsnUser,
     DsnUserEvent,
     Events2Posts,
@@ -66,6 +65,22 @@ def _default_event_fields(model):
     ]
 
 
+PLACE_SORT_COLUMNS = {
+    'title': Place.place_name,
+    'metro': Place.place_metro,
+    'id': Place.id,
+}
+
+EVENT_SORT_COLUMNS = {
+    'title': Events2Posts.title,
+    'date': Events2Posts.to_date,
+    'price': Events2Posts.price_int,
+    'ad': Events2Posts.price,
+    'score': Events2Posts.score,
+    'id': Events2Posts.id,
+}
+
+
 def order_maping(model, order_by):
     """Resolve an ``order_by`` string ("field-direction") to ORDER BY clauses.
 
@@ -75,11 +90,7 @@ def order_maping(model, order_by):
     day), all other sorts fall back to ``from_date ASC``.
     """
     if model == Place:
-        order_mapping = {
-            'title': Place.place_name,
-            'metro': Place.place_metro,
-            'id': Place.id,
-        }
+        order_mapping = PLACE_SORT_COLUMNS
         try:
             field, direction = order_by.split('-')
             column = order_mapping.get(field, model.id)
@@ -88,14 +99,7 @@ def order_maping(model, order_by):
             primary = asc(model.id)
         return [primary]
     elif model == Events2Posts:
-        order_mapping = {
-            'title': Events2Posts.title,
-            'date': Events2Posts.to_date,
-            'price': Events2Posts.price_int,
-            'ad': Events2Posts.price,
-            'score': Events2Posts.score,
-            'id': Events2Posts.id,
-        }
+        order_mapping = EVENT_SORT_COLUMNS
 
         try:
             field, direction = order_by.split('-')
@@ -245,6 +249,8 @@ def get_events_by_date_and_category(db, params):
     )
 
     query, dict_requests = _apply_event_filters(query, params)
+    if params.ids:
+        query = query.execution_options(all_cities=True)
 
     total_count = query.count()
     if params.limit:
@@ -1722,73 +1728,46 @@ def remove_event_from_dsn_bot(db, date):
 
 
 @db_session
-def event_reminder(db):
-    now = datetime.now(timezone.utc)
-
-    future_reminds = (
-        db.query(DsnBotUserEvents)
-        .join(Events2Posts, Events2Posts.id == DsnBotUserEvents.event_id)
-        .options(joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event))
-        .filter(
-            DsnBotUserEvents.is_remind == True, DsnBotUserEvents.remind_datetime > now
-        )
-        .all()
-    )
-
-    result = []
-    for event in future_reminds:
-        result.append(
-            {
-                'telegram_id': event.user.telegram_id if event.user else None,
-                'post_url': event.event.post_url if event.event else None,
-                'title': event.event.title if event.event else None,
-                'price': event.event.price if event.event else None,
-                'remind_datetime': event.remind_datetime,
-            }
-        )
-    return result
-
-
-@db_session
 def get_pending_reminders(db):
+    """Due reminders of saved events (dsn_user_event, written by DavaiSNami_bot)."""
     now = datetime.now(timezone.utc)
-
-    # Inner join to the city-scoped event: each city's beat run handles only its
-    # own events' reminders (the reminder table itself has no city).
     query = (
-        db.query(DsnBotUserEvents)
-        .join(Events2Posts, Events2Posts.id == DsnBotUserEvents.event_id)
-        .options(joinedload(DsnBotUserEvents.user), joinedload(DsnBotUserEvents.event))
+        db.query(DsnUserEvent)
+        .join(Events2Posts, Events2Posts.id == DsnUserEvent.event_id)
+        .options(joinedload(DsnUserEvent.user), joinedload(DsnUserEvent.event))
         .filter(
-            DsnBotUserEvents.remind_datetime != None,
-            DsnBotUserEvents.remind_datetime <= now,
-            DsnBotUserEvents.remind_datetime >= now - timedelta(minutes=60),
-            DsnBotUserEvents.remind_sent == False,
-            # DsnBotUserEvents.remind_attempts < max_attempts,
+            DsnUserEvent.remind_datetime != None,
+            DsnUserEvent.remind_datetime <= now,
+            DsnUserEvent.remind_datetime >= now - timedelta(minutes=60),
+            # The bot saves favourites with remind_sent NULL.
+            DsnUserEvent.remind_sent.isnot(True),
         )
+        .order_by(DsnUserEvent.id)
     )
 
     reminders = []
     for remind_event in query.all():
+        event = remind_event.event
         reminders.append(
             {
                 'id': remind_event.id,
                 'telegram_id': (
                     remind_event.user.telegram_id if remind_event.user else None
                 ),
-                'post_url': remind_event.event.post_url if remind_event.event else None,
-                'title': remind_event.event.title if remind_event.event else None,
-                'price': remind_event.event.price if remind_event.event else None,
+                'event_id': event.id if event else None,
+                'post_url': event.post_url if event else None,
+                'title': event.title if event else None,
+                'price': event.price if event else None,
+                'from_date': event.from_date if event else None,
                 'remind_datetime': remind_event.remind_datetime,
             }
         )
-
     return reminders
 
 
 @db_session
-def mark_reminder_sent(db, event_id: int):
-    remind_event = db.query(DsnBotUserEvents).get(event_id)
+def mark_reminder_sent(db, reminder_id: int):
+    remind_event = db.get(DsnUserEvent, reminder_id)
     if remind_event:
         remind_event.remind_sent = True
         db.commit()

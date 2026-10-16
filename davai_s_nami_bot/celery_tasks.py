@@ -34,6 +34,7 @@ from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModer
 from .helper.ai.query_analyzer import QueryAnalyzer, format_date_range_ru
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
 from .helper.dsn_parameters import DSNParameters, fetch_and_store_parameters
+from .helper.markdown_v2 import escape_v2, escape_v2_url
 from .helper.embeddings import (
     EmbeddingClient,
     build_embedding_input,
@@ -1593,27 +1594,32 @@ def send_message_to_telegram(message: str, chat_id: int):
         log.error(f"Failed to send message to chat {chat_id}: {e}")
 
 
-@celery_app.task
-def event_reminder():
-    reminders = crud.event_reminder()
-    for reminder in reminders:
-        post_url = reminder['post_url']
-        text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
-        remind_datetime = reminder['remind_datetime']
-
-        send_message_to_telegram.apply_async(
-            args=[text_message, reminder['telegram_id']], eta=remind_datetime
-        )
+def reminder_text(reminder):
+    """MarkdownV2 reminder for a saved event: title (linked to the channel post
+    when there is one) and the start in MSK. The Telegram client sends with
+    parse_mode=MarkdownV2, so every piece is escaped here."""
+    title = escape_v2(reminder.get('title') or 'мероприятие')
+    url = reminder.get('post_url') or ''
+    name = f"[{title}]({escape_v2_url(url)})" if url.startswith('http') else title
+    text = f"⏰ Напоминаю: скоро {name}"
+    start = reminder.get('from_date')
+    if start:
+        # from_date is stored in UTC; a naive value is UTC as well.
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        local = start.astimezone(theme_post.MSK_TZ)
+        text += escape_v2(f"\nНачало — {themes._plain_date(local)} в {local:%H:%M}.")
+    return text
 
 
 @celery_app.task
 def process_reminders():
     reminders = crud.get_pending_reminders()
     for reminder in reminders:
+        if not reminder['telegram_id']:
+            continue
         try:
-            post_url = reminder['post_url']
-            text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
-            send_message_to_telegram.delay(text_message, reminder['telegram_id'])
+            send_message_to_telegram.delay(reminder_text(reminder), reminder['telegram_id'])
             crud.mark_reminder_sent(reminder['id'])
         except Exception as e:
             log.error(f"Failed to send reminder {reminder['id']}: {e}")

@@ -15,6 +15,7 @@ from . import crud
 from . import themes
 from . import theme_prompts
 from . import themes_rich
+from .. import city_context
 from .. import crud as dsn_crud
 from .. import utils
 from ..pydantic_models import EventRequestParameters
@@ -77,7 +78,7 @@ DEFAULT_THEME_PARAMS = {
     "tail_label": "",
     # "button" costs no characters: Telegram counts only the message text.
     "footer_style": "link",
-    # "picker" = one "⭐ Сохранить в избранное" button → bot `?start=save_<selection
+    # "picker" = one "⭐ Сохранить в избранное" button → bot `?start=pick-<selection
     "event_buttons": "none",
     # plain | rich (Bot API 10.1: photos inside the text, 32768-byte ceiling)
     "format": "plain",
@@ -975,6 +976,9 @@ def theme_webapp_url(params, date_from, date_to):
         themes.webapp_price_filter(
             params.get("price_max"), bool(params.get("free_only"))
         ),
+        city=themes.webapp_city_filter(
+            city_context.current_city(), city_context.DEFAULT_CITY
+        ),
     )
 
 
@@ -1298,7 +1302,7 @@ def _bot_picker_url(selection_id):
     bot_url = _bot_url()
     if not bot_url:
         return ""
-    return f"{bot_url.rstrip('/')}?start=save_{selection_id}"
+    return f"{bot_url.rstrip('/')}?start=pick-{selection_id}"
 
 
 def _post_buttons(footer_button, params, shown, kept, selection_id=None):

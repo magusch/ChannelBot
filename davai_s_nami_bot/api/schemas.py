@@ -30,6 +30,20 @@ class AiModerateEventsRequest(BaseModel):
     examples: Optional[List[dict]] = Field(None, description="Few-shot examples")
 
 
+class ExtractEventsFromTextRequest(BaseModel):
+    """Raw text (a forwarded Telegram post) to turn into events.
+
+    The shape is what DavaiSNami_bot sends for a message an admin forwards to it.
+    """
+
+    content: str = Field(..., description="Post text or caption (HTML or plain)")
+    image: Optional[str] = Field(None, description="Image URL, if any")
+    source: str = Field("telegram", description="Source label stored on the event")
+    message_id: Optional[int] = Field(None, description="Bot-side message id (logged only)")
+    forward_from: Optional[int] = Field(None, description="Original author id (logged only)")
+    forward_date: Optional[str] = Field(None, description="Original post date, ISO (logged only)")
+
+
 # Scraping
 class NewEventFromSitesRequest(BaseModel):
     """Request to scrape events from the specified sites."""

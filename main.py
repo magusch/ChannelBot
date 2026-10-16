@@ -11,6 +11,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from davai_s_nami_bot import crud
 from davai_s_nami_bot.api import register_routers
+from davai_s_nami_bot.api.ai import queue_extract_events_from_text
+from davai_s_nami_bot.api.schemas import ExtractEventsFromTextRequest
 from davai_s_nami_bot.api.city import CityMiddleware, enter_city_of
 from davai_s_nami_bot.content_generator.models import (
     ContentGeneratorEventSelection,
@@ -257,6 +259,18 @@ async def check_ai_balance(token: str = Depends(verify_token)):
         'davai_s_nami_bot.celery_tasks.check_ai_balance',
     )
     return {'message': 'Task check AI balance added to queue', 'task_id': task.id}
+
+
+@app.post('/api/create_post_by_ai/', tags=["AI (legacy)"],
+          summary="Events from raw text (bot)",
+          description="What DavaiSNami_bot calls for a post an admin forwards to it. "
+          "Same as POST /api/ai/extract-events-from-text/.")
+async def create_post_by_ai(
+    body: ExtractEventsFromTextRequest,
+    request: Request,
+    token: str = Depends(verify_token),
+):
+    return await queue_extract_events_from_text(body, request)
 
 
 @app.post('/api/ai_update_event/', tags=["AI (legacy)"],
