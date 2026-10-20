@@ -32,7 +32,7 @@ ENV CELERY_RESULT_BACKEND=redis://redis:6379/0
 
 ENTRYPOINT ["sh", "-c"]
 CMD ["echo SERVICE=$SERVICE; \
-      if [ \"$SERVICE\" = \"fastapi_app\" ]; then uvicorn main:app --host 0.0.0.0 --port 8005 --reload; \
+      if [ \"$SERVICE\" = \"fastapi_app\" ]; then uvicorn main:app --host 0.0.0.0 --port 8005 --workers 4; \
       elif [ \"$SERVICE\" = \"celery_worker\" ]; then celery -A davai_s_nami_bot.celery_app worker --loglevel=info; \
       elif [ \"$SERVICE\" = \"celery_beat\" ]; then celery -A davai_s_nami_bot.celery_app beat --loglevel=info; \
       else echo \"Unknown service: $SERVICE\"; exit 1; fi"]

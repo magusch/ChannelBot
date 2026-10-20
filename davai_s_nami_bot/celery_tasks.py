@@ -430,6 +430,9 @@ def post_generated_by_schedule(schedule_id: int):
 
 
 
+SCHEDULED_TASK_ALIVE_STATES = ('PENDING', 'RECEIVED', 'STARTED', 'RETRY')
+
+
 @celery_app.task
 def schedule_posting_tasks():
     log.info("Scheduling posting tasks based on database entries")
@@ -465,7 +468,7 @@ def schedule_posting_tasks():
         task_alive = False
         if current_task_id:
             task_result = celery_app.AsyncResult(current_task_id)
-            task_alive = task_result.state in ('PENDING', 'RETRY')
+            task_alive = task_result.state in SCHEDULED_TASK_ALIVE_STATES
 
         if not task_alive:
             log.info(
@@ -535,7 +538,7 @@ def schedule_generated_posting_tasks():
             task_alive = False
             if current_task_id:
                 task_result = celery_app.AsyncResult(current_task_id)
-                task_alive = task_result.state in ('PENDING', 'RETRY')
+                task_alive = task_result.state in SCHEDULED_TASK_ALIVE_STATES
 
             if not task_alive:
                 log.info(f"Stored task {current_task_id} ({platform}) is no longer alive, rescheduling")

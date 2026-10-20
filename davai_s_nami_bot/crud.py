@@ -1580,7 +1580,15 @@ def add_events(
             place_reputation=place_rep,
         )
 
-        new_event = create_event(db, event_dict, model)
+        try:
+            new_event = create_event(db, event_dict, model)
+        except (exc.DataError, exc.IntegrityError) as e:
+            db.rollback()
+            log.warning(
+                f"Skip event {event_dict.get('event_id')!r} "
+                f"({event_dict.get('source')}): {getattr(e, 'orig', e)}"
+            )
+            continue
         if new_event and 'id' in new_event:
             list_inserted_ids.append(new_event['id'])
             recent_titles.append(event_dict.get('title', ''))
