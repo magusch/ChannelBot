@@ -112,6 +112,9 @@ DEFAULT_THEME_PARAMS = {
     "category_ids": None,
     "price_max": None,
     "free_only": False,
+    "repeat_min": 4,
+    "repeat_lookback_days": 180,
+    "prepare_in_post": 8,
 }
 
 
@@ -291,7 +294,6 @@ def slot_is_taken(slot, scheduled_times, match_minutes=SLOT_MATCH_MINUTES):
     return any(abs(t - slot) <= window for t in scheduled_times if t is not None)
 
 
-#: How long after its pin moment a digest may still get pinned (worker downtime).
 PIN_WINDOW = timedelta(hours=6)
 
 
@@ -324,13 +326,7 @@ _POLL_QUESTIONS = {
 
 
 def poll_config(params):
-    """The theme's ``poll`` normalized, or ``None`` when the theme has no poll.
-
-    ``poll: true`` takes every default; a dict overrides any of ``question``,
-    ``options`` (how many events), ``other`` (last answer, ``""`` = none),
-    ``delay_minutes`` (after the digest) and ``multiple`` (several answers).
-    The poll goes out later than the digest so it does not bury the post.
-    """
+    """The theme's ``poll`` (``true`` or a dict of overrides) normalized, or None."""
     raw = (params or {}).get("poll")
     if not raw:
         return None
@@ -562,6 +558,86 @@ def _pick_shown(pool, params):
     return themes.balance_by_day(pool, limit, params.get("min_per_day") or 0)
 
 
+_PREP_FIELDS = (
+    "title", "prepared_text", "price", "price_int", "category",
+    "main_category_id", "image", "image_upload", "is_ready",
+)
+
+
+def _prepare_named_events(shown, tail, params):
+    """AI-prepare the unprepared events the post names; drop those the AI rejects."""
+    cap = int(params.get("prepare_in_post") or 0)
+    named = list(shown) + list(tail)
+    if cap <= 0 or not named:
+        return shown, tail
+    try:
+        rows = dsn_crud.get_unprepared_events_by_ids([e["id"] for e in named])
+    except Exception as e:
+        log.warning(f"Digest prep skipped: {e}")
+        return shown, tail
+    order = {e["id"]: i for i, e in enumerate(named)}
+    rows = sorted(rows, key=lambda r: order.get(r["id"], 0))[:cap]
+    if not rows:
+        return shown, tail
+
+    from .. import celery_tasks  # circular: celery_tasks imports this module
+
+    helper = AIHelper()
+    rejected, prepared = set(), set()
+    for row in rows:
+        try:
+            result = celery_tasks.update_event(helper.new_event_data(row), row["id"]) or {}
+        except Exception as e:
+            log.warning(f"Digest prep failed for event {row['id']}: {e}")
+            continue
+        if "rejected" in str(result.get("message", "")):
+            rejected.add(row["id"])
+        elif result.get("event_id"):
+            prepared.add(row["id"])
+    log.info(f"Digest prep: {len(prepared)} prepared, {len(rejected)} rejected of {len(rows)}")
+
+    if prepared:
+        fresh = {
+            r["id"]: r for r in dsn_crud.get_unprepared_events_by_ids(prepared, only_unprepared=False)
+        }
+        for event in named:
+            for key in _PREP_FIELDS:
+                if event["id"] in fresh and key in fresh[event["id"]]:
+                    event[key] = fresh[event["id"]][key]
+    keep = lambda events: [e for e in events if e["id"] not in rejected]
+    return keep(shown), keep(tail)
+
+
+def _repeats_last(pool, params):
+    """``(pool, fresh, repeats)`` with recurring formats moved to the end."""
+    min_repeats = int(params.get("repeat_min") or 0)
+    if min_repeats <= 0 or not pool:
+        return pool, pool, []
+    try:
+        past = dsn_crud.get_past_titles(int(params.get("repeat_lookback_days") or 180))
+    except Exception as e:
+        log.warning(f"Repeat check skipped: {e}")
+        return pool, pool, []
+    counts = themes.repeat_counts(pool, past)
+    fresh, repeats = themes.fresh_first(pool, counts, min_repeats)
+    if repeats:
+        log.info(
+            "Recurring formats moved last: "
+            + ", ".join(f"{e.get('id')}×{counts.get(e.get('id'))}" for e in repeats)
+        )
+    return fresh + repeats, fresh, repeats
+
+
+def _pick_shown_fresh(pool, params):
+    """``(shown, pool)``: describe fresh events, recurring ones only to fill up."""
+    pool, fresh, repeats = _repeats_last(pool, params)
+    shown = _pick_shown(fresh, params)
+    missing = int(params["shown"]) - len(shown)
+    if missing > 0 and repeats:
+        shown = list(shown) + repeats[:missing]
+    return shown, pool
+
+
 def _apply_window_rules(candidates, params, date_from, date_to):
     """Trim candidates to what actually *happens* in the window."""
     candidates = themes.drop_categories(candidates, params.get("exclude_category_ids"))
@@ -600,8 +676,7 @@ def select_feed_events(params, *, recent_ids=None, today=None, blocked_places=No
     candidates = themes.cap_per_place(candidates, params.get("per_place"))
     candidates = themes.cap_per_title(candidates, params.get("per_title"))
 
-    shown = _pick_shown(candidates, params)
-    return shown, candidates
+    return _pick_shown_fresh(candidates, params)
 
 
 def _resolve_place_ids(params):
@@ -665,8 +740,7 @@ def select_theme_events(params, *, recent_ids=None, today=None, blocked_places=N
         per_category=params.get("per_category"),
         per_day=params.get("per_day"),
     )
-    shown = _pick_shown(pool, params)
-    return shown, pool
+    return _pick_shown_fresh(pool, params)
 
 
 # --- AI comments ------------------------------------------------------------
@@ -1110,6 +1184,10 @@ def build_theme_post(
     tail_count = max(int(params.get("tail") or 0), 0)
     tail_events = themes.remaining_events(pool, shown, tail_count)
     tail_events = themes.sort_chronologically(tail_events)
+    if len(shown) >= int(params["min_events"]) and not dry_run:
+        shown, tail_events = _prepare_named_events(shown, tail_events, params)
+    # The cooldown reads what the post names, not the hidden pool.
+    params = {**params, "posted_ids": [e["id"] for e in list(shown) + list(tail_events)]}
 
     # Same window the selection used — the footer link must filter identically.
     date_from, date_to = window_for(params, target_date)
@@ -1174,8 +1252,11 @@ def build_theme_post(
     layout = themes.pick_layout(params.get("layout"), target_date)
     if layout == themes.LAYOUT_BY_CATEGORY and str(params.get("format") or "plain").lower() != "rich":
         layout = themes.LAYOUT_BY_DAY  # rubrics are rendered for rich posts only
+    heading_from, heading_to = themes.heading_window(
+        params.get("range"), date_from, date_to, list(shown) + list(tail_events)
+    )
     heading = (
-        themes.theme_heading(filter_set["name"], date_from, date_to)
+        themes.theme_heading(filter_set["name"], heading_from, heading_to)
         if params.get("title_dates", True) else filter_set["name"]
     )
     header_probe = themes.build_header(params["emoji"], heading, "")

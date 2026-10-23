@@ -238,7 +238,7 @@ def _digest_post_url(client_post, message):
 
 
 def _remember_message(schedule_id, client_post, message):
-    """Store the sent message id on the schedule — pinning needs it later."""
+    """Store the sent message id on the schedule."""
     message_id = (
         message.get('message_id') if isinstance(message, dict)
         else getattr(message, 'message_id', None)
@@ -266,8 +266,6 @@ def _schedule_digest_poll(schedule_id):
         context, cfg = _digest_poll_context(schedule_id)
         if not cfg:
             return
-        # A short countdown: an ETA task this close is unlikely to be lost to a
-        # worker restart, unlike day-ahead ones (see GENERATED_POST_SCHEDULE_WINDOW).
         send_digest_poll.apply_async(
             args=[schedule_id], countdown=cfg['delay_minutes'] * 60
         )
@@ -316,10 +314,7 @@ PINNED_DIGEST_KEY = 'digest_pinned_message_id'  # per city, see city.city_key
 
 @celery_app.task
 def pin_digests():
-    """Pin a theme's latest digest at its `pin` moment, unpinning the previous one.
-
-    `pin` in a theme's filter_params: {"weekday": 4, "time": "10:00"}
-    """
+    """Pin a theme's latest digest at its `pin` moment, unpinning the previous one."""
     now = datetime.now(theme_post.MSK_TZ)
     pinned_raw = city_module.get_with_legacy(redis_client, PINNED_DIGEST_KEY)
     pinned = int(pinned_raw) if pinned_raw else None

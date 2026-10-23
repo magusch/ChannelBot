@@ -9,7 +9,7 @@ import math
 import re
 from datetime import datetime
 
-from ..scoring import title_containment
+from ..scoring import normalize_title_tokens, title_containment
 
 # Telegram limits: photo caption vs plain text.
 TELEGRAM_CAPTION_LIMIT = 1024
@@ -209,6 +209,23 @@ def heading_dates(date_from, date_to):
                 return f"с {date_from.day} по {_plain_date(date_to)}"
             return f"с {_plain_date(date_from)} по {_plain_date(date_to)}"
     return date_range_human(date_from, date_to)
+
+
+def heading_window(range_name, date_from, date_to, events):
+    """Title dates: the window for named periods, the events' span for rolling ones."""
+    if range_name in _RANGE_NAMES:
+        return date_from, date_to
+    days = sorted(
+        e["from_date"].date() for e in events if isinstance(e.get("from_date"), datetime)
+    )
+    if not days:
+        return date_from, date_to
+    first, last = days[0], days[-1]
+    if date_from and first < date_from:
+        first = date_from
+    if date_to and last > date_to:
+        last = date_to
+    return first, last
 
 
 def theme_heading(title, date_from, date_to, sep=" — "):
@@ -1172,11 +1189,7 @@ def poll_option(event, max_title=80):
 
 
 def _round_robin_by_day(events):
-    """Events taken one per day in turn, keeping each day's own order.
-
-    The digest's ``shown_ids`` follow relevance, and its head is often one
-    day — a weekend poll of five Saturday events leaves Sunday out.
-    """
+    """Events taken one per day in turn, keeping each day's own order."""
     days = {}
     for event in events:
         start = event.get("from_date")
@@ -1192,12 +1205,7 @@ def _round_robin_by_day(events):
 
 
 def poll_options(events, limit=5, other=POLL_DEFAULT_OTHER):
-    """Answers for the «куда идёте» poll: the first ``limit`` distinct events.
-
-    Days alternate (Sat, Sun, Sat, …) so no day is left out of the poll.
-    Returns ``[]`` when fewer than two events make it — a one-answer poll is
-    not a question. ``other`` (e.g. «Пока не решил(а)») goes last when set.
-    """
+    """Poll answers: up to ``limit`` events alternating by day, ``other`` last; [] if <2."""
     slots = max(1, min(int(limit or 0), POLL_MAX_OPTIONS - (1 if other else 0)))
     options, seen = [], set()
     for event in _round_robin_by_day(events):
@@ -1213,3 +1221,46 @@ def poll_options(events, limit=5, other=POLL_DEFAULT_OTHER):
     if other:
         options.append(str(other)[:POLL_OPTION_MAX])
     return options
+
+
+REPEAT_CORE_IN_PAST = 0.8
+REPEAT_PAST_IN_CORE = 0.6
+
+
+def _same_title(a, b):
+    shared = len(a & b)
+    return shared / len(a) >= REPEAT_CORE_IN_PAST and shared / len(b) >= REPEAT_PAST_IN_CORE
+
+
+def repeat_counts(events, past):
+    """``{event id: distinct past days}`` with a matching title; ``past`` = [(title, day)]."""
+    index, cores = {}, []
+    for i, (title, day) in enumerate(past):
+        core = normalize_title_tokens(title)
+        cores.append((core, day))
+        for token in core:
+            index.setdefault(token, []).append(i)
+
+    counts = {}
+    for event in events:
+        core = normalize_title_tokens(event.get("title"))
+        if not core:
+            continue
+        days = {
+            cores[i][1]
+            for i in {i for token in core for i in index.get(token, ())}
+            if _same_title(core, cores[i][0])
+        }
+        if days:
+            counts[event.get("id")] = len(days)
+    return counts
+
+
+def fresh_first(events, counts, min_repeats):
+    """``(fresh, repeats)`` split by ``min_repeats`` past dates, order kept."""
+    if not min_repeats or min_repeats <= 0:
+        return list(events), []
+    fresh, repeats = [], []
+    for event in events:
+        (repeats if counts.get(event.get("id"), 0) >= min_repeats else fresh).append(event)
+    return fresh, repeats

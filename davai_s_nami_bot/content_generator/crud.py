@@ -1,4 +1,7 @@
+import json
+
 from ..database.database_orm import db_session, orm_to_dict
+from ..database.models import Events2Posts
 from .models import ContentGeneratorEventSelection, ContentGeneratorFilterSet, \
     ContentGeneratorEventSelectionSelectedEvents, ContentGeneratorPostTemplate, \
     ContentGeneratorGeneratedPost, PostingSchedule
@@ -100,26 +103,57 @@ def get_recent_selection_filter_ids(db, last_selections: int = 20) -> list:
 
 @db_session
 def get_recently_used_event_ids(db, last_selections: int = 20) -> set:
-    """Event ids that appeared in the last ``last_selections`` selections."""
+    """Event ids named in the last ``last_selections`` posts (not their hidden pools)."""
     if not last_selections or last_selections <= 0:
         return set()
-    recent_ids = [
-        row[0]
-        for row in db.query(ContentGeneratorEventSelection.id)
+    selections = (
+        db.query(ContentGeneratorEventSelection.id, ContentGeneratorEventSelection.generation_settings)
         .order_by(ContentGeneratorEventSelection.id.desc())
         .limit(last_selections)
         .all()
-    ]
-    if not recent_ids:
-        return set()
-    rows = (
-        db.query(ContentGeneratorEventSelectionSelectedEvents.events2post_id)
-        .filter(
-            ContentGeneratorEventSelectionSelectedEvents.eventselection_id.in_(recent_ids)
-        )
-        .all()
     )
-    return {row[0] for row in rows}
+    as_ids = lambda xs: [int(i) for i in xs or () if str(i).isdigit()]
+    used, partial = set(), {}
+    for selection_id, blob in selections:
+        settings = _settings_dict(blob)
+        if not settings and isinstance(blob, str):
+            try:
+                settings = _settings_dict(json.loads(blob))
+            except ValueError:
+                settings = {}
+        if settings.get("posted_ids"):
+            used.update(as_ids(settings["posted_ids"]))
+        else:
+            partial[selection_id] = settings
+    if not partial:
+        return used
+
+    pools = {}
+    for selection_id, event_id in (
+        db.query(
+            ContentGeneratorEventSelectionSelectedEvents.eventselection_id,
+            ContentGeneratorEventSelectionSelectedEvents.events2post_id,
+        )
+        .filter(ContentGeneratorEventSelectionSelectedEvents.eventselection_id.in_(list(partial)))
+        .order_by(ContentGeneratorEventSelectionSelectedEvents.id.asc())
+        .all()
+    ):
+        pools.setdefault(selection_id, []).append(event_id)
+    for selection_id, settings in partial.items():
+        pool = pools.get(selection_id, [])
+        shown = as_ids(settings.get("shown_ids"))
+        if not shown:
+            used.update(pool)
+            continue
+        # Older selections: rebuild the tail as themes.remaining_events does.
+        try:
+            tail = max(int(settings.get("tail") or 0), 0)
+        except (TypeError, ValueError):
+            tail = 0
+        rest = [i for i in pool if i not in set(shown)]
+        used.update(shown)
+        used.update(rest[:tail])
+    return used
 
 
 def get_selection_events(event_selection_id: int, limit: int = 50) -> dict:
@@ -337,9 +371,7 @@ def count_stale_schedules(db, before) -> int:
 
 
 def _settings_dict(value):
-    """``platform_settings`` as a dict: jsonb comes back decoded, text does not."""
-    import json
-
+    """``platform_settings`` as a dict (jsonb comes back decoded, text does not)."""
     if isinstance(value, dict):
         return dict(value)
     if isinstance(value, str) and value.strip():
@@ -353,9 +385,7 @@ def _settings_dict(value):
 
 @db_session
 def save_schedule_message(db, schedule_id: int, message_id: int, post_url: str = None):
-    """Remember which channel message a schedule became — needed to pin it later."""
-    import json
-
+    """Store the channel message id of a posted schedule."""
     schedule = db.query(PostingSchedule).get(schedule_id)
     if schedule is None or not message_id:
         return
@@ -369,7 +399,7 @@ def save_schedule_message(db, schedule_id: int, message_id: int, post_url: str =
 
 @db_session
 def get_latest_posted_digest(db, filter_set_id: int, since) -> dict:
-    """The theme's most recent posted digest with a known message id, or ``{}``."""
+    """Latest posted digest of a theme with a known message id, or ``{}``."""
     rows = (
         db.query(PostingSchedule.id, PostingSchedule.posted_at, PostingSchedule.platform_settings)
         .join(
@@ -399,8 +429,6 @@ def get_latest_posted_digest(db, filter_set_id: int, since) -> dict:
 @db_session
 def update_schedule_settings(db, schedule_id: int, fields: dict):
     """Merge ``fields`` into the schedule's ``platform_settings``."""
-    import json
-
     schedule = db.query(PostingSchedule).get(schedule_id)
     if schedule is None:
         return
@@ -412,14 +440,7 @@ def update_schedule_settings(db, schedule_id: int, fields: dict):
 
 @db_session
 def get_digest_poll_context(db, schedule_id: int) -> dict:
-    """What the delayed digest poll needs: the sent message and the post's settings.
-
-    ``{"message_id", "poll_message_id", "settings"}`` — ``settings`` is the
-    selection's ``generation_settings`` (theme params + ``shown_ids``).
-    ``{}`` when the schedule or its post is gone.
-    """
-    import json
-
+    """``{message_id, poll_message_id, settings}`` of a posted digest, or ``{}``."""
     row = (
         db.query(PostingSchedule.platform_settings, ContentGeneratorEventSelection.generation_settings)
         .join(
@@ -454,8 +475,6 @@ def get_digest_poll_context(db, schedule_id: int) -> dict:
 @db_session
 def get_events_brief(db, event_ids: list) -> list:
     """``[{id, title, from_date}]`` in the order of ``event_ids`` (UTC-naive dates)."""
-    from ..database.models import Events2Posts
-
     ids = [int(i) for i in event_ids if str(i).isdigit()]
     if not ids:
         return []

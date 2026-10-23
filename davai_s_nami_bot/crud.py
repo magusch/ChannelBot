@@ -1102,8 +1102,13 @@ def get_unprepared_events(
         )
         _take(rows, cap=limit)
 
+    return _prep_event_dicts(selected)
+
+
+def _prep_event_dicts(rows):
+    """Event rows in the shape ``ai_update_event`` expects (address with the place)."""
     event_dict_list = []
-    for event in selected:
+    for event in rows:
         event_data = {
             field: getattr(event, field) for field in _default_event_fields(Events2Posts)
         }
@@ -1113,8 +1118,42 @@ def get_unprepared_events(
                 f"м.{event.place.place_metro}"
             )
         event_dict_list.append(event_data)
-
     return event_dict_list
+
+
+@db_session
+def get_unprepared_events_by_ids(db, event_ids, only_unprepared: bool = True):
+    """The given events (by default only unprepared ones) shaped for ``ai_update_event``."""
+    ids = [int(i) for i in event_ids or () if str(i).isdigit()]
+    if not ids:
+        return []
+    query = db.query(Events2Posts).filter(Events2Posts.id.in_(ids))
+    if only_unprepared:
+        query = query.filter(Events2Posts.is_ready.is_(None))
+    return _prep_event_dicts(query.all())
+
+
+@db_session
+def get_past_titles(db, lookback_days: int = 180):
+    """``[(title, MSK day), …]`` of events that already took place in the window."""
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(Events2Posts.title, Events2Posts.from_date)
+        .filter(
+            Events2Posts.from_date >= now - timedelta(days=int(lookback_days)),
+            Events2Posts.from_date < now,
+        )
+        .all()
+    )
+    msk = timezone(timedelta(hours=3))
+    out = []
+    for title, start in rows:
+        if not title or start is None:
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        out.append((title, start.astimezone(msk).date()))
+    return out
 
 
 @db_session
@@ -2407,6 +2446,44 @@ def _apply_scoring(
     event_dict["score_breakdown"] = breakdown.to_json()
 
 
+class _LazyScoring:
+    """Score event dicts that arrive without one; loads the scoring context once."""
+
+    def __init__(self, db):
+        self.db = db
+        self.ctx = None
+
+    def apply(self, event_dict: dict):
+        if event_dict.get("score") is not None:
+            return
+        if self.ctx is None:
+            cfg = getattr(settings, "scoring", {})
+            self.ctx = dict(
+                recent_titles=get_recent_event_titles(
+                    self.db, days=cfg.get("repetition_window_days", 14)
+                ),
+                place_counts=get_place_post_counts(self.db),
+                place_cat_queue=get_place_category_queue_counts(self.db),
+                date_counts=get_date_event_counts(
+                    self.db, days=cfg.get("date_scarcity_window_days", 10)
+                ),
+                place_rep=get_place_reputation(
+                    self.db, auto_reject_threshold=_auto_reject_threshold(cfg)
+                ),
+            )
+        c = self.ctx
+        _apply_scoring(
+            event_dict,
+            event_dict.get("place_id"),
+            c["recent_titles"],
+            c["place_counts"],
+            c["place_cat_queue"],
+            c["date_counts"],
+            place_reputation=c["place_rep"],
+        )
+        c["recent_titles"].append(event_dict.get("title", ""))
+
+
 @db_session
 def recalculate_event_score(
     db, event_id: int, table: str = "events_events2post"
@@ -2430,14 +2507,14 @@ def recalculate_event_score(
 
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(days=window)
-    place_counts = get_place_post_counts()
+    recent_titles = get_recent_event_titles(db, days=window)
+    place_counts = get_place_post_counts(db)
     place_rep = get_place_reputation(
-        auto_reject_threshold=_auto_reject_threshold(scoring_config)
+        db, auto_reject_threshold=_auto_reject_threshold(scoring_config)
     )
-    place_cat_queue = get_place_category_queue_counts()
+    place_cat_queue = get_place_category_queue_counts(db)
     date_counts = get_date_event_counts(
-        days=scoring_config.get("date_scarcity_window_days", 10)
+        db, days=scoring_config.get("date_scarcity_window_days", 10)
     )
 
     breakdown = calculate_score(
@@ -2498,14 +2575,14 @@ def recalculate_scores_bulk(
     place_keywords = _load_place_keywords(db)
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(days=window)
-    place_counts = get_place_post_counts()
+    recent_titles = get_recent_event_titles(db, days=window)
+    place_counts = get_place_post_counts(db)
     place_rep = get_place_reputation(
-        auto_reject_threshold=_auto_reject_threshold(scoring_config)
+        db, auto_reject_threshold=_auto_reject_threshold(scoring_config)
     )
-    place_cat_queue = get_place_category_queue_counts()
+    place_cat_queue = get_place_category_queue_counts(db)
     date_counts = get_date_event_counts(
-        days=scoring_config.get("date_scarcity_window_days", 10)
+        db, days=scoring_config.get("date_scarcity_window_days", 10)
     )
 
     updated = 0
@@ -3347,6 +3424,7 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
     )
     queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
     created_ids = []
+    scorer = _LazyScoring(db)
     for event_data in events_data:
         event_data.setdefault("queue", queue_value)
         event_data.setdefault("status", "draft")
@@ -3359,6 +3437,7 @@ def create_events_to_posts_bulk(db, events_data: List[dict]) -> List[int]:
         )
         if main_category_id is not None:
             event_data["main_category_id"] = main_category_id
+        scorer.apply(event_data)
         event = Events2Posts(**event_data)
         db.add(event)
         db.flush()
@@ -3665,6 +3744,7 @@ def _bulk_make_and_save_posts_for_city(
     # 'id' must be auto-assigned by the DB; callers must not override it.
     insertable_columns = target_columns - {'id'}
     results: List[dict] = []
+    scorer = _LazyScoring(db)
 
     for raw in events_data:
         try:
@@ -3691,6 +3771,7 @@ def _bulk_make_and_save_posts_for_city(
                 row_data.setdefault('status', status)
                 row_data.setdefault('queue', queue_value)
                 queue_value = (queue_value or 0) + 2
+                scorer.apply(row_data)
 
                 new_event = Events2Posts(**row_data)
                 db.add(new_event)
