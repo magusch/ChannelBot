@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -112,9 +112,17 @@ class UserOut(BaseModel):
     weekend_guide: Optional[bool] = False
     is_active: bool = False
     created_at: Optional[datetime] = None
+    # Home city; a user who never chose one gets the default city.
+    city_id: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("city_id", mode="before")
+    @classmethod
+    def _default_city(cls, value):
+        from .city_context import DEFAULT_CITY
+
+        return value or DEFAULT_CITY
 
 
 class UserLogin(BaseModel):
@@ -126,6 +134,7 @@ class UserUpdate(BaseModel):
     # password: str = Field(..., min_length=8)
     full_name: Optional[str] = None
     weekend_guide: Optional[bool] = False
+    city_id: Optional[str] = None
 
 
 class Token(BaseModel):
@@ -139,8 +148,7 @@ class FavouriteOut(BaseModel):
     detail: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TelegramLoginData(BaseModel):

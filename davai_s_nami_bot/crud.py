@@ -13,7 +13,7 @@ from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.types import Date
 
 from .adaptive_scoring import load_from_redis, merge_adaptive_config
-from .city_context import current_city, use_city
+from .city_context import current_city, is_city_set, use_city
 from .core.security import get_password_hash, verify_password
 from .database.database_orm import db_session, orm_to_dict
 from .database.models import (
@@ -2971,6 +2971,11 @@ def search_places_by_name(db, name: str, limit: int):
 
 ### USER AUTH function ###
 ######–----START----–######
+def _requested_city():
+    """Home city for a new user: the city the request named."""
+    return current_city() if is_city_set() else None
+
+
 @db_session
 def register_user(db, user_data: UserCreate):
     db_user = (
@@ -2991,6 +2996,7 @@ def register_user(db, user_data: UserCreate):
         hashed_password=hashed_password,
         full_name=user_data.full_name,
         is_active=True,
+        city_id=_requested_city(),
     )
 
     db.add(new_user)
@@ -3062,6 +3068,7 @@ def get_or_create_user_by_telegram_id(db, telegram_id: int, telegram_user_info: 
         email=f"{telegram_id}@tg.me",
         hashed_password=hashed_password,
         is_active=True,
+        city_id=_requested_city(),
     )
     db.add(new_user)
     db.commit()

@@ -38,6 +38,7 @@ from .helper.scraper_filters import tripster as tripster_filter
 from .helper.scraper_filters import vibe as vibe_filter
 from .helper.dsn_parameters import dsn_parameters
 from .logger import catch_exceptions, get_logger
+from . import city_context
 from .city_context import run_in_context
 from .settings.settings_loader import settings
 
@@ -59,11 +60,56 @@ def _use_proxy(parser_name: str) -> bool:
     return settings.escraper_parameters.get(parser_name, {}).get("use_proxy", True)
 
 
+_SCRAPER_CITY_KEYS = {
+    "timepad": ("city",),
+    "radario": ("city",),
+    "qtickets": ("city",),
+    "ticketscloud": ("city",),
+    "mts": ("city",),
+    "culture": ("city",),
+    "afisha": ("city",),
+    "yandex": ("city",),
+    "tripster": ("city",),
+    "kassir": ("city_domain",),
+    "vk": ("vk_city_id", "vk_city"),
+    "cfg": ("sites",),
+}
+
+
+class ScraperCityMissing(ValueError):
+    """A non-default city has not configured where a scraper should collect."""
+
+
+def _own_scraper_settings(name: str) -> dict:
+    """The scraper's section of the current city's own `cities.<code>` overlay."""
+    own = (settings.cities_config.get(settings.city) or {}).get("escraper_parameters")
+    return (own or {}).get(name) or {}
+
+
+def _missing_city_keys(name: str) -> list:
+    """City keys a non-default city has not set for ``name`` (``[]`` = fine)."""
+    if settings.city == city_context.DEFAULT_CITY:
+        return []
+    own = _own_scraper_settings(name)
+    if name == "vibe":
+        # Vibe maps the bot's own city code (`vibe_filter.CITY_IDS`).
+        known = own.get("city_id") or settings.city in vibe_filter.CITY_IDS
+        return [] if known else ["city_id"]
+    return [key for key in _SCRAPER_CITY_KEYS.get(name, ()) if not own.get(key)]
+
+
 def _is_scraper_enabled(scraper_name: str) -> bool:
     if not settings.scraper_configured(scraper_name):
         log.warning(
             f"Scraper '{scraper_name}' has no escraper_parameters in "
             f"cities.{settings.city} — skipped for this city."
+        )
+        return False
+    missing = _missing_city_keys(scraper_name)
+    if missing:
+        log.warning(
+            f"Scraper '{scraper_name}' has no {missing} in "
+            f"cities.{settings.city}.escraper_parameters — it would collect SPb, skipped."
         )
         return False
     return settings.escraper_parameters.get(scraper_name, {}).get("enabled", True)
@@ -642,7 +688,11 @@ class ScrapeEvents:
         weekday = date.today().weekday()
         if weekday % 2 != 0:
             return []
-        request_params = self._timepad_request_params(approved=True)
+        try:
+            request_params = self._timepad_request_params(approved=True)
+        except ScraperCityMissing as e:
+            log.warning(f"{e} — approved organizations skipped.")
+            return []
         if not request_params.get("organization_ids"):
             log.warning("No approved Timepad organizations configured, skipping.")
             return []
@@ -743,6 +793,18 @@ class ScrapeEvents:
 
         if params["limit"] > 100:
             params["limit"] = 100
+
+        if settings.city != city_context.DEFAULT_CITY:
+            own_cities = (timepad_params or {}).get("city") or []
+            own_city = (
+                own_cities[0] if own_cities else _own_scraper_settings("timepad").get("city")
+            )
+            if not own_city:
+                raise ScraperCityMissing(
+                    f"Timepad: no city for {settings.city!r} (Django parameter "
+                    f"'city' or cities.{settings.city}.escraper_parameters.timepad.city)"
+                )
+            params["cities"] = own_city
 
         return params
 

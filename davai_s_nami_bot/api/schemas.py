@@ -179,3 +179,27 @@ class SimilarEventsResponse(BaseModel):
     result: SimilarEventsResult
     task_id: Optional[str] = Field(None, description="Embed-job task id (only status='pending')")
     message: Optional[str] = Field(None, description="Human-readable hint (e.g. retry on pending)")
+
+
+class CityOut(BaseModel):
+    """A city for a city switcher. Built from `city.CityInfo`"""
+    code: str
+    name: str
+    name_gen: str
+    name_loc: str = Field(..., description="Prepositional case without «в»: «Казани»")
+    timezone: str
+    is_active: bool
+    is_default: bool = Field(False, description="The city a request without `city` gets")
+    channel_link: Optional[str] = None
+    bot_url: Optional[str] = None
+
+
+class CitiesResult(BaseModel):
+    cities: List[CityOut]
+
+
+class CitiesResponse(BaseModel):
+    """Response from GET /cities/."""
+
+    status: str = "success"
+    result: CitiesResult

@@ -371,6 +371,7 @@ class DsnUser(Base):
     telegram_id = Column(Integer, nullable=True, index=True)
     balance = Column(Integer, default=100, nullable=True)
     weekend_guide = Column(Boolean, default=False, nullable=True)
+    city_id = Column(String(8), ForeignKey('city_city.code'), nullable=True)
 
     full_name = Column(String, nullable=True)
 

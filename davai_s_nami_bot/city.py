@@ -45,6 +45,7 @@ class CityInfo:
     vk_dev_group_id: Optional[str] = None
     bot_url: Optional[str] = None
     dgis_slug: Optional[str] = None
+    sort_order: int = 0
 
 
 def _strip_preposition(value: str) -> str:
@@ -85,6 +86,7 @@ def _load_cities() -> Dict[str, CityInfo]:
                 vk_dev_group_id=_str_or_none(row.vk_dev_group_id),
                 bot_url=_str_or_none(row.bot_url),
                 dgis_slug=_str_or_none(row.dgis_slug),
+                sort_order=row.sort_order or 0,
             )
             for row in rows
             if row.code != SHARED_CITY

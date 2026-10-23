@@ -1,6 +1,7 @@
 def register_routers(app, prefix="/api"):
     from .ai import router as ai_router
     from .auth import router as auth_router
+    from .cities import router as cities_router
     from .content_generator import router as content_generator_router
     from .event import router as events_router
     from .health import router as health_router
@@ -12,6 +13,7 @@ def register_routers(app, prefix="/api"):
 
     for r in [
         auth_router,
+        cities_router,
         users_router,
         tasks_router,
         events_router,

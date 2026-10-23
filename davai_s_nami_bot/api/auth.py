@@ -6,6 +6,8 @@ from .dependencies import CurrentUser
 
 from ..core.security import create_access_token, create_refresh_token_cookie, decode_access_token,\
     check_telegram_auth_data
+from .. import city as city_module
+from ..city_context import UnknownCity
 from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate, TelegramLoginData
 from .. import crud
 
@@ -107,6 +109,12 @@ def update_user(
     user: CurrentUser
 ):
     """Updates the current authorized user's information"""
+
+    if "city_id" in user_update.model_fields_set:
+        try:
+            user_update.city_id = city_module.validate_city(user_update.city_id)
+        except UnknownCity as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     updated_user = crud.update_user(nickname=user.nickname, user_update=user_update)
     return updated_user
