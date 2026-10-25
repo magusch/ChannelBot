@@ -582,7 +582,7 @@ def _prepare_named_events(shown, tail, params):
 
     from .. import celery_tasks  # circular: celery_tasks imports this module
 
-    helper = AIHelper()
+    helper = AIHelper(task="api")
     rejected, prepared = set(), set()
     for row in rows:
         try:
@@ -828,11 +828,9 @@ def _parse_ai_json(raw):
 
 def _ask_ai(prompt_body, system_message):
     """One call to the configured model — ``""`` on any failure."""
-    model_name = (settings.content_generator or {}).get(
-        "ai_model_name"
-    ) or DSNParameters().site_parameters("ai_model", last=1)
+    model_name = (settings.content_generator or {}).get("ai_model_name")
     try:
-        return AIHelper(model_name).generate_text(
+        return AIHelper(model_name, task="digest").generate_text(
             system_message,
             prompt_body,
             temperature=0.7,

@@ -14,7 +14,6 @@ from . import themes_rich
 from davai_s_nami_bot import crud as dsn_crud
 
 from ..settings.settings_loader import settings
-from ..helper.dsn_parameters import DSNParameters
 from ..helper.ai_helper import AIHelper
 from .. import utils
 from davai_s_nami_bot.pydantic_models import EventRequestParameters
@@ -624,8 +623,8 @@ class GeneratorPost:
 Данные мероприятий (JSON):
 {events_json}"""
 
-        model_name = settings.content_generator.get('ai_model_name') or DSNParameters().site_parameters('ai_model', last=1)
-        ai_helper = AIHelper(model_name)
+        model_name = settings.content_generator.get('ai_model_name')
+        ai_helper = AIHelper(model_name, task="digest")
 
         try:
             ai_content = ai_helper.generate_text(system_prompt, user_prompt, temperature=0.7, max_tokens=4000)

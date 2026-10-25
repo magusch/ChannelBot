@@ -732,11 +732,11 @@ def download_event_page(urls=[]):
     retry_backoff_max=600,
     rate_limit='2/m',
 )
-def ai_update_event(self, event={}, is_new=0):
+def ai_update_event(self, event={}, is_new=0, task=None):
     log.info("Start get post from url.")
 
     msk_today = get_msk_today()
-    ai_helper = AIHelper()
+    ai_helper = AIHelper(task=task)
 
     ai_event = ai_helper.new_event_data(event)
     if is_new == 1:
@@ -867,7 +867,7 @@ def prepare_unprepared_events(limit: int = 15):
 
     update_tasks = chord(
         (
-            chain(ai_update_event.s(event), update_event.s(event['id']))
+            chain(ai_update_event.s(event, task='channel'), update_event.s(event['id']))
             for event in events
         ),
         remake_events.s(),
@@ -919,7 +919,7 @@ def prepare_api_events(limit: int = None):
     )
     task_group = chord(
         (
-            chain(ai_update_event.s(event), update_event.s(event['id']))
+            chain(ai_update_event.s(event, task='api'), update_event.s(event['id']))
             for event in events
         ),
         remake_events.s(),
@@ -1781,7 +1781,7 @@ def schedule_theme_post(
             tried = list(used_filter_ids)
             for _ in range(THEME_ATTEMPTS_PER_SLOT):
                 result = theme_post.build_theme_post(
-                    target_date=slot.date(), exclude_filter_ids=tried
+                    target_date=slot.date(), exclude_filter_ids=tried, slot_hour=slot.hour
                 )
                 if result.get('status') == 'ok' or not result.get('filter_set_id'):
                     break

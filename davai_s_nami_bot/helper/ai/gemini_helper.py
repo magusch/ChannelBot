@@ -12,13 +12,13 @@ log = logging.getLogger(__name__)
 
 
 class GeminiHelper:
-    def __init__(self, dsn_param):
+    def __init__(self, dsn_param, task=None):
         self.client = OpenAI(
             api_key=os.environ.get('GEMINI_API'),
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
         self.system_message, self.user_message = resolve_prompts(dsn_param, 'gemini')
-        self.model = dsn_param.site_parameters('gemini_model', last=1) or "gemini-2.5-flash"
+        self.model = dsn_param.task_parameter('gemini_model', task) or "gemini-2.5-flash"
         self.answer = None
 
     def ai_balance(self):

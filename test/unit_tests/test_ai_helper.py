@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, Mock
 def mock_dsn():
     dsn = MagicMock()
     dsn.site_parameters.return_value = None
+    dsn.task_parameter.return_value = None
     return dsn
 
 
@@ -220,6 +221,7 @@ class TestOpenAIModelParams:
         assert is_reasoning_model('gpt-5.4-mini')
         assert is_reasoning_model('gpt-5-mini')
         assert is_reasoning_model('o4-mini')
+        assert is_reasoning_model('gpt-6.1-sol')
         assert not is_reasoning_model('gpt-4o')
         assert not is_reasoning_model('gemini-2.5-flash')
         assert not is_reasoning_model(None)
@@ -268,6 +270,23 @@ class TestOpenAIModelParams:
         retry_kwargs = client.chat.completions.create.call_args.kwargs
         assert 'verbosity' not in retry_kwargs
         assert retry_kwargs['max_completion_tokens'] == 100
+
+    def test_rejected_max_tokens_is_renamed(self):
+        from openai import BadRequestError
+        from davai_s_nami_bot.helper.ai.openai_models import create_chat_completion
+
+        error = BadRequestError(
+            "Unsupported parameter: 'max_tokens' is not supported with this model.",
+            response=MagicMock(status_code=400, headers={}),
+            body={'param': 'max_tokens'},
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [error, 'ok']
+
+        assert create_chat_completion(client, 'new-model', [], max_tokens=100) == 'ok'
+        retry_kwargs = client.chat.completions.create.call_args.kwargs
+        assert retry_kwargs['max_completion_tokens'] == 100
+        assert 'max_tokens' not in retry_kwargs
 
     def test_unrelated_bad_request_propagates(self):
         from openai import BadRequestError

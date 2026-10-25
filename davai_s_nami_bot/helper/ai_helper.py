@@ -36,12 +36,14 @@ def lint_prepared_text(text: str) -> list[str]:
 
 
 class AIHelper:
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, task: str = None):
+        """``task`` (channel / api / digest) picks ``ai_model_<task>`` and
+        ``<provider>_model_<task>`` params when set, else the shared ones."""
         dsn_param = DSNParameters()
         self.perplexity_helper = PerplexityHelper(dsn_param)
-        self.openai_helper = OpenAIHelper(dsn_param)
-        self.claude_helper = ClaudeHelper(dsn_param)
-        self.gemini_helper = GeminiHelper(dsn_param)
+        self.openai_helper = OpenAIHelper(dsn_param, task)
+        self.claude_helper = ClaudeHelper(dsn_param, task)
+        self.gemini_helper = GeminiHelper(dsn_param, task)
 
         # Model in priority
         self.models = [
@@ -54,8 +56,9 @@ class AIHelper:
         self.current_model_index = 0
         self.current_model = self.models[self.current_model_index][1]
 
-        if model_name or dsn_param.site_parameters('ai_model', last=1):
-            self.set_model_by_name(model_name or dsn_param.site_parameters('ai_model', last=1))
+        provider = model_name or dsn_param.task_parameter('ai_model', task)
+        if provider:
+            self.set_model_by_name(provider)
 
     def set_model_by_name(self, model_name: str):
         """Set current model by name (unknown name → first provider, with a log)."""
@@ -116,7 +119,6 @@ class AIHelper:
             message = model.client.messages.create(
                 model=model.claude_model,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
@@ -135,7 +137,12 @@ class AIHelper:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                **chat_kwargs(model_id, temperature=temperature, max_tokens=max_tokens),
+                **chat_kwargs(
+                    model_id,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=getattr(model, 'reasoning_effort', None),
+                ),
             )
             finish_reason = completion.choices[0].finish_reason
             log.info(f"generate_text: {model_name} finish_reason={finish_reason}")

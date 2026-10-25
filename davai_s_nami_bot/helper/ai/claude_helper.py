@@ -10,11 +10,11 @@ log = logging.getLogger(__name__)
 
 
 class ClaudeHelper:
-    def __init__(self, dsn_param):
+    def __init__(self, dsn_param, task=None):
         self.client = Anthropic()
         self.answer = None
         self.system_message, self.user_message = resolve_prompts(dsn_param, 'claude')
-        self.claude_model = dsn_param.site_parameters('claude_model', last=1) or "claude-sonnet-4-6"
+        self.claude_model = dsn_param.task_parameter('claude_model', task) or "claude-sonnet-4-6"
 
     def ai_balance(self):
         self.client.billing.usage()
@@ -23,7 +23,6 @@ class ClaudeHelper:
         message = self.client.messages.create(
             model=self.claude_model,
             max_tokens=2000,
-            temperature=0.5,
             system=self.system_message,
             messages=[
                 {

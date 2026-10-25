@@ -15,12 +15,12 @@ _MAX_OUTPUT_TOKENS = 4000
 
 
 class OpenAIHelper:
-    def __init__(self, dsn_param):
+    def __init__(self, dsn_param, task=None):
         self.client = OpenAI()
         self.answer = None
         self.system_message, self.user_message = resolve_prompts(dsn_param, 'openai')
         self.openai_model = (
-            dsn_param.site_parameters('openai_model', last=1) or DEFAULT_OPENAI_MODEL
+            dsn_param.task_parameter('openai_model', task) or DEFAULT_OPENAI_MODEL
         )
         # gpt-5.x knobs, optional Redis params. Copywriting needs no deep
         # reasoning, so keep the effort low (it is billed as output tokens) and

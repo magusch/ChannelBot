@@ -202,6 +202,14 @@ class DSNParameters:
         else:
             return None
 
+    def task_parameter(self, key, task=None):
+        """``<key>_<task>`` if set, else the shared ``<key>``."""
+        if task:
+            value = self.site_parameters(f'{key}_{task}', last=1)
+            if value and str(value).strip():
+                return value
+        return self.site_parameters(key, last=1)
+
     def read_param(self, site):
         revision = _current_revision(site)
         if site not in self.sites.keys() or self._is_stale(site) or self._is_outdated(

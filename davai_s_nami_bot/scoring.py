@@ -415,6 +415,11 @@ def _check_repetition(
         existing_tokens = normalize_title_tokens(existing)
         if not existing_tokens:
             continue
+        # A one-word core ("Хэллоуин") is contained in any title with that word.
+        if min(len(tokens), len(existing_tokens)) == 1:
+            if tokens == existing_tokens:
+                return True
+            continue
         containment = len(tokens & existing_tokens) / min(
             len(tokens), len(existing_tokens)
         )
