@@ -16,6 +16,7 @@ from .dependencies import (
     log_api_request,
 )
 from .schemas import BulkCreatePostRequest, SimilarEventsResponse
+from ..services.content import queue_embeddings
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -118,6 +119,7 @@ def bulk_create_post(body: BulkCreatePostRequest):
         save=body.save,
         status=body.status,
     )
+    queue_embeddings(results)
     return {"status": "success", "result": results, "count": len(results)}
 
 

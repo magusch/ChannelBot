@@ -207,6 +207,28 @@ def test_repetition_detected_for_date_suffixed_series():
     assert result.repetition_penalty == -20
 
 
+@pytest.mark.parametrize(
+    "title, existing",
+    [
+        ("Иммерсивный арт-бранч «Светские тусовки: Хэллоуин»", "🦐 Хэллоуин"),
+        ("🦐 Хэллоуин", "Иммерсивный арт-бранч «Светские тусовки: Хэллоуин»"),
+        ("Балет «Спящая красавица» с экскурсией по дворцу", "БИЛЕТ НА БАЛЕТ"),
+    ],
+)
+def test_one_word_core_does_not_match_longer_title(title, existing):
+    event = {"title": title, "price_int": 500, "main_category_id": 8}
+    result = calculate_score(event, [existing], place_id=1, scoring_config=ENABLED_CONFIG)
+    assert result.repetition_penalty == 0
+
+
+def test_one_word_core_matches_identical_core():
+    event = {"title": "🐩 Представление", "price_int": 500, "main_category_id": 7}
+    result = calculate_score(
+        event, ["🌾 Представление"], place_id=1, scoring_config=ENABLED_CONFIG
+    )
+    assert result.repetition_penalty == -20
+
+
 # --- taste component --------------------------------------------------------
 
 TASTE_CONFIG = {**ENABLED_CONFIG, "weights": {**ENABLED_CONFIG["weights"], "taste": 20}}

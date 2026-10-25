@@ -4,9 +4,10 @@ import re
 import pytz
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
+from ..datetime_utils import NIGHT_END_HOUR, last_day  # noqa: F401 (re-exported)
 from .dsn_parameters import DSNParameters
 from .markdown_v2 import escape_v2, escape_v2_url
 from ..scoring import resolve_category_id
@@ -39,16 +40,6 @@ TELEGRAM_BOT_NAME = os.environ.get("TELEGRAM_BOT_NAME", None)
 EXHIBITION_CATEGORY_ID = 11
 EXHIBITION_MIN_DAYS = 8
 
-NIGHT_END_HOUR = 7
-
-
-def last_day(date_from, date_to):
-    """Local calendar date of the event's last day, ignoring a night tail."""
-    if date_to is None:
-        return date_from.date()
-    if date_to - date_from >= timedelta(days=1):
-        return date_to.date()
-    return max(date_from, date_to - timedelta(hours=NIGHT_END_HOUR)).date()
 
 
 WEEKNAMES = {

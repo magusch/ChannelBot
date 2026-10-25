@@ -33,9 +33,15 @@ from .database.models import (
     SubCategory,
 )
 from .events import Event
+from .helper.mid_score_filter import organizer_key
 from .helper.post_helper import NIGHT_END_HOUR
 from .pydantic_models import UserCreate, UserUpdate
-from .scoring import CATEGORY_ID_TO_NAME, calculate_score, resolve_category_id
+from .scoring import (
+    CATEGORY_ID_TO_NAME,
+    calculate_score,
+    resolve_category_id,
+    title_containment,
+)
 from .settings.settings_loader import settings
 
 log = logging.getLogger(__name__)
@@ -1516,7 +1522,7 @@ def add_events_to_post(
             place_id=event_dict.get('place_id'),
             main_category_id=event_dict.get('main_category_id'),
         )
-        if dup_id:
+        if dup_id or find_run_parent(db=db, event=event_dict):
             continue
 
         place_view = _resolve_place_view(db, event_dict, place_keywords)
@@ -1838,6 +1844,95 @@ def is_same_run(dup: dict, main_category_id) -> bool:
     return main_category_id == 11 and dup.get('main_category_id') == 11
 
 
+#: Shortest event that counts as a run absorbing its day tickets.
+RUN_MIN_DAYS = 2
+RUN_FIELDS = ('title', 'url', 'ticket_url', 'place_id', 'from_date', 'to_date')
+
+
+def _as_utc(value):
+    """Aware UTC datetime; naive values are taken as UTC."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def is_inside_run(from_date, to_date, run_from, run_to) -> bool:
+    """True when a shorter event starts within a run of at least RUN_MIN_DAYS."""
+    from_date, to_date = _as_utc(from_date), _as_utc(to_date)
+    run_from, run_to = _as_utc(run_from), _as_utc(run_to)
+    if from_date is None or run_from is None or run_to is None:
+        return False
+    run_length = run_to - run_from
+    if run_length < timedelta(days=RUN_MIN_DAYS):
+        return False
+    length = (to_date or from_date) - from_date
+    return length < run_length and run_from - timedelta(days=1) <= from_date <= run_to
+
+
+@db_session
+def find_run_parent(
+    db,
+    event: dict,
+    embedding=None,
+    embedding_model: str = None,
+    exclude_id: int = None,
+    threshold: float = 0.8,
+    max_distance: float = 0.08,
+    lookup_days: int = 180,
+) -> int:
+    """Id of the same organizer's multi-day run this day ticket belongs to, else 0.
+
+    Matches by title core or, when the run's title was edited, by embedding.
+    """
+    org = organizer_key(event.get('url'), event.get('ticket_url'), event.get('place_id'))
+    from_date = _as_utc(event.get('from_date'))
+    to_date = _as_utc(event.get('to_date'))
+    if org is None or from_date is None:
+        return 0
+
+    columns = [Events2Posts.id] + [getattr(Events2Posts, f) for f in RUN_FIELDS]
+    use_embedding = embedding is not None and bool(embedding_model)
+    if use_embedding:
+        columns += [
+            Events2Posts.embedding_model,
+            Events2Posts.embedding.cosine_distance(embedding).label('distance'),
+        ]
+    if org.startswith('place:'):
+        org_filter = Events2Posts.place_id == event.get('place_id')
+    else:
+        org_filter = or_(
+            Events2Posts.url.ilike(f'%://{org}.%'),
+            Events2Posts.ticket_url.ilike(f'%://{org}.%'),
+        )
+    query = db.query(*columns).filter(
+        org_filter,
+        Events2Posts.status.in_(('Posted', 'ReadyToPost', 'OnlyApi')),
+        Events2Posts.from_date <= from_date + timedelta(days=1),
+        Events2Posts.to_date >= from_date,
+        Events2Posts.explored_date >= datetime.now(timezone.utc) - timedelta(days=lookup_days),
+    )
+    if exclude_id:
+        query = query.filter(Events2Posts.id != exclude_id)
+
+    for row in query.all():
+        if organizer_key(row.url, row.ticket_url, row.place_id) != org:
+            continue
+        if not is_inside_run(from_date, to_date, row.from_date, row.to_date):
+            continue
+        if title_containment(event.get('title'), row.title) > threshold:
+            return row.id
+        if (
+            use_embedding
+            and row.embedding_model == embedding_model
+            and row.distance is not None
+            and row.distance <= max_distance
+        ):
+            return row.id
+    return 0
+
+
 @db_session
 def find_exhibition_duplicate(
     db,
@@ -2129,15 +2224,15 @@ def dedupe_ready_queue(
       - both ReadyToPost, no overlap → earlier from_date keeps the channel slot,
         the later instance goes to 'OnlyApi'
 
+    Before that, a day ticket inside the same organizer's multi-day run
+    (find_run_parent) goes to 'Duplicate' regardless of embedding.
+
     Catches duplicates from every inflow (auto-promote, approved orgs, manual
     API adds). Run after embeddings are refreshed. dry_run=True only reports.
     """
     ready_events = (
         db.query(Events2Posts)
-        .filter(
-            Events2Posts.status == 'ReadyToPost',
-            Events2Posts.embedding.isnot(None),
-        )
+        .filter(Events2Posts.status == 'ReadyToPost')
         .order_by(Events2Posts.queue.asc().nullslast(), Events2Posts.id.asc())
         .all()
     )
@@ -2154,6 +2249,24 @@ def dedupe_ready_queue(
     decided = {}  # id → (new_status, dup_of_id, distance)
     for event in ready_events:
         if event.id in decided:
+            continue
+        parent_id = find_run_parent(
+            db=db,
+            event={f: getattr(event, f) for f in RUN_FIELDS},
+            embedding=event.embedding,
+            embedding_model=event.embedding_model,
+            exclude_id=event.id,
+            max_distance=max_distance,
+            lookup_days=lookup_days,
+        )
+        if parent_id and parent_id not in decided:
+            decided[event.id] = ('Duplicate', parent_id, None)
+            if not dry_run:
+                _enrich_event_from_duplicate(db, parent_id, orm_to_dict(event))
+                event.status = 'Duplicate'
+                event.post_date = None
+            continue
+        if event.embedding is None:
             continue
         dup = find_embedding_duplicate(
             db=db,
@@ -2208,7 +2321,7 @@ def dedupe_ready_queue(
                 'id': event_id,
                 'new_status': new_status,
                 'duplicate_of': keeper_id,
-                'distance': round(distance, 4),
+                'distance': round(distance, 4) if distance is not None else None,
             }
             for event_id, (new_status, keeper_id, distance) in decided.items()
         ],
@@ -2240,18 +2353,29 @@ def mark_events_as_digested(db, event_ids: list, post_url: str = None) -> dict:
     return {"moved": moved, "skipped": len(rows) - moved}
 
 
+def _recent_titles_keyed(db, days: int = 14) -> List[tuple]:
+    """Return (table, id, title) from both tables for the last N days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = []
+    for model in (Events2Posts, EventsNotApproved):
+        rows += [
+            (model.__tablename__, row_id, title)
+            for row_id, title in db.query(model.id, model.title)
+            .filter(model.explored_date >= cutoff)
+            .all()
+            if title
+        ]
+    return rows
+
+
+def _titles_except(rows: List[tuple], table: str, event_id: int) -> List[str]:
+    """Titles for the repetition check without the event's own row."""
+    return [title for t, i, title in rows if (t, i) != (table, event_id)]
+
+
 def get_recent_event_titles(db, days: int = 14) -> List[str]:
     """Return titles from both tables for the last N days (repetition check)."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    titles_approved = (
-        db.query(Events2Posts.title).filter(Events2Posts.explored_date >= cutoff).all()
-    )
-    titles_not_approved = (
-        db.query(EventsNotApproved.title)
-        .filter(EventsNotApproved.explored_date >= cutoff)
-        .all()
-    )
-    return [t[0] for t in titles_approved + titles_not_approved if t[0]]
+    return [title for _, _, title in _recent_titles_keyed(db, days)]
 
 
 @db_session
@@ -2507,7 +2631,9 @@ def recalculate_event_score(
 
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(db, days=window)
+    recent_titles = _titles_except(
+        _recent_titles_keyed(db, days=window), table, event_id
+    )
     place_counts = get_place_post_counts(db)
     place_rep = get_place_reputation(
         db, auto_reject_threshold=_auto_reject_threshold(scoring_config)
@@ -2575,7 +2701,7 @@ def recalculate_scores_bulk(
     place_keywords = _load_place_keywords(db)
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
-    recent_titles = get_recent_event_titles(db, days=window)
+    recent_rows = _recent_titles_keyed(db, days=window)
     place_counts = get_place_post_counts(db)
     place_rep = get_place_reputation(
         db, auto_reject_threshold=_auto_reject_threshold(scoring_config)
@@ -2604,7 +2730,7 @@ def recalculate_scores_bulk(
             }
             breakdown = calculate_score(
                 event_data=event_dict,
-                existing_titles=recent_titles,
+                existing_titles=_titles_except(recent_rows, table, event.id),
                 place_id=event.place_id,
                 scoring_config=scoring_config,
                 place_post_counts=place_counts,
@@ -3936,7 +4062,14 @@ def _promote_not_approved(db, candidates, status: str) -> List[int]:
             place_id=event_data.get('place_id'),
             main_category_id=event_data.get('main_category_id'),
         )
-        if dup_id:
+        run_parent_id = find_run_parent(
+            db=db,
+            event=event_data,
+            embedding=event.embedding,
+            embedding_model=event.embedding_model,
+            max_distance=emb_max_distance,
+        )
+        if dup_id or run_parent_id:
             event.status = 'duplicate'
             existing_event_ids.add(event.event_id)
             continue

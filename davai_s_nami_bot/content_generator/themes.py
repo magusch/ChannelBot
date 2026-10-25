@@ -9,6 +9,7 @@ import math
 import re
 from datetime import datetime
 
+from ..datetime_utils import last_day
 from ..scoring import normalize_title_tokens, title_containment
 
 # Telegram limits: photo caption vs plain text.
@@ -448,12 +449,13 @@ def fmt_compact_date(from_date, to_date=None):
 
     start = f"{_WEEKDAYS_SHORT[from_date.weekday()]} {from_date.day} {_MONTHS_SHORT[from_date.month]}"
 
-    if isinstance(to_date, datetime) and to_date.date() > from_date.date():
-        if to_date.month == from_date.month:
-            return f"{from_date.day}–{to_date.day} {_MONTHS_SHORT[from_date.month]}"
+    end = last_day(from_date, to_date) if isinstance(to_date, datetime) else None
+    if end and end > from_date.date():
+        if end.month == from_date.month:
+            return f"{from_date.day}–{end.day} {_MONTHS_SHORT[from_date.month]}"
         return (
             f"{from_date.day} {_MONTHS_SHORT[from_date.month]} – "
-            f"{to_date.day} {_MONTHS_SHORT[to_date.month]}"
+            f"{end.day} {_MONTHS_SHORT[end.month]}"
         )
 
     if from_date.hour or from_date.minute:

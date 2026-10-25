@@ -198,6 +198,12 @@ def runs_on_weekday(filter_set, weekday):
     return days is None or weekday in days
 
 
+def runs_at_hour(filter_set, hour):
+    """True if the slot hour is not before the theme's ``min_hour``."""
+    min_hour = _theme_params(filter_set).get("min_hour")
+    return min_hour is None or hour is None or hour >= int(min_hour)
+
+
 def slot_after_last_event(
     day, last_event_at, offset_hours, fallback, latest, tzinfo
 ):
@@ -421,7 +427,7 @@ SEASON_REPEAT_AFTER = 7
 
 
 def pick_theme(
-    filter_sets, recent_filter_ids, weekday=None, exclude_ids=(), day=None
+    filter_sets, recent_filter_ids, weekday=None, exclude_ids=(), day=None, hour=None
 ):
     """Least-recently-posted active theme."""
     if not filter_sets:
@@ -432,6 +438,7 @@ def pick_theme(
     eligible = [
         fs for fs in filter_sets
         if (weekday is None or runs_on_weekday(fs, weekday))
+        and runs_at_hour(fs, hour)
         and (day is None or in_season(fs, day))
         and (day is None or has_window(fs, day))
     ]
@@ -1140,7 +1147,8 @@ def render_rich_post(
 
 
 def build_theme_post(
-    filter_set_id=None, dry_run=False, target_date=None, exclude_filter_ids=()
+    filter_set_id=None, dry_run=False, target_date=None, exclude_filter_ids=(),
+    slot_hour=None,
 ):
     """Build (and normally persist) one themed digest post."""
     target_date = target_date or datetime.now(MSK_TZ).date()
@@ -1157,6 +1165,7 @@ def build_theme_post(
             weekday=target_date.weekday(),
             exclude_ids=exclude_filter_ids,
             day=target_date,
+            hour=slot_hour,
         )
         if filter_set is None:
             # Every active theme is restricted to other weekdays or out of season.
