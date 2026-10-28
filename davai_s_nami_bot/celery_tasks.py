@@ -541,8 +541,16 @@ def schedule_generated_posting_tasks():
             else:
                 current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
                 current_scheduled_time = pytz.UTC.localize(current_scheduled_time)
+                current_schedule_id = current_scheduled_info.get(b'schedule_id', b'').decode('utf-8')
                 if abs(current_scheduled_time - schedule['eta_utc']) > timedelta(minutes=5):
                     log.info(f"Time changed for {platform}, rescheduling")
+                    need_schedule = True
+                elif current_schedule_id != str(schedule['schedule_id']):
+                    # Swapped slots: the queued task would find its own row moved and skip.
+                    log.info(
+                        f"Slot {platform} now holds schedule {schedule['schedule_id']} "
+                        f"(queued: {current_schedule_id}), rescheduling"
+                    )
                     need_schedule = True
                 else:
                     log.info(f"Task {current_task_id} ({platform}) still alive, skipping")

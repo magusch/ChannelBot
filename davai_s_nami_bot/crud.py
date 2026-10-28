@@ -34,6 +34,7 @@ from .database.models import (
 )
 from .events import Event
 from .helper.mid_score_filter import organizer_key
+from .helper.place_match import PlaceIndex
 from .helper.post_helper import NIGHT_END_HOUR
 from .pydantic_models import UserCreate, UserUpdate
 from .scoring import (
@@ -1459,7 +1460,7 @@ def add_events_to_post(
     queue_value_gen = func()
 
     # Load keywords once for the whole batch — avoids one DB query per event.
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
     place_category_overrides = _load_place_category_overrides(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
@@ -1486,10 +1487,9 @@ def add_events_to_post(
         )
 
         if not event_dict.get('place_id'):
-            search = " ".join(
-                filter(None, [event_dict.get('address'), event_dict.get('title')])
+            event_dict['place_id'] = _match_place(
+                place_index, event_dict.get('address'), event_dict.get('title')
             )
-            event_dict['place_id'] = _match_place(search, place_keywords)
 
         _apply_place_category_override(event_dict, place_category_overrides)
 
@@ -1525,7 +1525,7 @@ def add_events_to_post(
         if dup_id or find_run_parent(db=db, event=event_dict):
             continue
 
-        place_view = _resolve_place_view(db, event_dict, place_keywords)
+        place_view = _resolve_place_view(db, event_dict, place_index)
         if place_view:
             event_dict['place_id'] = place_view.id
         event_dict['prepared_text'] = event_dict.get('post')
@@ -1581,7 +1581,7 @@ def add_events(
     if not model:
         raise ValueError(f"Unknown table: {table}")
 
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
     place_category_overrides = _load_place_category_overrides(db)
     scoring_cfg = getattr(settings, "scoring", {})
     window = scoring_cfg.get("repetition_window_days", 14)
@@ -1608,10 +1608,9 @@ def add_events(
 
         # Place matching for EventsNotApproved
         if not event_dict.get('place_id'):
-            search = " ".join(
-                filter(None, [event_dict.get('address'), event_dict.get('title')])
+            event_dict['place_id'] = _match_place(
+                place_index, event_dict.get('address'), event_dict.get('title')
             )
-            event_dict['place_id'] = _match_place(search, place_keywords)
 
         _apply_place_category_override(event_dict, place_category_overrides)
 
@@ -2698,7 +2697,7 @@ def recalculate_scores_bulk(
     if not events:
         return {"updated": 0, "skipped": 0}
 
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
     scoring_config = _get_scoring_config()
     window = scoring_config.get("repetition_window_days", 14)
     recent_rows = _recent_titles_keyed(db, days=window)
@@ -2717,13 +2716,11 @@ def recalculate_scores_bulk(
         try:
             # Resolve place_id if missing
             if not event.place_id:
-                search_parts = [
+                event.place_id = _match_place(
+                    place_index,
                     getattr(event, "address", None),
                     getattr(event, "title", None),
-                ]
-                search = " ".join(filter(None, search_parts))
-                if search:
-                    event.place_id = _match_place(search, place_keywords)
+                )
 
             event_dict = {
                 col.name: getattr(event, col.name) for col in event.__table__.columns
@@ -2847,17 +2844,19 @@ def _load_place_keywords(db) -> list[tuple[str, int]]:
     return [(kw.lower(), place_id) for kw, place_id in rows]
 
 
-def _match_place(search_text: str, keywords: list[tuple[str, int]]):
-    """Return place_id for the first (longest) keyword found in search_text.
+def _load_place_index(db) -> PlaceIndex:
+    """Places of the current city with their keywords, ready for matching."""
+    places = db.query(
+        Place.id, Place.place_name, Place.place_address, Place.main_place_id
+    ).all()
+    return PlaceIndex.build(places, _load_place_keywords(db))
 
-    Pure Python substring check — O(n) over pre-sorted keyword list.
-    keywords must be sorted longest-first (as returned by _load_place_keywords).
-    """
-    text = search_text.lower()
-    for kw, place_id in keywords:
-        if kw in text:
-            return place_id
-    return None
+
+def _match_place(place_index: PlaceIndex, address=None, title=None):
+    """place_id by keyword, then venue name, then building; None if unsure."""
+    if not (address or title):
+        return None
+    return place_index.match(address, title)
 
 
 def _load_place_category_overrides(db) -> dict:
@@ -2904,13 +2903,9 @@ def find_place_by_address(db, address: str, title: str = None):
     """Find place_id for a single event by matching PlaceKeywords.
 
     Use this for one-off lookups (e.g. create_event_to_post).
-    For batch inserts use _load_place_keywords() + _match_place() directly.
+    For batch inserts use _load_place_index() + _match_place() directly.
     """
-    search_parts = [p for p in (address, title) if p]
-    if not search_parts:
-        return None
-    keywords = _load_place_keywords(db)
-    return _match_place(" ".join(search_parts), keywords)
+    return _match_place(_load_place_index(db), address, title)
 
 
 _CHILD_PLACE_HEAD_CHARS = 200
@@ -2964,7 +2959,7 @@ def _refine_to_child_place(db, place, event_data: dict):
     return _match_child_place(head, children) or place
 
 
-def _resolve_place(db, event_data: dict, place_keywords=None):
+def _resolve_place(db, event_data: dict, place_index=None):
     """Resolve a Place for an event: first by place_id, then by address.
 
     A hub is narrowed down to its child room when the text names one.
@@ -2977,15 +2972,13 @@ def _resolve_place(db, event_data: dict, place_keywords=None):
         if place:
             return _refine_to_child_place(db, place, event_data)
 
-    search_text = ' '.join(
-        filter(None, [event_data.get('address'), event_data.get('title')])
-    )
-    if not search_text:
+    address, title = event_data.get('address'), event_data.get('title')
+    if not (address or title):
         return None
 
-    if place_keywords is None:
-        place_keywords = _load_place_keywords(db)
-    place_id = _match_place(search_text, place_keywords)
+    if place_index is None:
+        place_index = _load_place_index(db)
+    place_id = _match_place(place_index, address, title)
     if place_id:
         return _refine_to_child_place(db, db.query(Place).get(place_id), event_data)
     return None
@@ -3007,9 +3000,9 @@ def _place_to_view(place):
     )
 
 
-def _resolve_place_view(db, event_data: dict, place_keywords=None):
+def _resolve_place_view(db, event_data: dict, place_index=None):
     """Resolve a Place and return a PlaceView (or None)."""
-    place = _resolve_place(db, event_data, place_keywords)
+    place = _resolve_place(db, event_data, place_index)
     return _place_to_view(place)
 
 
@@ -3427,11 +3420,9 @@ def _enrich_not_approved_event(db, event, enriched_data: dict) -> None:
 
     # Resolve place_id from enriched address
     if enriched_data.get("address") and not event.place_id:
-        search = " ".join(
-            filter(None, [enriched_data.get("address"), enriched_data.get("title")])
+        event.place_id = _match_place(
+            _load_place_index(db), enriched_data.get("address"), enriched_data.get("title")
         )
-        keywords = _load_place_keywords(db)
-        event.place_id = _match_place(search, keywords)
 
 
 @db_session
@@ -3601,7 +3592,7 @@ def move_approved_to_posts(db, status: str = 'ReadyToPost') -> List[int]:
         .first()
     )
     queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
     moved_ids = []
 
     for event in candidates:
@@ -3619,7 +3610,7 @@ def move_approved_to_posts(db, status: str = 'ReadyToPost') -> List[int]:
         queue_value += 2
 
         # Resolve place
-        place_view = _resolve_place_view(db, event_data, place_keywords)
+        place_view = _resolve_place_view(db, event_data, place_index)
         if place_view:
             event_data['place_id'] = place_view.id
 
@@ -3726,7 +3717,7 @@ def remake_event_post(
 def _make_post_pipeline(
     db,
     event_data: dict,
-    place_keywords=None,
+    place_index=None,
     write_subcategory: bool = False,
 ) -> dict:
     """Shared pipeline used by single and bulk post-creation paths.
@@ -3737,7 +3728,7 @@ def _make_post_pipeline(
     """
     from .helper.post_helper import PostHelper
 
-    place_view = _resolve_place_view(db, event_data, place_keywords)
+    place_view = _resolve_place_view(db, event_data, place_index)
     if place_view:
         event_data['place_id'] = place_view.id
 
@@ -3854,7 +3845,7 @@ def _bulk_make_and_save_posts_for_city(
         List of dicts, one per input event: {post, place_id, main_category_id,
         price_int, event_id (or None), saved, error (or None)}.
     """
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
 
     queue_value = None
     if save:
@@ -3878,7 +3869,7 @@ def _bulk_make_and_save_posts_for_city(
             pipeline = _make_post_pipeline(
                 db,
                 event_data,
-                place_keywords=place_keywords,
+                place_index=place_index,
                 write_subcategory=save,
             )
 
@@ -4020,7 +4011,7 @@ def _promote_not_approved(db, candidates, status: str) -> List[int]:
         .first()
     )
     queue_value = (last_q[0] if last_q and last_q[0] is not None else 0) + 2
-    place_keywords = _load_place_keywords(db)
+    place_index = _load_place_index(db)
     promoted_ids = []
 
     for event in candidates:
@@ -4036,7 +4027,7 @@ def _promote_not_approved(db, candidates, status: str) -> List[int]:
         event_data['queue'] = queue_value
         queue_value += 2
 
-        place_view = _resolve_place_view(db, event_data, place_keywords)
+        place_view = _resolve_place_view(db, event_data, place_index)
         if place_view:
             event_data['place_id'] = place_view.id
 
