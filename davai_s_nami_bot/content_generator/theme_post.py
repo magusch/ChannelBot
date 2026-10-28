@@ -1046,10 +1046,11 @@ def _theme_date_filter(params, date_from, date_to):
     return alias or themes.webapp_date_filter(date_from, date_to)
 
 
-def theme_webapp_url(params, date_from, date_to):
-    """Web-app link reproducing the theme's own filters (dates, categories, price)."""
+def theme_webapp_url(params, date_from, date_to, selection_id=None):
+    """Web-app link: the digest's selection, then the theme's own filters for the list."""
     return themes.webapp_link(
         _bot_url(),
+        themes.webapp_selection_filter(selection_id),
         _theme_date_filter(params, date_from, date_to),
         _theme_category_filter(params),
         themes.webapp_price_filter(
@@ -1247,7 +1248,7 @@ def build_theme_post(
         footer = themes.build_footer(footer_url, rest)
         footer_label = themes.footer_label(rest) or footer_label
     else:
-        footer_url = theme_webapp_url(params, date_from, date_to)
+        footer_url = theme_webapp_url(params, date_from, date_to, selection_id)
         footer = themes.build_footer(footer_url, label=footer_label)
 
     # A button costs no characters: Telegram counts the message text only.

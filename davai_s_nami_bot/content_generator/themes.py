@@ -1112,6 +1112,11 @@ def webapp_city_filter(city, default_city):
     return f"city-{city}"
 
 
+def webapp_selection_filter(selection_id):
+    """Selection section for startapp: ``sel-412`` (the web app shows that digest's pool)."""
+    return f"sel-{int(selection_id)}" if selection_id else ""
+
+
 def webapp_startapp(*sections, city="", max_len=TELEGRAM_STARTAPP_MAX):
     """``events[__city-…]__date-…__cat-…`` payload, trimmed to Telegram's length cap.
 
