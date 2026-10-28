@@ -207,11 +207,17 @@ class Settings:
     vk_posting_enabled = _Feature('vk_posting_enabled', False)
     prepare_events_limit = _Feature('prepare_events_limit', 0)
     auto_route_to_api = _Feature('auto_route_to_api', {})
+    auto_promote = _Feature('auto_promote', {})
     route_unschedulable = _Feature('route_unschedulable', {})
     auto_moderate_sample_size = _Feature('auto_moderate_sample_size', 0)
     route_mid_score_to_api = _Feature('route_mid_score_to_api', {})
     query_analyzer = _Feature('query_analyzer', {})
     metro_adjacency = _Feature('metro_adjacency', {})
+
+    def auto_promote_kwargs(self) -> dict:
+        """Beat kwargs of `auto_promote_by_score` for the current city."""
+        cfg = self.auto_promote or {}
+        return {"min_score": int(cfg.get("min_score", 70)), "limit": int(cfg.get("limit", 20))}
 
     @property
     def city(self):

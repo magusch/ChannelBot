@@ -72,7 +72,7 @@ def _daily_task_schedule():
     schedule = [
         ('davai_s_nami_bot.celery_tasks.full_update', 4, 40, None, {}),
         ('davai_s_nami_bot.celery_tasks.auto_promote_by_score',
-         5, 0, None, {'min_score': 70, 'limit': 20}),
+         5, 0, None, settings.auto_promote_kwargs()),
         ('davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
          5, 10, {1, 3, 5}, {'min_score': 40, 'max_score': 69, 'sample_size': 10}),
         ('davai_s_nami_bot.celery_tasks.embed_unembedded_events',

@@ -99,7 +99,7 @@ def _city_beat_schedules():
     beat_schedules['auto-promote-by-score'] = {
         'task': 'davai_s_nami_bot.celery_tasks.auto_promote_by_score',
         'schedule': crontab(minute=0, hour=5),
-        'kwargs': {'min_score': 70, 'limit': 20},
+        'kwargs': settings.auto_promote_kwargs(),
     }
 
     if settings.route_mid_score_to_api.get('enabled'):
