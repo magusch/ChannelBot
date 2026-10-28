@@ -95,6 +95,7 @@ class AIHelper:
         return self.current_model.parse_ai_answer()
     
     def new_event_data(self, event):
+        self.current_model.answer = None
         ai_event = self.current_model.new_event_data(event)
         issues = lint_prepared_text(ai_event.get('prepared_text'))
         if issues:

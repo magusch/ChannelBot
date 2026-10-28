@@ -551,6 +551,24 @@ class TestProviderSelection:
         helper.set_model_by_name(' OpenAI\n')
         assert helper.current_model == 'O'
 
+    def test_one_helper_prepares_each_event_separately(self, mock_dsn):
+        from davai_s_nami_bot.helper.ai.open_ai_helper import OpenAIHelper
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        provider = OpenAIHelper(mock_dsn)
+
+        def answer(event):
+            provider.answer = json.dumps({'title': event['title'], 'text': 'x'})
+
+        provider.refactor_post = answer
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('openai', provider)]
+        helper.current_model_index = 0
+        helper.current_model = provider
+
+        titles = [helper.new_event_data({'title': t})['title'] for t in ('Ворона', 'Лихо Фест')]
+        assert titles == ['Ворона', 'Лихо Фест']
+
 
 class TestThinDescriptionRules:
     def test_rules_added_for_empty_description(self):

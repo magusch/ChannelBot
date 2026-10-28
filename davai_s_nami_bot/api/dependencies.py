@@ -13,6 +13,7 @@ from ..database.database_orm import get_db_session
 from typing import Annotated
 
 from ..celery_app import celery_app, redis_client
+from ..city_context import current_city, is_city_set
 from ..core.security import oauth2_scheme, decode_access_token
 from .. import crud
 
@@ -34,8 +35,6 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
 def get_cache_key(params: dict):
     # The city is part of the key: the same filters give different events per city.
-    from ..city_context import current_city
-
     key = json.dumps({"__city": current_city(), **params}, sort_keys=True)
     return hashlib.md5(key.encode()).hexdigest()
 
@@ -54,6 +53,9 @@ async def log_api_request(request: Request, data=None):
         request: FastAPI request object
         data: Request data (can be None for empty requests)
     """
+    if is_city_set() and (data is None or isinstance(data, dict)):
+        # The city may come in the body, which the parsed model drops: log it.
+        data = {**(data or {}), "city": current_city()}
     celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.log_api_request',
         args=[{
