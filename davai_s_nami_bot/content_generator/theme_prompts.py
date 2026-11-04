@@ -20,6 +20,8 @@ event descriptions, the other writes the digest around them.
 import json
 import logging
 
+from ..helper.ai.prompts import fill_city
+
 log = logging.getLogger(__name__)
 
 SYSTEM_PARAM = 'theme_post_system_message'
@@ -103,7 +105,7 @@ def resolve_prompts(dsn_param):
     if extra:
         editorial = f"{editorial}\n\nДополнительные правила:\n{extra}"
 
-    return system, editorial
+    return fill_city(system), fill_city(editorial)
 
 
 def _period_block(period):
@@ -140,32 +142,68 @@ def _context(period, recent_intros):
     return _period_block(period) + _recent_intros_block(recent_intros) + "\n" + FACTS_RULE
 
 
-def intro_rules(theme_title, intro_max):
-    """What the intro is for and how it names events. Always from code."""
+NAMING_RULE = """
+Как называть мероприятие в тексте — так, чтобы предложение звучало по-русски:
+— Если название — имя человека или группы («Глеб Капелюх», «Саша Борсук»),
+  пиши имя без кавычек и склоняй: «сольник Глеба Капелюха», «у Саши Борсук».
+— Кавычки — только для названия программы, спектакля, фильма, лекции, и рядом
+  с ним слово, что это: «на спектакле «Аплодисменты»», «лекция «Знаки отсутствия»».
+— Никогда не «в «Название»» / «на «Название»» без такого слова.
+— Подзаголовок после тире или двоеточия не переписывай: «Глеб Капелюх — лучшие
+  шутки и фокусы» → «Глеб Капелюх».
+"""
 
-    return f"""intro — 2–3 предложения, до {intro_max} символов: куда сходить.
-Перед вступлением код уже пишет строку «N мероприятий: столько-то концертов…» —
-не повторяй её и не описывай подборку в целом.
-— Назови 2–3 мероприятия из списка, каждое его коротким названием в «ёлочках» —
-  так, как оно стоит в списке: «Знаки отсутствия», а не «лекция о смерти в кино».
-— К каждому — одна конкретная деталь из его описания: кто ведёт, что покажут,
-  чем отличается от остальных. Деталь не может пересказывать название
-  («фестиваль собирает фестивальную программу»). Выбирай мероприятия, у которых
-  есть что сказать: с "thin": true — только если других нет.
-— Каждое предложение — про конкретное мероприятие. Не заканчивай общей фразой
-  о подборке («тут есть и музыка, и текст», «тут не только показы»).
+COMMENT_RULES = """
+В комментарии не пересказывай служебные оговорки площадки (согласие на съёмку,
+возрастной ценз, правила возврата и входа) и не заканчивай фразой, которая лишь
+повторяет сказанное («присмотрел бы ради такого сочетания»): второе предложение
+либо добавляет факт, либо его нет."""
+
+_INTRO_STYLE = """— Без «я бы сходил», «присмотрел», «меня зацепило», «советую» — ниже и так
+  стоит «Советую сходить».
+— Не строй вступление по схеме ««А» — деталь. «Б» — деталь.»: это читается
+  как ещё один список.
 — Никаких метафор и обобщений («формы одного хаоса», «про следы и утраты»),
   никакого «начать с … а потом …».
 — Не используй слова из заголовка «{theme_title}» и однокоренные с ними."""
 
 
-def _also_block(also):
-    """Titles that are in the post but not described — context for the intro."""
-    titles = [str(e.get("title") or "").strip() for e in also or []]
-    titles = [t for t in titles if t]
-    if not titles:
+def intro_rules(theme_title, intro_max, described=False, has_also=True):
+    """What the intro is for and how it names events. Always from code."""
+    style = _INTRO_STYLE.format(theme_title=theme_title)
+    if described and not has_also:
+        return 'intro — пустая строка "": мероприятия описаны ниже, вступление не нужно.'
+    if described:
+        return f"""intro — 1–2 предложения, до {intro_max} символов.
+Мероприятия из списка ниже описаны отдельными блоками — во вступлении их не
+называй и не пересказывай. Вступление — про то, что в пост блоком не вошло:
+назови 1–2 мероприятия из «тоже есть в подборке», с одной конкретной деталью из
+их описания (кто, что будет, чем необычно). Это повод долистать до конца.
+{style}"""
+    return f"""intro — 2–3 предложения, до {intro_max} символов: куда сходить.
+Не описывай подборку в целом.
+— Назови 2–3 мероприятия из списка так, чтобы читатель нашёл их ниже, — по
+  правилам выше; не «лекция о смерти в кино» вместо «Знаки отсутствия».
+— К каждому — одна конкретная деталь из его описания: кто ведёт, что покажут,
+  чем отличается от остальных. Деталь не может пересказывать название
+  («фестиваль собирает фестивальную программу»). Выбирай мероприятия, у которых
+  есть что сказать: с "thin": true — только если других нет.
+— Не заканчивай общей фразой о подборке («тут есть и музыка, и текст»).
+{style}"""
+
+
+def _also_block(also, with_details=False):
+    """Events that are in the post but not described — context for the intro."""
+    also = [e for e in also or [] if str(e.get("title") or "").strip()]
+    if not also:
         return ""
-    listed = "\n".join(f"- {t}" for t in titles)
+    if with_details:
+        listed = json.dumps(also, ensure_ascii=False, default=str)
+        return (
+            "\nТоже есть в подборке (одной строкой в конце, комментарии к ним не "
+            f"нужны) — из них бери мероприятия для вступления:\n{listed}"
+        )
+    listed = "\n".join(f"- {str(e['title']).strip()}" for e in also)
     return (
         "\nЭто тоже есть в подборке, но комментировать их не надо — используй "
         f"только чтобы понять контекст подборки:\n{listed}"
@@ -174,7 +212,7 @@ def _also_block(also):
 
 def comments_contract(
     theme_title, payload, comment_max, intro_max=260, also=(), period="",
-    recent_intros=(),
+    recent_intros=(), described=False,
 ):
     """Response contract for the list layouts. Always from code."""
     return f"""
@@ -185,13 +223,15 @@ def comments_contract(
 Верни СТРОГО JSON без markdown-обёртки, вида:
 {{"intro": "...", "comments": [{{"id": <id>, "text": "..."}}]}}
 
-{intro_rules(theme_title, intro_max)}
+{NAMING_RULE}
+{intro_rules(theme_title, intro_max, described=described, has_also=bool(also))}
 comments — по одному на каждое мероприятие из списка, с тем же id.
 text — до {comment_max} символов.
+{COMMENT_RULES}
 
 Мероприятия (JSON):
 {json.dumps(payload, ensure_ascii=False, default=str)}
-{_also_block(also)}"""
+{_also_block(also, with_details=described)}"""
 
 
 def prose_contract(
@@ -206,7 +246,8 @@ def prose_contract(
 
 Верни СТРОГО JSON: {{"intro": "...", "paragraphs": ["...", "..."]}}
 
-{intro_rules(theme_title, intro_max)}
+{NAMING_RULE}
+{intro_rules(theme_title, intro_max, described=True, has_also=bool(also))}
 paragraphs — 2–3 абзаца сплошного текста, каждый объединяет 2–3 мероприятия по
 смыслу: одна тема, один день, один формат, «на выбор». Не по одному мероприятию
 на абзац, не список.
@@ -225,7 +266,7 @@ paragraphs — 2–3 абзаца сплошного текста, каждый 
 
 Мероприятия (JSON):
 {json.dumps(payload, ensure_ascii=False, default=str)}
-{_also_block(also)}"""
+{_also_block(also, with_details=True)}"""
 
 
 def intro_contract(theme_title, payload, intro_max=260, also=(), period="", recent_intros=()):
@@ -239,4 +280,5 @@ def intro_contract(theme_title, payload, intro_max=260, also=(), period="", rece
 {json.dumps(payload, ensure_ascii=False, default=str)}
 {_also_block(also)}
 Верни СТРОГО JSON: {{"intro": "..."}} — только вступление.
+{NAMING_RULE}
 {intro_rules(theme_title, intro_max)}"""

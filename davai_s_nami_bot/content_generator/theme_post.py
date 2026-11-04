@@ -611,8 +611,23 @@ def _prepare_named_events(shown, tail, params):
             for key in _PREP_FIELDS:
                 if event["id"] in fresh and key in fresh[event["id"]]:
                     event[key] = fresh[event["id"]][key]
-    keep = lambda events: [e for e in events if e["id"] not in rejected]
-    return keep(shown), keep(tail)
+    wanted = {int(c) for c in params.get("category_ids") or []}
+    unwanted = {int(c) for c in params.get("exclude_category_ids") or []}
+
+    def fits(event):
+        if event["id"] in rejected:
+            return False
+        if event["id"] not in prepared:
+            return True
+        category = event.get("main_category_id")
+        if category is None:
+            return True
+        return not (wanted and category not in wanted) and category not in unwanted
+
+    dropped = [e["id"] for e in named if e["id"] in prepared and not fits(e)]
+    if dropped:
+        log.info(f"Digest prep: category no longer fits the theme, dropped {dropped}")
+    return [e for e in shown if fits(e)], [e for e in tail if fits(e)]
 
 
 def _repeats_last(pool, params):
@@ -875,7 +890,7 @@ def _intro_max(params):
 def _compose_intro(ai_intro, params, events):
     """Code-written lead line + the AI's "where to go" sentences."""
     events = list(events)
-    if ai_intro and not themes.mentioned_events(ai_intro, events):
+    if ai_intro and not (events and themes.mentioned_events(ai_intro, events)):
         log.warning(f"Theme post: intro names no event from the post, dropped: {ai_intro!r}")
         ai_intro = ""
     # A free-only theme says "бесплатно" in its title already.
@@ -886,7 +901,9 @@ def _compose_intro(ai_intro, params, events):
     return " ".join(p for p in (lead, ai_intro) if p)
 
 
-def generate_comments(theme_title, params, events, comment_max, also=(), context=None):
+def generate_comments(
+    theme_title, params, events, comment_max, also=(), context=None, described=True,
+):
     """``(intro, {event_id: comment})`` from the AI — empty on any failure."""
     if not events:
         return "", {}
@@ -896,14 +913,17 @@ def generate_comments(theme_title, params, events, comment_max, also=(), context
         editorial
         + theme_prompts.comments_contract(
             theme_title, _event_payload(events), comment_max,
-            intro_max=_intro_max(params), also=also, **(context or {}),
+            intro_max=_intro_max(params),
+            also=_event_payload(also) if described else also,
+            described=described, **(context or {}),
         ),
         system,
     )
 
     data = _parse_ai_json(raw)
     intro = _compose_intro(
-        _clean_intro(data.get("intro"), _intro_max(params)), params, [*events, *also]
+        _clean_intro(data.get("intro"), _intro_max(params)), params,
+        also if described else [*events, *also],
     )
 
     comments = {}
@@ -930,14 +950,14 @@ def generate_prose(
         editorial
         + theme_prompts.prose_contract(
             theme_title, _event_payload(events), prose_max, paragraph_max,
-            intro_max=_intro_max(params), also=also, **(context or {}),
+            intro_max=_intro_max(params), also=_event_payload(also), **(context or {}),
         ),
         system,
     )
 
     data = _parse_ai_json(raw)
     intro = _compose_intro(
-        _clean_intro(data.get("intro"), _intro_max(params)), params, [*events, *also]
+        _clean_intro(data.get("intro"), _intro_max(params)), params, also
     )
     paragraphs = [
         str(p).strip() for p in (data.get("paragraphs") or []) if str(p).strip()
@@ -1111,6 +1131,7 @@ def render_rich_post(
             hint_chars = int(params.get("hint_chars") or 70)
             intro, hints = generate_comments(
                 title, params, shown, hint_chars, also=tail_events, context=context,
+                described=False,
             )
             # A hint is one thought under a title; the model wrote two sentences.
             hints = {k: themes.first_sentence(v, hint_chars + 30) for k, v in hints.items()}

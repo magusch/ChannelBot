@@ -62,6 +62,32 @@ def _city_loc():
         return 'Санкт-Петербурге'
 
 
+_CITY_DEFAULTS = {
+    "{city}": "Санкт-Петербург",
+    "{city_gen}": "Санкт-Петербурга",
+    "{city_loc}": "Санкт-Петербурге",
+}
+
+
+def fill_city(text):
+    """Replace ``{city}``/``{city_gen}``/``{city_loc}`` with the current city's name."""
+    if not text or "{city" not in text:
+        return text
+    try:
+        from ...settings.settings_loader import settings
+
+        names = {
+            "{city}": getattr(settings, "city_name", None),
+            "{city_gen}": getattr(settings, "city_name_gen", None),
+            "{city_loc}": getattr(settings, "city_name_loc", None),
+        }
+    except Exception:
+        names = {}
+    for token, default in _CITY_DEFAULTS.items():
+        text = text.replace(token, names.get(token) or default)
+    return text
+
+
 def default_system_message():
     return (
         f"Ты редактор-копирайтер для телеграм-канала о мероприятиях в {_city_loc()}. "
@@ -108,7 +134,7 @@ def resolve_prompts(dsn_param, provider):
     if extra:
         editorial = f"{editorial}\n\nДополнительные правила:\n{extra}"
 
-    return system, editorial
+    return fill_city(system), fill_city(editorial)
 
 
 def format_event_info(event):

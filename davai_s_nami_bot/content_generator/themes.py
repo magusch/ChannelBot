@@ -388,7 +388,7 @@ def event_names(event):
     names = set()
     for quoted in _GUILLEMET_NAME_RE.findall(title):
         names.add(quoted)
-        names.add(re.split(r"[:.!?]", quoted)[0])
+        names.add(re.split(r"[:.!?]| — ", quoted)[0])
     if title:
         names.add(title)
         words = title.split(maxsplit=1)
@@ -397,12 +397,25 @@ def event_names(event):
     return {n.strip().lower() for n in names if len(n.strip()) >= 4}
 
 
+_WORD_RE = re.compile(r"\w+")
+
+
+def _name_declined_in(name, words):
+    """A short name found in ``words`` with Russian case endings («Глеба Капелюха»)."""
+    tokens = _WORD_RE.findall(name)
+    if not tokens or len(tokens) > 3 or any(len(t) < 4 for t in tokens):
+        return False
+    return all(any(w.startswith(t[: len(t) - 1]) for w in words) for t in tokens)
+
+
 def mentioned_events(text, events):
     """Events from ``events`` whose name appears in ``text`` (case-insensitive)."""
     haystack = (text or "").lower().replace("ё", "е")
+    words = _WORD_RE.findall(haystack)
     found = []
     for event in events:
-        if any(name.replace("ё", "е") in haystack for name in event_names(event)):
+        names = [n.replace("ё", "е") for n in event_names(event)]
+        if any(n in haystack or _name_declined_in(n, words) for n in names):
             found.append(event)
     return found
 
