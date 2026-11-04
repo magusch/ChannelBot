@@ -114,8 +114,11 @@
         "enabled": false
       },
       "cfg": {
-        "sites": [],
+        "sites": ["sevcable", "newholland", "levashovsky", "alexandrinsky", "erarta", "erarta_news"],
         "days": 10
+      },
+      "tncloud": {
+        "sites": ["rusmuseum"]
       },
       "afisha": {
         "city": "spb",
@@ -170,7 +173,7 @@
         "timepad": 70, "radario": 70, "tc": 65,
         "qt": 65, "mts": 60, "cltr": 60,
         "cfg": 65, "kassir": 60, "afisha": 55, "ya": 55, "tripster": 55, "other": 80,
-        "vk": 45, "tg": 40, "instagram": 40
+        "vk": 45, "tg": 40, "instagram": 40, "kremlin": 60, "tnc": 55
       },
       "boost_keywords": [
         "бесплатно", "премьера", "фестиваль", "открытие",

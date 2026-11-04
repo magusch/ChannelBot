@@ -23,15 +23,20 @@ from escraper.parsers import (
     ConfigScraper,
     Culture,
     Kassir,
+    KazanKremlin,
     QTickets,
     Radario,
     Telegram,
     Ticketscloud,
     Timepad,
+    TNCloud,
     Tripster,
     Vibe,
     Yandex,
 )
+from escraper.parsers.configs import SITES as CFG_SITES
+from escraper.parsers.tncloud import SITES as TNC_SITES
+from escraper.parsers.utils import city_name as escraper_city_name
 
 from . import crud
 from .helper.scraper_filters import tripster as tripster_filter
@@ -73,6 +78,12 @@ _SCRAPER_CITY_KEYS = {
     "kassir": ("city_domain",),
     "vk": ("vk_city_id", "vk_city"),
     "cfg": ("sites",),
+    "tncloud": ("sites",),
+}
+
+#: Scrapers of a single city's venues (escraper city slug): never run elsewhere.
+_SCRAPER_FIXED_CITY = {
+    "kazan_kremlin": "kazan",
 }
 
 
@@ -98,7 +109,35 @@ def _missing_city_keys(name: str) -> list:
     return [key for key in _SCRAPER_CITY_KEYS.get(name, ()) if not own.get(key)]
 
 
+def _in_current_city(city_slug: Optional[str]) -> bool:
+    """Does an escraper city slug (``kazan``, ``spb``) name the current city?"""
+    if not city_slug:
+        return True
+    return escraper_city_name(city_slug) == escraper_city_name(settings.city)
+
+
+def _sites_of_current_city(name: str, sites: Iterable, registry: dict) -> list:
+    """Drop sites unknown to escraper or registered for another city."""
+    kept = []
+    for site in sites or []:
+        site_config = site if isinstance(site, dict) else registry.get(site)
+        if site_config is None:
+            log.warning(f"{name}: unknown site {site!r}, skipped.")
+        elif not _in_current_city(site_config.get("city")):
+            log.warning(
+                f"{name}: site {site!r} is in {site_config.get('city')!r}, "
+                f"not {settings.city!r} — skipped."
+            )
+        else:
+            kept.append(site)
+    return kept
+
+
 def _is_scraper_enabled(scraper_name: str) -> bool:
+    fixed_city = _SCRAPER_FIXED_CITY.get(scraper_name)
+    if fixed_city and not _in_current_city(fixed_city):
+        log.warning(f"Scraper '{scraper_name}' only covers {fixed_city!r}, skipped.")
+        return False
     if not settings.scraper_configured(scraper_name):
         log.warning(
             f"Scraper '{scraper_name}' has no escraper_parameters in "
@@ -538,14 +577,27 @@ mts_parser = MTS(use_proxy=_use_proxy("mts"))
 culture_parser = Culture(use_proxy=_use_proxy("culture"))
 tg_parser = Telegram(use_proxy=_use_proxy("tg"))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy("cfg"))
+kazan_kremlin_parser = KazanKremlin(use_proxy=_use_proxy("kazan_kremlin"))
+tncloud_parser = TNCloud(use_proxy=_use_proxy("tncloud"))
 
-#: Weekdays (Mon=0) the venue-site scraper runs in the daily rotation.
+#: Weekdays (Mon=0) the venue-site scrapers run in the daily rotation.
 DEFAULT_CFG_WEEKDAYS = (0, 3)
+
+VENUE_SCRAPERS = ("kazan_kremlin",)
+
+DEFAULT_CFG_SITES = (
+    "sevcable", "newholland", "levashovsky", "alexandrinsky", "erarta", "erarta_news",
+)
 
 
 def _cfg_weekdays():
     """``escraper_parameters.cfg.weekdays`` or Mon/Thu."""
-    value = (settings.escraper_parameters or {}).get("cfg", {}).get("weekdays")
+    return _scraper_weekdays("cfg")
+
+
+def _scraper_weekdays(name: str):
+    """``escraper_parameters.<name>.weekdays`` or Mon/Thu."""
+    value = ((settings.escraper_parameters or {}).get(name) or {}).get("weekdays")
     if value is None:
         return DEFAULT_CFG_WEEKDAYS
     try:
@@ -561,7 +613,7 @@ def _cfg_weekdays():
             days = [int(d) for d in value]
         return tuple(int(d) % 7 for d in days)
     except (TypeError, ValueError):
-        log.warning(f"Bad escraper_parameters.cfg.weekdays={value!r}, using Mon/Thu.")
+        log.warning(f"Bad escraper_parameters.{name}.weekdays={value!r}, using Mon/Thu.")
         return DEFAULT_CFG_WEEKDAYS
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
@@ -630,6 +682,8 @@ class ScrapeEvents:
     _afisha_parser = afisha_parser
     _yandex_parser = yandex_parser
     _vibe_parser = vibe_parser
+    _kazan_kremlin_parser = kazan_kremlin_parser
+    _tncloud_parser = tncloud_parser
 
     PARSER_URLS = {
         "timepad.ru": _timepad_parser,
@@ -662,6 +716,8 @@ class ScrapeEvents:
             "yandex": self.get_yandex_events,
             "vibe": self.get_vibe_events,
             "tripster": self.get_tripster_events,
+            "kazan_kremlin": self.get_kazan_kremlin_events,
+            "tncloud": self.get_tncloud_events,
         }
 
     # ------------------------------------------------------------------
@@ -723,6 +779,10 @@ class ScrapeEvents:
 
         if weekday in _cfg_weekdays():
             plan.append(("cfg", days))
+
+        for name in VENUE_SCRAPERS:
+            if name in settings.escraper_parameters and weekday in _scraper_weekdays(name):
+                plan.append((name, days))
 
         vibe_settings = settings.escraper_parameters.get("vibe")
         if vibe_settings and vibe_due(
@@ -1115,10 +1175,8 @@ class ScrapeEvents:
         self, days: int = None, events_filter: Optional[Callable] = None
     ) -> Iterator[ParserEvent]:
         days = int(settings.escraper_parameters.get("cfg", {}).get("days", days))
-        sites = settings.escraper_parameters.get("cfg", {}).get(
-            "sites",
-            ["sevcable", "newholland", "levashovsky", "alexandrinsky"],
-        )
+        sites = settings.escraper_parameters.get("cfg", {}).get("sites", DEFAULT_CFG_SITES)
+        sites = _sites_of_current_city("cfg", sites, CFG_SITES)
         existed_event_ids = crud.get_event_id_by_prefix("CFG")
 
         # Per-site batches: an error on one site doesn't lose the others
@@ -1138,6 +1196,58 @@ class ScrapeEvents:
                 site_events = []
             yield from _apply_filter(site_events, events_filter)
             time.sleep(1)
+
+    # ------------------------------------------------------------------
+    # Venue parsers with their own API: Kazan Kremlin, TN-Cloud box offices
+    # ------------------------------------------------------------------
+
+    def get_kazan_kremlin_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Exhibitions and dated events of kazan-kremlin.ru."""
+        kremlin_settings = settings.escraper_parameters.get("kazan_kremlin", {})
+        request_params = {}
+        if kremlin_settings.get("types"):
+            request_params["types"] = list(kremlin_settings["types"])
+        if kremlin_settings.get("max_event_days"):
+            request_params["max_event_days"] = int(kremlin_settings["max_event_days"])
+        existed_event_ids = crud.get_event_id_by_prefix(KazanKremlin.source)
+        yield from _apply_filter(
+            _iter_events(
+                self._kazan_kremlin_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids,
+            ),
+            events_filter,
+        )
+
+    def get_tncloud_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Dated programmes of TN-Cloud museum box offices (``sites``)."""
+        tnc_settings = settings.escraper_parameters.get("tncloud", {})
+        sites = _sites_of_current_city("tncloud", tnc_settings.get("sites") or [], TNC_SITES)
+        existed_event_ids = crud.get_event_id_by_prefix(TNCloud.source)
+
+        # Per-site batches: an error on one site doesn't lose the others
+        for site in sites:
+            request_params = {"site": site}
+            if "with_prices" in tnc_settings:
+                request_params["with_prices"] = bool(tnc_settings["with_prices"])
+            try:
+                site_events = list(
+                    _iter_events(
+                        self._tncloud_parser,
+                        request_params=request_params,
+                        tags=ALL_EVENT_TAGS,
+                        existed_event_ids=existed_event_ids,
+                    )
+                )
+            except Exception as e:
+                log.error(f"Error getting events from TN-Cloud {site}: {e}")
+                site_events = []
+            yield from _apply_filter(site_events, events_filter)
 
     # ------------------------------------------------------------------
     # Kassir
