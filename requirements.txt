@@ -3,6 +3,7 @@ pyTelegramBotAPI>=4.36.1
 requests>=2.31.0
 escraper@git+https://git@github.com/magusch/escraper.git@develop
 celery==5.4.0
+kombu==5.6.2  # 5.7 requires redis-py>=6.1
 redis==5.0.6
 fastapi==0.111.0
 uvicorn==0.30.1
