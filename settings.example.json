@@ -33,6 +33,13 @@
       "provider": "openai",
       "model": "gpt-4o-mini"
     },
+    "url_extractor": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "max_chars": 6000,
+      "daily_limit_per_sender": 30,
+      "notify": true
+    },
     "auto_route_to_api": {
       "enabled": false,
       "min_score": 55,
