@@ -1,6 +1,49 @@
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from datetime import datetime, timezone
 from typing import List, Optional
+
+
+class EventOrderBy(StrEnum):
+    """Sort keys ``crud.order_maping`` understands for Events2Posts."""
+
+    title_asc = "title-asc"
+    title_desc = "title-desc"
+    date_asc = "date-asc"
+    date_desc = "date-desc"
+    price_asc = "price-asc"
+    price_desc = "price-desc"
+    ad_asc = "ad-asc"
+    ad_desc = "ad-desc"
+    score_asc = "score-asc"
+    score_desc = "score-desc"
+    id_asc = "id-asc"
+    id_desc = "id-desc"
+
+
+class PlaceOrderBy(StrEnum):
+    """Sort keys ``crud.order_maping`` understands for Place."""
+
+    title_asc = "title-asc"
+    title_desc = "title-desc"
+    metro_asc = "metro-asc"
+    metro_desc = "metro-desc"
+    id_asc = "id-asc"
+    id_desc = "id-desc"
+
+
+class EventScope(StrEnum):
+    """What the ``status`` parameter really controls.
+
+    It is not a status filter, despite its name: ``crud._apply_event_filters``
+    only checks whether the value is ``all``. Any other value -- including an
+    event status like "Posted" -- applies the same publicly-valid predicate
+    (Posted / OnlyApi / prepared ReadyToPost).
+    """
+
+    public = "public"
+    all = "all"
 
 
 class EventRequestParameters(BaseModel):
@@ -19,29 +62,17 @@ class EventRequestParameters(BaseModel):
     limit: Optional[int] = Field(20, description="Number of results per page")
     page: Optional[int] = Field(None, description="Page number")
     ids: Optional[List[int]] = Field(None, description="Retrieve specific events by ID")
-    status: Optional[str] = Field(
-        None, description="Filter by status: ReadyToPost, Posted"
+    status: EventScope = Field(
+        EventScope.public,
+        description="'public' = only publicly visible events, 'all' = no status filter",
     )
     price_max: Optional[int] = Field(None, description="Maximum price (RUB)")
-    order_by: Optional[str] = Field(
-        'date-asc', description="Sorting: date-asc, date-desc"
+    order_by: EventOrderBy = Field(
+        EventOrderBy.date_asc, description="Sorting: '<field>-<direction>'"
     )
 
     def with_defaults(self):
         return self
-
-    def to_crud_dict(self):
-        return {
-            'date_from': self.date_from,
-            'date_to': self.date_to,
-            'category': self.category,
-            'place': self.place,
-            'fields': self.fields,
-            'limit': self.limit,
-            'page': self.page,
-            'ids': self.ids,
-            'status': self.status,
-        }
 
 
 class EventFeedParameters(EventRequestParameters):
@@ -64,7 +95,7 @@ class EventOut(BaseModel):
     event_id: str
     title: str
     post: str
-    full_text: str
+    full_text: Optional[str] = None
     url: str
     ticket_url: Optional[str] = None
     from_date: datetime
@@ -84,7 +115,9 @@ class PlaceRequestParameters(BaseModel):
     fields: Optional[List[str]] = Field(None, description="List of fields to return")
     limit: Optional[int] = Field(20, description="Number of results per page")
     page: Optional[int] = Field(None, description="Page number")
-    order_by: Optional[str] = Field('tt-asc', description="Sorting")
+    order_by: PlaceOrderBy = Field(
+        PlaceOrderBy.id_asc, description="Sorting: '<field>-<direction>'"
+    )
     ids: Optional[List[int]] = Field(None, description="Retrieve specific places by ID")
 
 
