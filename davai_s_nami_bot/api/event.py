@@ -14,6 +14,7 @@ from .dependencies import (
     get_cache_key,
     serialize_datetime,
     log_api_request,
+    track_request,
 )
 from .schemas import BulkCreatePostRequest, SimilarEventsResponse
 from ..services.content import queue_embeddings
@@ -22,8 +23,9 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 
 @router.get("/{event_id}", response_model=EventOut)
-def get_event(event_id: int):
+def get_event(event_id: int, request: Request):
     """Retrieve event details by event ID."""
+    track_request(request, {"ids": [event_id]})
     with use_city(city_of(Events2Posts, [event_id])):
         event = crud.get_event_by_id(event_id=event_id)
     if not event:

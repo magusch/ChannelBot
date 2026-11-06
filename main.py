@@ -14,6 +14,7 @@ from davai_s_nami_bot.api import register_routers
 from davai_s_nami_bot.api.ai import queue_extract_events_from_text
 from davai_s_nami_bot.api.schemas import ExtractEventsFromTextRequest
 from davai_s_nami_bot.api.city import CityMiddleware, enter_city_of
+from davai_s_nami_bot.api.request_log import RequestLogMiddleware, log_api_request
 from davai_s_nami_bot.content_generator.models import (
     ContentGeneratorEventSelection,
     ContentGeneratorFilterSet,
@@ -130,6 +131,9 @@ app.add_middleware(
 # City of each request (?city= or "city" in a JSON body), see api/city.py.
 app.add_middleware(CityMiddleware)
 
+# api_request_log for endpoints that call log_api_request/track_request.
+app.add_middleware(RequestLogMiddleware)
+
 security = HTTPBearer()
 
 API_TOKEN = os.environ.get('API_TOKEN', 'your-secure-api-token')
@@ -154,29 +158,6 @@ def serialize_datetime(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
-
-
-async def log_api_request(request: Request, data=None):
-    """
-    Common function to log API requests
-    Args:
-        request: FastAPI request object
-        data: Request data (can be None for empty requests)
-    """
-    celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.log_api_request',
-        args=[
-            {
-                'ip': request.client.host,
-                'endpoint': str(request.url),
-                'method': request.method,
-                'status_code': 200,
-                'timestamp': datetime.now().isoformat(),
-                'user_agent': request.headers.get('User-Agent'),
-                'request_data': json.dumps(data) if data is not None else None,
-            }
-        ],
-    )
 
 
 @app.post('/api/schedule-update-events/', tags=["Tasks (legacy)"],

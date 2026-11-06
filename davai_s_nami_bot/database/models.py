@@ -357,6 +357,7 @@ class ApiRequestLog(Base):
     timestamp = Column(DateTime, nullable=False)
     user_agent = Column(String, nullable=True)
     request_data = Column(String, nullable=True)
+    client = Column(JSONB, nullable=True)
 
 # AUTH models
 

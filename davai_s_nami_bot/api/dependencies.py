@@ -4,7 +4,7 @@ import hashlib
 import secrets
 from datetime import datetime
 
-from fastapi import HTTPException, Depends, Request, status
+from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from sqlalchemy.orm import Session
@@ -12,12 +12,12 @@ from ..database.database_orm import get_db_session
 
 from typing import Annotated
 
-from ..celery_app import celery_app, redis_client
-from ..city_context import current_city, is_city_set
+from ..city_context import current_city
 from ..core.security import oauth2_scheme, decode_access_token
 from .. import crud
 
 from ..pydantic_models import UserOut
+from .request_log import log_api_request, track_request  # noqa: F401  re-exported
 
 
 security = HTTPBearer()
@@ -44,30 +44,6 @@ def serialize_datetime(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
-
-
-async def log_api_request(request: Request, data=None):
-    """
-    Common function to log API requests
-    Args:
-        request: FastAPI request object
-        data: Request data (can be None for empty requests)
-    """
-    if is_city_set() and (data is None or isinstance(data, dict)):
-        # The city may come in the body, which the parsed model drops: log it.
-        data = {**(data or {}), "city": current_city()}
-    celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.log_api_request',
-        args=[{
-            'ip': request.client.host,
-            'endpoint': str(request.url),
-            'method': request.method,
-            'status_code': 200,
-            'timestamp': datetime.now().isoformat(),
-            'user_agent': request.headers.get('User-Agent'),
-            'request_data': json.dumps(data) if data is not None else None,
-        }]
-    )
 
 
 def get_db():

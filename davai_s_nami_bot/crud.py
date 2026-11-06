@@ -3313,6 +3313,13 @@ def remove_event_from_user(db, user_id, event_id):
 
 
 @db_session
+def get_event_by_id(db, event_id: int):
+    """One Events2Posts row as a dict, or None."""
+    event = db.query(Events2Posts).filter(Events2Posts.id == event_id).first()
+    return orm_to_dict(event) if event else None
+
+
+@db_session
 def get_user_favourite_events(db, user_id):
     # A user's favourites span cities: read them all, whatever the request city.
     query = (

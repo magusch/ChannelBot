@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Response, Cookie
+from fastapi import APIRouter, Response, Cookie, Request
 
 from fastapi import HTTPException, status
 
 from .dependencies import CurrentUser
+from .request_log import track_request
 
 from ..core.security import create_access_token, create_refresh_token_cookie, decode_access_token,\
     check_telegram_auth_data
@@ -122,11 +123,13 @@ def update_user(
 
 @router.post("/telegram/login", response_model=Token)
 def telegram_login(
-        login_data: TelegramLoginData, response: Response,
+        login_data: TelegramLoginData, response: Response, request: Request,
 ):
     """
     Checks Telegram login data, creates or retrieves the user,
     """
+    # No body in the log: init_data is a credential.
+    track_request(request)
 
     telegram_user_info = check_telegram_auth_data(login_data.init_data)
     if not telegram_user_info:
@@ -137,6 +140,7 @@ def telegram_login(
 
     telegram_id = telegram_user_info['id']
     user = crud.get_or_create_user_by_telegram_id(telegram_id, telegram_user_info)
+    track_request(request, auth_user_id=user["id"])
 
     if not user["is_active"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
