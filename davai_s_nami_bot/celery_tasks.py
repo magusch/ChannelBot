@@ -33,6 +33,7 @@ from .helper.ai_helper import AIHelper
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
 from .helper.ai.query_analyzer import QueryAnalyzer, format_date_range_ru
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
+from .helper.ai.url_event_extractor import UrlEventExtractor
 from .helper.dsn_parameters import DSNParameters, fetch_and_store_parameters
 from .helper.markdown_v2 import escape_v2, escape_v2_url
 from .helper.embeddings import (
@@ -386,6 +387,15 @@ def post_generated_by_schedule(schedule_id: int):
         elif platform == 'vk':
             client_post = clients.VKRequests()
             destination_id = clients.VKRequests.constants['prod']['destination_id']
+        if client_post and not destination_id:
+            # Telegram answers "chat not found" to chat_id "None" — say what is missing.
+            error = (
+                f"no {platform} destination for city {city_context.current_city()!r} "
+                f"(city_city channel_id / vk_group_id is empty)"
+            )
+            log.error(f"Failed to post schedule {schedule_id}: {error}")
+            cg_crud.increment_schedule_retry(schedule_id, error_message=error)
+            client_post = None
         if client_post:
             try:
                 # Buttons are Telegram-only; the VK client has no equivalent.
@@ -724,12 +734,11 @@ def events_from_url(event_url=None):
 
 @celery_app.task
 def download_event_page(urls=[]):
+    """Admin 'Scrape' links no parser knows: extract and add straight to the queue."""
     for url in urls:
-        response = requests.get(url)
-        if response.status_code < 300:
-            body = BeautifulSoup(response.text, 'html.parser').get_text()
-            event = {'full_text': body, 'url': url}
-            ai_update_event.apply_async([event, 1])
+        result = event_from_any_url(url, trusted=True)
+        if result.get("created_ids") or result.get("existing"):
+            crud.delete_scrape_rows([url])
 
 
 @celery_app.task(
@@ -1895,6 +1904,106 @@ def extract_events_from_text(text: str, source: str, image: str = None):
     )
 
     return result
+
+
+URL_SUBMIT_DAILY_LIMIT = 30
+URL_RESULT_TTL = 3 * 24 * 3600
+
+
+def _url_submit_allowed(submitted_by, limit) -> bool:
+    """Per-sender daily cap for links sent by anyone through the bot."""
+    if not submitted_by or not limit:
+        return True
+    key = f"url_submit:{submitted_by}:{get_msk_today():%Y%m%d}"
+    count = redis_client.incr(key)
+    if count == 1:
+        redis_client.expire(key, 2 * 24 * 3600)
+    return count <= limit
+
+
+def _notify_url_submission(url, submitted_by, comment, summary):
+    lines = [f"📥 Ссылка{f' от {submitted_by}' if submitted_by else ''}: {url}"]
+    if comment:
+        lines.append(f"Комментарий: {comment[:300]}")
+    lines.append(f"Итог: {summary['status']} ({summary.get('method') or summary.get('error') or '-'})")
+    for e in summary["events"]:
+        when = (e.get("from_date") or "")[:16].replace("T", " ")
+        lines.append(f"• {e['title']} — {when} · {e.get('price') or 'цена ?'}")
+    for r in summary["existing"]:
+        lines.append(f"= уже есть: {r['title']} (id {r['id']}, {r['status']})")
+    for r in summary["rejected"]:
+        lines.append(f"× {r.get('title') or r.get('note') or ''} — {r['reason']}")
+    if summary.get("created_ids"):
+        lines.append(f"Во входящих (pending): {summary['created_ids']}")
+    dev_channel.send_text("\n".join(lines))
+
+
+@celery_app.task(soft_time_limit=240)
+def event_from_any_url(url: str, comment: str = None, submitted_by: str = None,
+                       trusted: bool = False):
+    """Any event page → events: untrusted go to NotApproved 'pending', trusted to the queue."""
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = (settings.features or {}).get("url_extractor") or {}
+    if not trusted and not _url_submit_allowed(
+        submitted_by, cfg.get("daily_limit_per_sender", URL_SUBMIT_DAILY_LIMIT)
+    ):
+        return {"status": "rate_limited", "url": url}
+
+    cache_key = city_module.city_key(f"url_extract:{url.strip()}")
+    cached = redis_client.get(cache_key)
+    if cached and not trusted:
+        summary = json.loads(cached)
+        summary["cached"] = True
+        return summary
+
+    result = UrlEventExtractor().extract(url)
+    existing = crud.find_events_by_event_ids([e["event_id"] for e in result.events])
+    known = {r["event_id"] for r in existing}
+    fresh = [e for e in result.events if e["event_id"] not in known]
+
+    created_ids = []
+    if fresh:
+        if trusted:
+            created_ids = crud.add_events_to_post(
+                [events.BaseEvent(**e) for e in fresh], explored_date=get_msk_today()
+            ) or []
+        else:
+            created_ids = crud.add_events(
+                [events.BaseEvent(**e, status="pending") for e in fresh],
+                explored_date=get_msk_today(),
+            )
+
+    if created_ids:
+        status = "created"
+    elif existing:
+        status = "exists"
+    elif result.rejected:
+        status = "rejected"
+    elif result.error:
+        status = "failed"
+    else:
+        status = "not_found"
+    summary = {
+        **result.to_dict(),
+        "status": status,
+        "trusted": trusted,
+        "created_ids": created_ids,
+        "existing": existing,
+    }
+    summary["events"] = [e for e in summary["events"] if e["event_id"] not in known]
+    log.info(
+        f"event_from_any_url {url}: {status} method={result.method} "
+        f"created={created_ids} tokens={result.tokens} error={result.error}"
+    )
+    if status != "failed" or not trusted:
+        redis_client.setex(cache_key, URL_RESULT_TTL, json.dumps(summary, default=str))
+    if cfg.get("notify", True):
+        try:
+            _notify_url_submission(url, submitted_by, comment, summary)
+        except Exception as e:
+            log.warning(f"event_from_any_url: dev notification failed: {e}")
+    return summary
 
 
 @celery_app.task

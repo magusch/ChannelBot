@@ -1276,6 +1276,14 @@ def get_scrape_it_events(db) -> List[Event]:
 
 
 @db_session
+def delete_scrape_rows(db, urls: list[str]):
+    """Drop admin 'Scrape' placeholders once their URL has been processed."""
+    db.query(Events2Posts).filter(
+        Events2Posts.status == 'Scrape', Events2Posts.url.in_(urls)
+    ).delete(synchronize_session=False)
+
+
+@db_session
 def delete_events2post_by_event_id(db, event_ids: list[str]):
     db.query(Events2Posts).filter(Events2Posts.event_id.in_(event_ids)).delete(
         synchronize_session=False

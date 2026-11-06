@@ -30,6 +30,14 @@ class AiModerateEventsRequest(BaseModel):
     examples: Optional[List[dict]] = Field(None, description="Few-shot examples")
 
 
+class EventFromUrlRequest(BaseModel):
+    """A link someone sent to the bot: any event page, not only sources we scrape."""
+
+    url: str = Field(..., description="Event page URL (http/https)")
+    comment: Optional[str] = Field(None, description="Sender's text next to the link")
+    submitted_by: Optional[str] = Field(None, description="Sender id (rate limit, logs)")
+
+
 class ExtractEventsFromTextRequest(BaseModel):
     """Raw text (a forwarded Telegram post) to turn into events.
 

@@ -7,6 +7,7 @@ from .dependencies import log_api_request, verify_token
 from .schemas import (
     AiUpdateEventRequest,
     AiModerateEventsRequest,
+    EventFromUrlRequest,
     ExtractEventsFromTextRequest,
     TaskResponse,
 )
@@ -51,6 +52,25 @@ async def queue_extract_events_from_text(body: ExtractEventsFromTextRequest, req
               "of the request's city. Legacy alias: POST /api/create_post_by_ai/.")
 async def extract_events_from_text(body: ExtractEventsFromTextRequest, request: Request):
     return await queue_extract_events_from_text(body, request)
+
+
+@router.post("/event-from-url/", response_model=TaskResponse,
+              summary="Event from any URL",
+              description="Any event page (not only sources we scrape): our parser by "
+              "domain → ticket widget on the page → schema.org JSON-LD → cheap LLM. "
+              "Found events land in EventsNotApproved with status 'pending' of the "
+              "request's city, and the dev channel gets a note. Poll the task for "
+              "{status: created|exists|rejected|failed|not_found|rate_limited, events, ...}.")
+async def event_from_url(body: EventFromUrlRequest, request: Request):
+    url = body.url.strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="url must be http(s)")
+    await log_api_request(request, body.model_dump())
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.event_from_any_url',
+        args=[url, body.comment, body.submitted_by],
+    )
+    return TaskResponse(message='Task event from url added to queue', task_id=task.id)
 
 
 @router.post("/moderate-events/",

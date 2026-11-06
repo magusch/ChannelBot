@@ -1,5 +1,6 @@
 # Create a new file: unit_tests/test_crud.py
 
+import json
 import pytest
 from unittest.mock import MagicMock
 from contextlib import contextmanager
@@ -156,7 +157,7 @@ def test_get_events_by_date_and_category_includes_only_api(db_session_fixture):
     params = EventRequestParameters(
         date_from=now - timedelta(days=1),
         date_to=now + timedelta(days=10),
-        status='active',  # любой не-'all' значение → срабатывает фильтр
+        status='public',  # всё, кроме 'all', включает publicly-valid предикат
         limit=50,
     )
     result = crud_module.get_events_by_date_and_category(params)
@@ -184,12 +185,12 @@ def test_valid_events_overnight_party_only_on_start_day(db_session_fixture):
 
     next_day = base + timedelta(days=1)
     params = EventRequestParameters(
-        date_from=next_day, date_to=next_day, status='active', limit=50,
+        date_from=next_day, date_to=next_day, status='public', limit=50,
     )
     titles = {e['title'] for e in crud_module.get_events_by_date_and_category(params)['events']}
     assert titles == {'two-day', 'long'}
 
-    params = EventRequestParameters(date_from=base, date_to=base, status='active', limit=50)
+    params = EventRequestParameters(date_from=base, date_to=base, status='public', limit=50)
     titles = {e['title'] for e in crud_module.get_events_by_date_and_category(params)['events']}
     assert titles == {'party', 'two-day', 'long'}
 
@@ -448,3 +449,139 @@ def test_get_place_reputation_excludes_auto_rejected(db_session_fixture):
     rep = crud_module.get_place_reputation(auto_reject_threshold=39)
     assert rep[9]["rejected"] == 1
     assert rep[9]["spam"] == 1
+
+_REP_CONFIG = {"enabled": True, "repetition_penalty": -20, "repetition_window_days": 14}
+
+
+def _rep_row(title):
+    now = datetime.now(timezone.utc)
+    return EventsNotApproved(
+        title=title, event_id=f'R-{title}-{now.timestamp()}', status='new',
+        explored_date=now, from_date=now + timedelta(days=3), source='timepad',
+        url='', full_text='', ticket_url='',
+    )
+
+
+def _rescored_penalty(db, row):
+    db.refresh(row)
+    return json.loads(row.score_breakdown)["repetition_penalty"]
+
+
+def test_recalculate_event_score_ignores_own_title(db_session_fixture, monkeypatch):
+    db = db_session_fixture
+    monkeypatch.setattr(crud_module, '_get_scoring_config', lambda: _REP_CONFIG)
+    row = _rep_row('Концерт группы Кино в клубе')
+    db.add(row)
+    db.flush()
+
+    crud_module.recalculate_event_score(row.id, table='events_eventsnotapprovednew')
+    assert _rescored_penalty(db, row) == 0
+
+    db.add(_rep_row('Концерт группы Кино в клубе'))
+    db.flush()
+    crud_module.recalculate_event_score(row.id, table='events_eventsnotapprovednew')
+    assert _rescored_penalty(db, row) == -20
+
+
+def test_recalculate_scores_bulk_ignores_own_title(db_session_fixture, monkeypatch):
+    db = db_session_fixture
+    monkeypatch.setattr(crud_module, '_get_scoring_config', lambda: _REP_CONFIG)
+    alone = _rep_row('Лекция о советском модернизме')
+    other = _rep_row('Концерт группы Кино в клубе')
+    db.add_all([alone, other])
+    db.flush()
+
+    crud_module.recalculate_scores_bulk(
+        table='events_eventsnotapprovednew', ids=[alone.id, other.id], only_null=False
+    )
+    assert _rescored_penalty(db, alone) == 0
+    assert _rescored_penalty(db, other) == 0
+
+
+_RUN_START = datetime(2030, 6, 1, 10, 0)
+
+
+def _run_e2p(title, *, org='myth-gallery', days=20, offset=0, status='Posted', place_id=None):
+    start = _RUN_START + timedelta(days=offset)
+    return Events2Posts(
+        title=title, event_id=f'RUN-{title}-{offset}-{days}', status=status,
+        place_id=place_id, from_date=start, to_date=start + timedelta(days=days),
+        explored_date=datetime.now(timezone.utc), source='timepad',
+        url=f'https://{org}.timepad.ru/event/{offset}{days}/', post='', full_text='',
+        ticket_url='',
+    )
+
+
+def _day_ticket(title, *, org='myth-gallery', offset=5, place_id=None):
+    start = _RUN_START + timedelta(days=offset)
+    return {
+        'title': title, 'url': f'https://{org}.timepad.ru/event/9{offset}/',
+        'ticket_url': '', 'place_id': place_id,
+        'from_date': start, 'to_date': start + timedelta(hours=8),
+    }
+
+
+@pytest.mark.parametrize(
+    'event_from, event_to, expected',
+    [
+        (_RUN_START + timedelta(days=5), _RUN_START + timedelta(days=5, hours=8), True),
+        (_RUN_START - timedelta(hours=12), None, True),
+        (_RUN_START + timedelta(days=25), None, False),
+        (_RUN_START, _RUN_START + timedelta(days=20), False),
+    ],
+)
+def test_is_inside_run(event_from, event_to, expected):
+    run_to = _RUN_START + timedelta(days=20)
+    assert crud_module.is_inside_run(event_from, event_to, _RUN_START, run_to) is expected
+
+
+def test_is_inside_run_ignores_short_parents():
+    assert not crud_module.is_inside_run(
+        _RUN_START, None, _RUN_START, _RUN_START + timedelta(days=1)
+    )
+
+
+def test_find_run_parent_matches_day_ticket_of_same_organizer(db_session_fixture):
+    db = db_session_fixture
+    run = _run_e2p('🐢 Выставка «Ритмы внутреннего моря»')
+    db.add(run)
+    db.flush()
+
+    assert crud_module.find_run_parent(event=_day_ticket('🌺 Ритмы внутреннего моря')) == run.id
+    assert crud_module.find_run_parent(
+        event=_day_ticket('Ритмы внутреннего моря', org='other-gallery')
+    ) == 0
+    assert crud_module.find_run_parent(event=_day_ticket('Artist-talk «Если нашёл перо»')) == 0
+    assert crud_module.find_run_parent(
+        event=_day_ticket('Ритмы внутреннего моря', offset=30)
+    ) == 0
+
+
+def test_find_run_parent_by_place_without_organizer_host(db_session_fixture):
+    db = db_session_fixture
+    run = _run_e2p('Выставка «Тело»', place_id=901)
+    run.url = 'https://example.com/telo'
+    db.add(run)
+    db.flush()
+
+    ticket = _day_ticket('Входной билет на выставку «Тело»', place_id=901)
+    ticket['url'] = 'https://qtickets.ru/event/1'
+    assert crud_module.find_run_parent(event=ticket) == run.id
+
+
+def test_dedupe_ready_queue_demotes_day_tickets_inside_run(db_session_fixture):
+    db = db_session_fixture
+    run = _run_e2p('Выставка «Фокус: Перформанс»', status='ReadyToPost')
+    ticket = _run_e2p('Фокус: Перформанс', days=0, offset=3, status='ReadyToPost')
+    ticket.to_date = ticket.from_date + timedelta(hours=8)
+    other = _run_e2p('Artist-talk «Если нашёл перо»', days=0, offset=4, status='ReadyToPost')
+    other.to_date = other.from_date + timedelta(hours=2)
+    db.add_all([run, ticket, other])
+    db.flush()
+
+    result = crud_module.dedupe_ready_queue()
+
+    assert result['decisions'] == [
+        {'id': ticket.id, 'new_status': 'Duplicate', 'duplicate_of': run.id, 'distance': None}
+    ]
+    assert (run.status, ticket.status, other.status) == ('ReadyToPost', 'Duplicate', 'ReadyToPost')

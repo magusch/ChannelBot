@@ -2,10 +2,16 @@ import logging
 import os
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import before_task_publish, task_postrun, task_prerun
+from celery.signals import (
+    before_task_publish,
+    task_postrun,
+    task_prerun,
+    worker_process_init,
+)
 from redis import Redis
 
 from . import city_context
+from .database.database_orm import engine
 from .settings.settings_loader import settings
 
 log = logging.getLogger(__name__)
@@ -241,6 +247,12 @@ def _leave_task_city(task_id=None, **kwargs):
     token = _city_tokens.pop(task_id, None)
     if token is not None:
         city_context.reset_city(token)
+
+
+@worker_process_init.connect
+def _reset_db_pool(**kwargs):
+    """Drop pooled connections inherited from the parent; two forks on one SSL socket break it."""
+    engine.dispose(close=False)
 
 
 celery_app = create_celery_app()
