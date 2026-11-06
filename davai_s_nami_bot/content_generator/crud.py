@@ -500,13 +500,30 @@ def mark_schedule_posted(db, schedule_id: int, *, posted_at):
     return None
 
 
+MAX_ERROR_HISTORY = 2000
+
+
+def retry_error_history(previous, error, attempt):
+    """Append ``[N] error`` to earlier attempts, keeping the first error when trimming."""
+    entry = f"[{attempt}] {error}"
+    if not previous:
+        return entry
+    combined = f"{previous}\n{entry}"
+    if len(combined) <= MAX_ERROR_HISTORY:
+        return combined
+    first = previous.split("\n", 1)[0]
+    return f"{first}\n…\n{entry}"[:MAX_ERROR_HISTORY]
+
+
 @db_session
 def increment_schedule_retry(db, schedule_id: int, error_message: str = None):
     schedule = db.query(PostingSchedule).get(schedule_id)
     if schedule:
         schedule.retry_count = (schedule.retry_count or 0) + 1
         if error_message:
-            schedule.error_message = error_message
+            schedule.error_message = retry_error_history(
+                schedule.error_message, error_message, schedule.retry_count
+            )
         db.commit()
         # db.refresh(schedule)
         # return orm_to_dict(schedule)

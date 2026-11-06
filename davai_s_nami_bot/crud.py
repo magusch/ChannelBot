@@ -148,7 +148,7 @@ def _compile_event_last_day(element, compiler, **kw):
     return (
         f"CASE WHEN julianday({date_to}) - julianday({date_from}) >= 1 "
         f"THEN date({date_to}) "
-        f"ELSE date(max({date_from}, datetime({date_to}, '-{NIGHT_END_HOUR} hours'))) END"
+        f"ELSE date(max({date_from}, datetime({date_to}, '-{NIGHT_END_HOUR} hours', '-1 minutes'))) END"
     )
 
 
@@ -162,7 +162,7 @@ def _compile_event_last_day_pg(element, compiler, **kw):
     return (
         f"(CASE WHEN {local_to} - {local_from} >= interval '1 day' "
         f"THEN {local_to} "
-        f"ELSE greatest({local_from}, {local_to} - interval '{NIGHT_END_HOUR} hours') "
+        f"ELSE greatest({local_from}, {local_to} - interval '{NIGHT_END_HOUR} hours 1 minute') "
         f"END)::date"
     )
 
@@ -3490,6 +3490,27 @@ def get_not_approved_event_by_id(db, event_id: int) -> dict:
             "category": event.category,
         }
     return None
+
+
+@db_session
+def find_events_by_event_ids(db, event_ids: List[str]) -> List[dict]:
+    """Existing rows with these event_ids in Events2Posts and EventsNotApproved."""
+    if not event_ids:
+        return []
+    found = []
+    for table, model in (("events_events2post", Events2Posts),
+                         ("events_eventsnotapprovednew", EventsNotApproved)):
+        rows = (
+            db.query(model.id, model.event_id, model.status, model.title)
+            .filter(model.event_id.in_(event_ids))
+            .all()
+        )
+        found += [
+            {"table": table, "id": r.id, "event_id": r.event_id,
+             "status": r.status, "title": r.title}
+            for r in rows
+        ]
+    return found
 
 
 @db_session

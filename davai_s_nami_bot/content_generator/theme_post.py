@@ -63,6 +63,7 @@ DEFAULT_THEME_PARAMS = {
     "shown": 5,
     "pool": 40,
     "min_events": 3,
+    "min_total": 5,
     "per_place": 1,
     "per_title": 1,
     "per_day": 2,
@@ -628,6 +629,12 @@ def _prepare_named_events(shown, tail, params):
     if dropped:
         log.info(f"Digest prep: category no longer fits the theme, dropped {dropped}")
     return [e for e in shown if fits(e)], [e for e in tail if fits(e)]
+
+
+def _enough_events(shown, tail, params):
+    """Both thresholds: described events and everything the post names."""
+    total = len(shown) + len(tail)
+    return len(shown) >= int(params["min_events"]) and total >= int(params.get("min_total") or 0)
 
 
 def _repeats_last(pool, params):
@@ -1213,7 +1220,7 @@ def build_theme_post(
     tail_count = max(int(params.get("tail") or 0), 0)
     tail_events = themes.remaining_events(pool, shown, tail_count)
     tail_events = themes.sort_chronologically(tail_events)
-    if len(shown) >= int(params["min_events"]) and not dry_run:
+    if _enough_events(shown, tail_events, params) and not dry_run:
         shown, tail_events = _prepare_named_events(shown, tail_events, params)
     # The cooldown reads what the post names, not the hidden pool.
     params = {**params, "posted_ids": [e["id"] for e in list(shown) + list(tail_events)]}
@@ -1228,16 +1235,16 @@ def build_theme_post(
         params.get("range"), date_to
     )
 
-    if len(shown) < int(params["min_events"]):
+    if not _enough_events(shown, tail_events, params):
         log.info(
-            f"Theme {filter_set['name']!r}: only {len(shown)} events "
-            f"(min {params['min_events']}), skipping"
+            f"Theme {filter_set['name']!r}: {len(shown)} described + {len(tail_events)} "
+            f"listed (min {params['min_events']} / {params.get('min_total')}), skipping"
         )
         return {
             "status": "not_enough_events",
             "filter_set_id": filter_set["id"],
             "theme": filter_set["name"],
-            "found": len(shown),
+            "found": len(shown) + len(tail_events),
         }
 
     selection_id = None
