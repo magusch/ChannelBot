@@ -595,11 +595,11 @@ def _cfg_weekdays():
     return _scraper_weekdays("cfg")
 
 
-def _scraper_weekdays(name: str):
-    """``escraper_parameters.<name>.weekdays`` or Mon/Thu."""
+def _scraper_weekdays(name: str, default=DEFAULT_CFG_WEEKDAYS):
+    """Read configured weekdays, falling back to the scraper's default."""
     value = ((settings.escraper_parameters or {}).get(name) or {}).get("weekdays")
     if value is None:
-        return DEFAULT_CFG_WEEKDAYS
+        return default
     try:
         if isinstance(value, int):
             days = [value]
@@ -613,8 +613,8 @@ def _scraper_weekdays(name: str):
             days = [int(d) for d in value]
         return tuple(int(d) % 7 for d in days)
     except (TypeError, ValueError):
-        log.warning(f"Bad escraper_parameters.{name}.weekdays={value!r}, using Mon/Thu.")
-        return DEFAULT_CFG_WEEKDAYS
+        log.warning(f"Bad escraper_parameters.{name}.weekdays={value!r}, using {default}.")
+        return default
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
 yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
@@ -783,6 +783,9 @@ class ScrapeEvents:
         for name in VENUE_SCRAPERS:
             if name in settings.escraper_parameters and weekday in _scraper_weekdays(name):
                 plan.append((name, days))
+
+        if "kassir" in settings.escraper_parameters and weekday in _scraper_weekdays("kassir", (1,)):
+            plan.append(("kassir", days))
 
         vibe_settings = settings.escraper_parameters.get("vibe")
         if vibe_settings and vibe_due(

@@ -930,7 +930,7 @@ def generate_comments(
     data = _parse_ai_json(raw)
     intro = _compose_intro(
         _clean_intro(data.get("intro"), _intro_max(params)), params,
-        also if described else [*events, *also],
+        [*events, *also],
     )
 
     comments = {}
@@ -964,7 +964,7 @@ def generate_prose(
 
     data = _parse_ai_json(raw)
     intro = _compose_intro(
-        _clean_intro(data.get("intro"), _intro_max(params)), params, also
+        _clean_intro(data.get("intro"), _intro_max(params)), params, [*events, *also]
     )
     paragraphs = [
         str(p).strip() for p in (data.get("paragraphs") or []) if str(p).strip()
