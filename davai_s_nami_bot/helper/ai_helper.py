@@ -8,6 +8,7 @@ from .ai.gemini_helper import GeminiHelper
 from .ai.openai_models import chat_kwargs, create_chat_completion
 
 from .dsn_parameters import DSNParameters
+from ..scoring import merge_editorial_result
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class AIHelper:
                 f"new_event_data: prepared_text for event_id={event.get('event_id')} "
                 f"(model={model_name}) violates prompt rules: {issues}"
             )
-        return ai_event
+        return merge_editorial_result(event, ai_event)
 
     def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """Universal text generation using the current model.

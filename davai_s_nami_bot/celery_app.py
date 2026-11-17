@@ -161,12 +161,18 @@ def _city_beat_schedules():
         'schedule': crontab(minute=50, hour=5),
     }
 
+    if settings.features.get('channel_selection', {}).get('enabled'):
+        beat_schedules['rebalance-channel-queue'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.rebalance_channel_queue',
+            'schedule': crontab(minute=10, hour=6),
+            'kwargs': {'dry_run': False},
+        }
+
     beat_schedules['distribute-event-queue'] = {
         'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
         'schedule': crontab(minute=0, hour=6),
-        # protect_first=8 ≈ next ~2 days of posts (at ~4 posts/day):
-        # leave already-scheduled slots untouched, reorder the rest.
-        'kwargs': {'protect_first': 8},
+        # Protect the next two individual posts.
+        'kwargs': {'protect_first': 2},
     }
 
     if settings.features.get('prepare_api_events_limit', 0):

@@ -40,6 +40,8 @@ from .pydantic_models import UserCreate, UserUpdate
 from .scoring import (
     CATEGORY_ID_TO_NAME,
     calculate_score,
+    routing_locked,
+    parse_breakdown,
     resolve_category_id,
     title_containment,
 )
@@ -1294,6 +1296,13 @@ def delete_events2post_by_event_id(db, event_ids: list[str]):
 def update_approved_event(db, event_id: int, new_event_data: dict):
     try:
         event = db.query(Events2Posts).filter(Events2Posts.id == event_id).one()
+        if 'score_breakdown' in new_event_data:
+            incoming = parse_breakdown(new_event_data['score_breakdown']) or {}
+            current = dict(parse_breakdown(event.score_breakdown) or {})
+            # Preparation can update editorial data, never stale manual/publication metadata.
+            if isinstance(incoming.get('editorial'), dict):
+                current['editorial'] = incoming['editorial']
+            new_event_data = {**new_event_data, 'score_breakdown': current}
         for key, value in new_event_data.items():
             if hasattr(event, key) and 'date' not in key:
                 setattr(event, key, value)
@@ -1691,7 +1700,16 @@ def set_status(
 
 @db_session
 def set_post_url(db: object, event_id: str, post_url: str) -> None:
-    db.query(Events2Posts).filter_by(event_id=event_id).update({"post_url": post_url})
+    event = db.query(Events2Posts).filter_by(event_id=event_id).first()
+    if event:
+        event.post_url = post_url
+        bd = dict(parse_breakdown(event.score_breakdown) or {})
+        publications = list(bd.get('publications') or [])
+        entry = {'kind': 'individual', 'url': post_url}
+        if entry not in publications:
+            publications.append(entry)
+        bd['publications'] = publications
+        event.score_breakdown = bd
 
 
 @db_session
@@ -2255,7 +2273,7 @@ def dedupe_ready_queue(
 
     decided = {}  # id → (new_status, dup_of_id, distance)
     for event in ready_events:
-        if event.id in decided:
+        if event.id in decided or routing_locked(event.score_breakdown):
             continue
         parent_id = find_run_parent(
             db=db,
@@ -2310,10 +2328,15 @@ def dedupe_ready_queue(
                 new_status = 'OnlyApi'
             keeper_id = event.id if loser.id != event.id else dup['id']
 
+        if routing_locked(loser.score_breakdown):
+            continue
         decided[loser.id] = (new_status, keeper_id, dup['distance'])
         if not dry_run:
             if new_status == 'Duplicate':
                 _enrich_event_from_duplicate(db, keeper_id, orm_to_dict(loser))
+            bd = dict(parse_breakdown(loser.score_breakdown) or {})
+            bd['routing'] = {'reason': 'repeat' if new_status == 'OnlyApi' else 'duplicate'}
+            loser.score_breakdown = bd
             loser.status = new_status
             loser.post_date = None
 
@@ -2336,7 +2359,6 @@ def dedupe_ready_queue(
 
 
 @db_session
-@db_session
 def mark_events_as_digested(db, event_ids: list, post_url: str = None) -> dict:
     """Take digested events off the channel queue: ReadyToPost -> OnlyApi.
     """
@@ -2350,7 +2372,16 @@ def mark_events_as_digested(db, event_ids: list, post_url: str = None) -> dict:
     )
     moved = 0
     for event in rows:
-        if event.status != 'ReadyToPost':
+        bd = dict(parse_breakdown(event.score_breakdown) or {})
+        publications = list(bd.get('publications') or [])
+        if event.status == 'Posted' and not publications:
+            publications.append({'kind': 'legacy_unknown', 'url': event.post_url})
+        entry = {'kind': 'digest', 'url': post_url}
+        if entry not in publications:
+            publications.append(entry)
+        bd['publications'] = publications
+        event.score_breakdown = bd
+        if event.status != 'ReadyToPost' or routing_locked(bd):
             continue
         event.status = 'OnlyApi'
         if post_url:
@@ -2652,6 +2683,7 @@ def recalculate_event_score(
 
     breakdown = calculate_score(
         event_data=event_dict,
+        taste_score=(parse_breakdown(event_dict.get("score_breakdown")) or {}).get("taste"),
         existing_titles=recent_titles,
         place_id=event_dict.get("place_id"),
         scoring_config=scoring_config,
@@ -2735,6 +2767,7 @@ def recalculate_scores_bulk(
             }
             breakdown = calculate_score(
                 event_data=event_dict,
+                taste_score=(parse_breakdown(event.score_breakdown) or {}).get("taste"),
                 existing_titles=_titles_except(recent_rows, table, event.id),
                 place_id=event.place_id,
                 scoring_config=scoring_config,
@@ -2746,7 +2779,6 @@ def recalculate_scores_bulk(
 
             event.score = breakdown.total
             event.score_breakdown = breakdown.to_json()
-            recent_titles.append(event_dict.get("title", ""))
             updated += 1
         except Exception:
             skipped += 1
@@ -2764,7 +2796,7 @@ def reject_event_by_ai(db, event_id: int, reason: str = None):
     import json as _json
 
     event = db.query(Events2Posts).filter_by(id=event_id).first()
-    if not event:
+    if not event or routing_locked(event.score_breakdown):
         return False
 
     # Merge ai_review into existing score_breakdown
@@ -4117,6 +4149,9 @@ def _promote_not_approved(db, candidates, status: str) -> List[int]:
                 existing_event_ids.add(event.event_id)
                 continue
             event_data['status'] = 'OnlyApi'
+            bd = dict(parse_breakdown(event_data.get('score_breakdown')) or {})
+            bd['routing'] = {'reason': 'repeat'}
+            event_data['score_breakdown'] = bd
 
         new_event = Events2Posts(**event_data)
         db.add(new_event)
@@ -4400,6 +4435,11 @@ def route_events_to_api(
 
     routed_ids = []
     for event in candidates:
+        if routing_locked(event.score_breakdown):
+            continue
+        bd = dict(parse_breakdown(event.score_breakdown) or {})
+        bd["routing"] = {"reason": "low_priority"}
+        event.score_breakdown = bd
         event.status = 'OnlyApi'
         event.post_date = None
         routed_ids.append(event.id)
@@ -4521,6 +4561,7 @@ def find_unschedulable_events(
             Events2Posts.source,
             Events2Posts.from_date,
             Events2Posts.to_date,
+            Events2Posts.score_breakdown,
         )
         .filter(Events2Posts.status == 'ReadyToPost')
         .order_by(asc(Events2Posts.queue))
@@ -4548,7 +4589,12 @@ def find_unschedulable_events(
         ready_rank = 1 if e.is_ready is True else 0
         heapq.heappush(scheduled, (ready_rank, e.score or 0, e.to_date, e.id, e))
         if len(scheduled) > capacity:
-            dropped.append(heapq.heappop(scheduled)[4])
+            removable = [item for item in scheduled if not routing_locked(item[4].score_breakdown)]
+            if removable:
+                victim = min(removable)
+                scheduled.remove(victim)
+                heapq.heapify(scheduled)
+                dropped.append(victim[4])
 
     dropped.sort(key=lambda e: e.to_date)
     return [
@@ -4603,8 +4649,109 @@ def route_unschedulable_events(
         ids = ids[:limit]
 
     if ids:
-        db.query(Events2Posts).filter(Events2Posts.id.in_(ids)).update(
-            {'status': 'OnlyApi', 'post_date': None}, synchronize_session=False
-        )
+        for event in db.query(Events2Posts).filter(Events2Posts.id.in_(ids)).all():
+            if routing_locked(event.score_breakdown):
+                continue
+            bd = dict(parse_breakdown(event.score_breakdown) or {})
+            bd['routing'] = {'reason': 'capacity'}
+            event.score_breakdown = bd
+            event.status = 'OnlyApi'
+            event.post_date = None
         db.commit()
     return ids
+
+
+@db_session
+def rebalance_channel_queue(db, cfg=None, dry_run=True):
+    """Fill real posting slots from evaluated candidates, respecting manual choices."""
+    from .scoring import can_return_to_channel, is_talk_event
+    cfg = cfg or {}
+    now = datetime.now(timezone.utc)
+    horizon = max(1, min(30, int(cfg.get('horizon_days', 14))))
+    lead = timedelta(hours=max(0, int(cfg.get('min_lead_hours', 24))))
+    slots = get_posting_slots(db=db, kind='event')
+    if not slots:
+        return {'changes': [], 'skipped': 'no_event_slots'}
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(getattr(settings, 'timezone', None) or 'Europe/Moscow')
+    today = now.astimezone(tz).date()
+    times = sorted({datetime.combine(today + timedelta(days=d), t, tzinfo=tz)
+                    for d in range(horizon) for start, end, t in slots
+                    if (start == -1 or start <= (today + timedelta(days=d)).weekday() <= end)
+                    and datetime.combine(today + timedelta(days=d), t, tzinfo=tz) > now})
+    rows = db.query(Events2Posts).filter(
+        Events2Posts.status.in_(('ReadyToPost', 'OnlyApi', 'Posted')),
+        Events2Posts.to_date > now,
+    ).with_for_update().all()
+    ready = sorted([e for e in rows if e.status == 'ReadyToPost'],
+                   key=lambda e: (e.queue is None, e.queue or 0, e.id))
+    protect = max(0, int(cfg.get('protect_first', 2)))
+    protected = {e.id for e in ready[:protect]}
+    protected.update(e.id for e in ready if routing_locked(e.score_breakdown))
+    pool = [e for e in rows if e.id not in protected and
+            (e.status == 'ReadyToPost' or can_return_to_channel(e.status, e.score, e.score_breakdown))]
+    safe_pool = []
+    for e in pool:
+        if e.status != 'ReadyToPost':
+            dup = find_embedding_duplicate(db=db, embedding=e.embedding,
+                embedding_model=e.embedding_model, from_date=e.from_date, to_date=e.to_date,
+                exclude_id=e.id, max_distance=(_get_scoring_config() or {}).get('embedding_dedup_max_distance', .08))
+            if dup:
+                continue
+        safe_pool.append(e)
+    pool = safe_pool
+    assignments = {}
+    chosen = []
+    chosen_ids = set()
+    committed = [e for e in ready if e.id in protected]
+    for slot in times:
+        if committed:
+            event = committed.pop(0)
+        else:
+            eligible = []
+            for e in pool:
+                if e.id in chosen_ids or _as_utc(e.to_date) <= slot:
+                    continue
+                # Multi-day runs may already be open; one-off events need notice.
+                ongoing = (_as_utc(e.to_date) - _as_utc(e.from_date)) >= timedelta(days=2) if e.from_date else False
+                if not ongoing and (not e.from_date or _as_utc(e.from_date) < slot + lead):
+                    continue
+                eligible.append(e)
+            if not eligible:
+                continue
+            talk_count = sum(is_talk_event(e.title, e.category) for e in chosen[-6:])
+            def rank(e):
+                diversity = 8 if talk_count >= 2 and is_talk_event(e.title, e.category) else 0
+                # Keep an incumbent unless the alternative is materially better.
+                incumbent = int(cfg.get('switch_margin', 5)) if e.status == 'ReadyToPost' else 0
+                return ((e.score or 0) + incumbent - diversity, -_as_utc(e.to_date).timestamp(), -e.id)
+            event = max(eligible, key=rank)
+        chosen.append(event)
+        assignments[event.id] = slot
+        chosen_ids.add(event.id)
+    # Protected rows outside the horizon are still untouchable.
+    chosen_ids.update(protected)
+    changes = []
+    for e in ready:
+        if e.id not in chosen_ids and not routing_locked(e.score_breakdown):
+            changes.append({'id': e.id, 'status': 'OnlyApi', 'reason': 'capacity'})
+    for e in chosen:
+        if e.status != 'ReadyToPost':
+            changes.append({'id': e.id, 'status': 'ReadyToPost', 'reason': 'editorial'})
+    if not dry_run:
+        by_id = {e.id: e for e in rows}
+        for change in changes:
+            e = by_id[change['id']]
+            bd = dict(parse_breakdown(e.score_breakdown) or {})
+            bd['routing'] = {'reason': change['reason']}
+            e.score_breakdown = bd
+            e.status = change['status']
+            e.post_date = None
+        # Rebuild only automatic assignments; Django can subsequently fill empty slots.
+        active = [e for e in chosen if e.status == 'ReadyToPost']
+        for index, e in enumerate(active):
+            e.queue = index * 2 + 2
+            if e.id not in protected:
+                e.post_date = assignments[e.id]
+        db.commit()
+    return {'changes': changes, 'dry_run': dry_run}

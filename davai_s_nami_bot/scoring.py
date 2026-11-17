@@ -1,6 +1,6 @@
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -108,8 +108,12 @@ class ScoreBreakdown:
     date_scarcity_boost: int = 0
     total: int = 50
 
+    metadata: dict = field(default_factory=dict)
+
     def to_json(self) -> str:
         return json.dumps({
+            **self.metadata,
+            "rating_adjustment": editorial_adjustment(self.metadata),
             "price": self.price_score,
             "place": self.place_score,
             "category": self.category_score,
@@ -483,7 +487,11 @@ def calculate_score(
     ScoreBreakdown
     """
     if not scoring_config or not scoring_config.get("enabled", False):
-        return ScoreBreakdown.neutral()
+        neutral = ScoreBreakdown.neutral()
+        neutral.metadata = dict(parse_breakdown(event_data.get('score_breakdown')) or {})
+        neutral.metadata['base_total'] = neutral.total
+        neutral.total = max(0, min(100, neutral.total + editorial_adjustment(neutral.metadata)))
+        return neutral
 
     if place_post_counts is None:
         place_post_counts = {}
@@ -572,7 +580,9 @@ def calculate_score(
                 if 1 <= day_count < date_scarcity_threshold:
                     date_boost = date_scarcity_boost_val
 
-    total = max(0, min(100, int(raw + rep_penalty + place_queue_pen + date_boost)))
+    metadata = dict(parse_breakdown(event_data.get("score_breakdown")) or {})
+    metadata["base_total"] = int(raw + rep_penalty + place_queue_pen + date_boost)
+    total = max(0, min(100, metadata["base_total"] + editorial_adjustment(metadata)))
 
     return ScoreBreakdown(
         price_score=price_s,
@@ -586,6 +596,7 @@ def calculate_score(
         place_queue_penalty=place_queue_pen,
         date_scarcity_boost=date_boost,
         total=total,
+        metadata=metadata,
     )
 
 
@@ -620,7 +631,8 @@ def apply_taste_to_breakdown(
     breakdown is unusable. taste_score=None removes the component (and its
     weight) — the total falls back to the plain six-component score.
     """
-    breakdown = parse_breakdown(breakdown_raw)
+    parsed = parse_breakdown(breakdown_raw)
+    breakdown = dict(parsed) if parsed is not None else None
     if breakdown is None:
         return None
 
@@ -651,6 +663,94 @@ def apply_taste_to_breakdown(
         + (breakdown.get("date_scarcity_boost") or 0)
     )
 
+    breakdown["base_total"] = total
+    total += editorial_adjustment(breakdown)
+    breakdown["rating_adjustment"] = editorial_adjustment(breakdown)
     breakdown["taste"] = taste_score
     breakdown["total"] = max(0, min(100, total))
     return breakdown
+
+
+def rating_value(value):
+    """Accept only finite numeric ratings on the 0..100 scale."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value) if 0 <= value <= 100 else None
+
+
+def rating_bonus(value):
+    value = rating_value(value)
+    if value is None:
+        return 0
+    return -5 if value < 40 else -2 if value < 60 else 0 if value < 75 else 3 if value < 90 else 5
+
+
+def editorial_adjustment(breakdown):
+    """Small independent AI and user adjustments; never accumulate."""
+    editorial = breakdown.get('editorial') or {}
+    manual = breakdown.get('manual') or {}
+    ai = rating_bonus(editorial.get('score')) if isinstance(editorial, dict) else 0
+    user = 0
+    if isinstance(manual, dict):
+        if rating_value(manual.get('score')) is not None:
+            user = rating_bonus(manual['score'])
+        elif manual.get('target') in ('ReadyToPost', 'OnlyApi'):
+            user = 5 if manual['target'] == 'ReadyToPost' else -5
+    return ai + user
+
+
+def routing_locked(raw):
+    """Presence of a manual transfer marker excludes automatic routing."""
+    bd = parse_breakdown(raw) or {}
+    manual = bd.get('manual')
+    return 'manual_transfer' in bd or (isinstance(manual, dict) and 'target' in manual)
+
+
+def merge_editorial_result(event, answer):
+    """Keep trusted metadata; a model may supply only its own rating."""
+    result = dict(answer)
+    for key in ('status', 'queue', 'post_date', 'post_url', 'manual_transfer', 'manual', 'publications'):
+        result.pop(key, None)
+    bd = dict(parse_breakdown(event.get('score_breakdown')) or {})
+    old_adjustment = editorial_adjustment(bd)
+    editorial = result.pop('editorial', None)
+    result.pop('score_breakdown', None)
+    result.pop('score', None)
+    if isinstance(editorial, dict):
+        value = rating_value(editorial.get('score'))
+        if value is not None:
+            bd['editorial'] = {'score': value, 'reason': str(editorial.get('reason') or '')[:600], 'version': 1}
+    if bd:
+        if rating_value(bd.get('total')) is not None:
+            base = bd.get('base_total', bd['total'] - bd.get('rating_adjustment', old_adjustment))
+            bd['base_total'] = base
+            bd['total'] = max(0, min(100, base + editorial_adjustment(bd)))
+            bd['rating_adjustment'] = editorial_adjustment(bd)
+            result['score'] = bd['total']
+        result['score_breakdown'] = bd
+    return result
+
+
+def can_return_to_channel(status, score, raw):
+    bd = parse_breakdown(raw) or {}
+    if routing_locked(bd) or status not in ('OnlyApi', 'Posted'):
+        return False
+    editorial = bd.get('editorial') or {}
+    if not isinstance(editorial, dict) or (rating_value(editorial.get('score')) or 0) < 75 or (score or 0) < 75:
+        return False
+    publications = bd.get('publications') or []
+    if any(not isinstance(p, dict) or p.get('kind') not in ('digest',) for p in publications):
+        return False
+    digested = any(p.get('kind') == 'digest' for p in publications)
+    routing = bd.get('routing') or {}
+    reason = routing.get('reason') if isinstance(routing, dict) else None
+    if reason in ('repeat', 'duplicate'):
+        return False
+    if digested:
+        return editorial['score'] >= 90 and (score or 0) >= 80
+    return status == 'OnlyApi' and reason in ('capacity', 'low_priority')
+
+
+def is_talk_event(title, category):
+    text = f'{title or ""} {category or ""}'.lower()
+    return any(word in text for word in ('лекци', 'дискусси', 'артист-ток', 'artist talk'))

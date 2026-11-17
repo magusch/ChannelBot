@@ -351,3 +351,55 @@ make lint_check     # check only
 ```bash
 make deploy
 ```
+
+### Editorial rating and channel selection
+
+`score_breakdown` is JSONB. Legacy JSON strings are accepted; no migration is needed.
+Preparation returns the complete `score_breakdown` object and `score` when a prior
+base score exists. The model only supplies `editorial: {score: 0..100|null, reason}`;
+application code preserves manual choices, publication history and other metadata.
+AI preparation makes no extra model call for this rating.
+
+AI and optional user ratings each contribute a small adjustment: 0–39 → −5,
+40–59 → −2, 60–74 → 0, 75–89 → +3, 90–100 → +5. Missing/invalid ratings are neutral.
+`base_total` and `rating_adjustment` prevent repeated updates from accumulating bonuses.
+Full and taste recalculation preserve metadata.
+
+Example additions to an existing breakdown (keep its price/place/etc. components):
+
+```json
+{
+  "editorial": {"score": 85, "reason": "Specific programme for the channel audience", "version": 1},
+  "manual": {"score": 100, "target": "ReadyToPost"},
+  "manual_transfer": {"target": "ReadyToPost"}
+}
+```
+
+The **presence** of `manual_transfer` blocks automatic channel/API routing and
+queue deduplication, even if its value is null or false. `manual.target` is also
+accepted as a lock. User score alone does not lock routing. Django admin status
+changes to ReadyToPost/OnlyApi set the marker; without a user rating they add
++5/−5 respectively. The admin action “Разрешить автоматический выбор канала/API”
+removes the marker and target, preserving the optional user rating. Expiration
+still applies normally. Earlier manual changes cannot be reconstructed from status
+alone; mark important existing choices before enabling automatic selection.
+
+Successful digest/individual sends record `publications` with `kind` and `url`.
+A digest does not make an event individually published. Returning a digested event
+requires editorial ≥90 and total ≥80, with no individual/unknown publication.
+Historical Posted rows without provenance never return automatically. No historical
+status or publication backfill is performed.
+
+`features.channel_selection.enabled` schedules selection at 06:10 after daily
+queue maintenance. It uses real `PostingTime(kind=event)` slots; no slots means skip.
+Defaults: 14-day horizon, two protected events, 24-hour lead for single-session
+events, 5-point incumbent preference. After two conversational events among the
+previous six picks, another gets an 8-point selection penalty (not a score change).
+Ongoing multi-day events can still be selected before their end.
+OnlyApi returns require a recorded capacity/low-priority routing reason,
+editorial ≥75 and total ≥75, or the stricter digest condition above; repeat and
+duplicate routes are excluded. Existing semantic dedup is checked before return.
+Unknown legacy OnlyApi routes are left alone. The selection task defaults to
+`dry_run=True`; preview via `rebalance_channel_queue.delay()` before an operational
+rollout. Selection writes actual slot dates; protected choices keep their dates.
+Django and ChannelBot changes must be deployed together to protect manual choices.

@@ -81,7 +81,7 @@ def _daily_task_schedule():
         ('davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
          5, 50, None, {}),
         ('davai_s_nami_bot.celery_tasks.distribute_event_queue',
-         6, 0, None, {'protect_first': 8}),
+         6, 0, None, {'protect_first': 2}),
     ]
     if (settings.auto_route_to_api or {}).get('enabled'):
         schedule.append((
@@ -1449,7 +1449,7 @@ def route_unschedulable_events():
 
 
 @celery_app.task
-def distribute_event_queue(protect_first: int = 10):
+def distribute_event_queue(protect_first: int = 2):
     """Reorder the publication queue for content variety."""
     reordered = crud.distribute_event_queue(protect_first=protect_first)
     log.info(f"Reordered {reordered} events in posting queue")
@@ -1500,15 +1500,15 @@ def update_event(new_event_data, event_id):
     if new_event_data is None:
         return {"message": f"Skipping event {event_id}, no update data"}
 
-    new_event_data = {k: v for k, v in new_event_data.items() if v}
+    new_event_data = {k: v for k, v in new_event_data.items() if v is not None}
 
     # AI relevance check — reject irrelevant events before posting
     ai_relevant = new_event_data.pop('ai_relevant', True)
     ai_reject_reason = new_event_data.pop('ai_reject_reason', None)
     if ai_relevant is False or str(ai_relevant).strip().lower() in ('нет', 'no', 'false'):
         log.info(f"Event {event_id} rejected by AI: {ai_reject_reason}")
-        crud.reject_event_by_ai(event_id, reason=ai_reject_reason)
-        return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
+        if crud.reject_event_by_ai(event_id, reason=ai_reject_reason):
+            return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
 
     if new_event_data.get('prepared_text'):
         new_event_data['is_ready'] = True
@@ -1518,7 +1518,11 @@ def update_event(new_event_data, event_id):
                 save=True,
                 prefer_category_str=bool(new_event_data.get('category')),
             )
-            return {**new_event_data, "event_id": event_id}
+            score_data = crud.recalculate_event_score(event_id) or {}
+            if 'score_breakdown' in score_data:
+                from .scoring import parse_breakdown
+                score_data['score_breakdown'] = parse_breakdown(score_data['score_breakdown']) or {}
+            return {**new_event_data, **score_data, "event_id": event_id}
 
     return {"message": f"Skipping event {event_id}, no update data"}
 
@@ -2337,3 +2341,13 @@ def catch_up_daily_tasks():
         f"skipped={len(skipped)} already-tracked"
     )
     return {'queued': queued, 'skipped_count': len(skipped)}
+
+
+@celery_app.task
+def rebalance_channel_queue(dry_run=True):
+    from .settings.settings_loader import settings
+    cfg = settings.features.get('channel_selection', {}) or {}
+    result = crud.rebalance_channel_queue(cfg=cfg, dry_run=dry_run)
+    if not dry_run and result.get('changes'):
+        dsn_site_session.fill_empty_post_time()
+    return result
