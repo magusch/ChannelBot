@@ -216,11 +216,11 @@ async def auto_promote_by_score(request: Request):
 
 @router.post("/distribute-event-queue/", response_model=TaskResponse)
 async def distribute_event_queue(request: Request):
-    """Reorder the publication queue for variety."""
+    """Run the shared channel scheduler (legacy endpoint name)."""
     await log_api_request(request)
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.distribute_event_queue',
-        kwargs={'protect_first': 10},
+        kwargs={},
     )
     return TaskResponse(message='Distribute event queue queued', task_id=task.id)
 

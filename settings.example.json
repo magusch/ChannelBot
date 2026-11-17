@@ -53,17 +53,12 @@
     "route_unschedulable": {
       "enabled": false,
       "protect_first": 2,
-      "weekday_slots": 1,
-      "weekend_slots": 1,
-      "min_runway_days": 1,
-      "limit": 30
-    },
-    "channel_selection": {
-      "enabled": false,
       "horizon_days": 14,
-      "protect_first": 2,
       "min_lead_hours": 24,
-      "switch_margin": 5
+      "max_advance_days": 21,
+      "min_runway_days": 1,
+      "switch_margin": 5,
+      "limit": 30
     },
     "route_mid_score_to_api": {
       "enabled": false,

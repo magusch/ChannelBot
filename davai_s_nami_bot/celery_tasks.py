@@ -80,9 +80,10 @@ def _daily_task_schedule():
          5, 45, None, {'limit': 100, 'table': 'both'}),
         ('davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
          5, 50, None, {}),
-        ('davai_s_nami_bot.celery_tasks.distribute_event_queue',
-         6, 0, None, {'protect_first': 2}),
     ]
+    if (settings.route_unschedulable or {}).get('enabled'):
+        schedule.append(('davai_s_nami_bot.celery_tasks.route_unschedulable_events',
+                         6, 10, None, {}))
     if (settings.auto_route_to_api or {}).get('enabled'):
         schedule.append((
             'davai_s_nami_bot.celery_tasks.auto_route_to_api',
@@ -1419,41 +1420,23 @@ def auto_route_to_api():
 
 
 @celery_app.task
-def route_unschedulable_events():
-    """Route ReadyToPost events that won't fit before their to_date to OnlyApi.
-
-    Parameters are read from settings.route_unschedulable. If the section is
-    empty or enabled=False the task is not scheduled in beat; a manual call still
-    runs with crud.route_unschedulable_events defaults.
-    """
-    from davai_s_nami_bot.settings.settings_loader import settings
-
-    cfg = settings.route_unschedulable or {}
-    event_slots = crud.get_posting_slots('event')
-    per_weekday = None
-    if event_slots is not None:
-        if not event_slots:
-            log.warning("route_unschedulable: no event posting slots, skipping")
-            return {"routed_count": 0, "routed_ids": [], "skipped": "no_event_slots"}
-        per_weekday = theme_post.slots_per_weekday(event_slots)
-    routed_ids = crud.route_unschedulable_events(
-        protect_first=cfg.get('protect_first', 5),
-        weekday_slots=cfg.get('weekday_slots', 4),
-        weekend_slots=cfg.get('weekend_slots', 3),
-        slots_per_weekday=per_weekday,
-        min_runway_days=cfg.get('min_runway_days', 1),
-        limit=cfg.get('limit', 0),
-    )
-    log.info(f"Routed {len(routed_ids)} unschedulable events to OnlyApi (cfg={cfg})")
-    return {"routed_count": len(routed_ids), "routed_ids": routed_ids}
+def route_unschedulable_events(dry_run=False):
+    """Plan channel slots and both directions of automatic routing."""
+    if crud.get_posting_slots('event') == []:
+        return {'routed_count': 0, 'routed_ids': [], 'assignments': [],
+                'changes': [], 'warnings': [], 'skipped': 'no_event_slots'}
+    result = crud.route_unschedulable_events(dry_run=dry_run, slots_per_weekday=None)
+    if isinstance(result, list):  # Compatibility with older worker adapters.
+        result = {'routed_count': len(result), 'routed_ids': result}
+    log.info(f"Channel schedule: {result}")
+    return result
 
 
 @celery_app.task
-def distribute_event_queue(protect_first: int = 2):
-    """Reorder the publication queue for content variety."""
-    reordered = crud.distribute_event_queue(protect_first=protect_first)
-    log.info(f"Reordered {reordered} events in posting queue")
-    return {"reordered_count": reordered}
+def distribute_event_queue(protect_first=None):
+    """Compatibility task: never reorder dates independently of the planner."""
+    result = crud.schedule_channel_events(dry_run=False)
+    return {**result, 'reordered_count': len(result.get('assignments', []))}
 
 
 @celery_app.task
@@ -2345,9 +2328,5 @@ def catch_up_daily_tasks():
 
 @celery_app.task
 def rebalance_channel_queue(dry_run=True):
-    from .settings.settings_loader import settings
-    cfg = settings.features.get('channel_selection', {}) or {}
-    result = crud.rebalance_channel_queue(cfg=cfg, dry_run=dry_run)
-    if not dry_run and result.get('changes'):
-        dsn_site_session.fill_empty_post_time()
-    return result
+    """Compatibility task for requests queued before scheduler consolidation."""
+    return crud.schedule_channel_events(dry_run=dry_run)

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import and_, asc, desc, exc, func, or_
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, load_only
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.types import Date
 
@@ -1248,6 +1248,8 @@ def get_event_to_post_now(db):
         List of events ready to post now
     """
     now = datetime.now(timezone.utc)
+    if get_posting_slots(db=db, kind='event') == []:
+        return None
     events = (
         db.query(Events2Posts)
         .filter(
@@ -1264,9 +1266,12 @@ def get_event_to_post_now(db):
         return None
 
     # Convert SQLAlchemy objects to Event objects
-    result = [Event.from_database(event) for event in events]
+    result = [Event.from_database(event) for event in events
+              if event.to_date and _as_utc(event.to_date) > now
+              and event.from_date and (_as_utc(event.from_date) > now
+                  or _as_utc(event.to_date) - _as_utc(event.from_date) >= timedelta(days=2))]
 
-    return result
+    return result or None
 
 
 @db_session
@@ -4293,71 +4298,12 @@ def auto_reject_low_score_events(db, max_score: int = 39) -> int:
 
 
 @db_session
-def distribute_event_queue(db, protect_first: int = 10) -> int:
-    """Reorder the queue for ReadyToPost events with variety.
-
-    The first protect_first events (by queue) are left untouched.
-    The rest are reordered: round-robin by category,
-    within a category — by urgency (from_date) and score.
-
-    Returns:
-        Number of reordered events.
-    """
-    from collections import defaultdict
-
-    all_events = (
-        db.query(Events2Posts)
-        .filter(Events2Posts.status == 'ReadyToPost')
-        .order_by(Events2Posts.queue.asc())
-        .all()
-    )
-
-    if len(all_events) <= protect_first:
-        return 0
-
-    protected = all_events[:protect_first]
-    to_reorder = all_events[protect_first:]
-
-    # Base queue value — after the last protected event
-    base_queue = (protected[-1].queue if protected else 0) + 2
-
-    # Group by category
-    by_category = defaultdict(list)
-    for event in to_reorder:
-        cat = event.category or 'Без категории'
-        by_category[cat].append(event)
-
-    msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
-
-    # Within each category sort: most urgent (from_date soonest) and highest score first
-    for cat in by_category:
-        by_category[cat].sort(
-            key=lambda e: (
-                (e.from_date - msk_now).total_seconds() if e.from_date else 999999999,
-                -(e.score or 0),
-            )
-        )
-
-    # Round-robin by category (largest first so popular categories interleave)
-    category_queues = sorted(
-        by_category.values(),
-        key=lambda q: -len(q),
-    )
-
-    # Additionally interleave: free/paid and different sources
-    ordered = []
-    while any(category_queues):
-        for queue in category_queues:
-            if queue:
-                ordered.append(queue.pop(0))
-        category_queues = [q for q in category_queues if q]
-
-    # Assign new queue values
-    for i, event in enumerate(ordered):
-        event.queue = base_queue + i * 2
-
-    db.commit()
-    return len(ordered)
+def distribute_event_queue(db, protect_first=None) -> int:
+    """Compatibility entry point for the unified schedule planner."""
+    cfg = dict(settings.route_unschedulable or {})
+    if protect_first is not None:
+        cfg['protect_first'] = protect_first
+    return len(schedule_channel_events(db=db, cfg=cfg, dry_run=False)['assignments'])
 
 
 @db_session
@@ -4476,282 +4422,211 @@ def get_posting_slots(db, kind: str):
     return [(int(r[0]), int(r[1]), r[2]) for r in rows]
 
 
-@db_session
-def find_unschedulable_events(
-    db,
-    protect_first: int = 5,
-    weekday_slots: int = 4,
-    weekend_slots: int = 3,
-    min_runway_days: int = 1,
-    slots_per_weekday: Optional[List[int]] = None,
-) -> List[dict]:
-    """Return ReadyToPost events that cannot be posted before their ``to_date``
-    even under an optimal (earliest-deadline-first) arrangement of the queue.
-
-    Read-only / dry-run: computes the set that *would* be routed to OnlyApi but
-    changes nothing. Status routing is left to a separate caller once the model
-    is validated on real data.
-
-    Model
-    -----
-    The channel posts ``weekday_slots`` events per weekday and ``weekend_slots``
-    per weekend day. The first ``protect_first`` events by ``queue`` are committed
-    (they occupy the nearest slots), so they are excluded from candidates and the
-    capacity available to everyone else is reduced by ``protect_first``.
-
-    We deliberately ignore each event's *current* queue position: an event deep
-    in the queue could simply be moved a few days earlier by the reordering task.
-    We only flag events that do not fit even when packed optimally — the genuine
-    overflow that no arrangement can save. Deadline is ``to_date`` (an event is
-    still postable while it is ongoing).
-
-    ``slots_per_weekday`` (7 counts, Mon..Sun — from Django's ``kind=event``
-    PostingTime rows) overrides the two flat numbers: once a slot is handed to a
-    digest, the channel posts fewer events that day.
-
-    Events ending within ``min_runway_days`` (e.g. today) are excluded — they are
-    left to the regular expiry path (``update_expired_events``) rather than routed.
-
-    Packing is Moore-Hodgson: walk candidates in ``to_date`` order; when a
-    deadline window overflows, drop one scheduled event. Victim priority (dropped
-    first → last): not-prepared before prepared (``is_ready=True`` is protected
-    and removed only as a last resort), then lowest ``score``, then nearest
-    ``to_date`` (the one already most at risk). Dropped events are the
-    unschedulable set. Which victims are chosen never changes *how many* events
-    stay on time — only which ones — so this is free to optimise.
-    """
-    import heapq
-
-    msk_now = datetime.now(timezone.utc) + timedelta(hours=3)
-    today = msk_now.date()
-    weekday0 = today.weekday()  # Mon=0 .. Sun=6
-
-    def cumulative_slots(target_date):
-        """Number of channel slots from today through target_date inclusive.
-
-        O(1): count weekday/weekend days in the range arithmetically instead of
-        iterating day by day (the latter is too slow for far-future deadlines).
-        """
-        if target_date < today:
-            return 0
-        n = (target_date - today).days + 1
-        full_weeks, rem = divmod(n, 7)
-        if slots_per_weekday:
-            return full_weeks * sum(slots_per_weekday) + sum(
-                slots_per_weekday[(weekday0 + i) % 7] for i in range(rem)
-            )
-        weekend_days = full_weeks * 2 + sum(
-            1 for i in range(rem) if (weekday0 + i) % 7 >= 5
-        )
-        weekday_days = n - weekend_days
-        return weekday_days * weekday_slots + weekend_days * weekend_slots
-
-    # Select only the columns we need — loading full ORM rows pulls the pgvector
-    # `embedding` and `score_breakdown` JSONB for the whole ReadyToPost pool,
-    # which is what made this slow.
-    all_ready = (
-        db.query(
-            Events2Posts.id,
-            Events2Posts.event_id,
-            Events2Posts.title,
-            Events2Posts.score,
-            Events2Posts.queue,
-            Events2Posts.is_ready,
-            Events2Posts.category,
-            Events2Posts.source,
-            Events2Posts.from_date,
-            Events2Posts.to_date,
-            Events2Posts.score_breakdown,
-        )
-        .filter(Events2Posts.status == 'ReadyToPost')
-        .order_by(asc(Events2Posts.queue))
-        .all()
-    )
-
-    # First protect_first by queue are committed; they eat the nearest slots.
-    # Events ending before the runway cutoff are left to the regular expiry path.
-    runway_cutoff = today + timedelta(days=min_runway_days)
-    candidates = [
-        e
-        for e in all_ready[protect_first:]
-        if e.to_date is not None and e.to_date.date() >= runway_cutoff
-    ]
-    candidates.sort(key=lambda e: e.to_date)
-
-    # Min-heap keyed by (ready_rank, score, to_date, id): heappop yields the
-    # not-prepared event first (ready_rank 0), then lowest score, then nearest
-    # deadline. So is_ready=True (rank 1) is dropped only as a last resort. id
-    # (unique) keeps the tuple comparable without ever reaching the row object.
-    scheduled = []
-    dropped = []
-    for e in candidates:
-        capacity = max(0, cumulative_slots(e.to_date.date()) - protect_first)
-        ready_rank = 1 if e.is_ready is True else 0
-        heapq.heappush(scheduled, (ready_rank, e.score or 0, e.to_date, e.id, e))
-        if len(scheduled) > capacity:
-            removable = [item for item in scheduled if not routing_locked(item[4].score_breakdown)]
-            if removable:
-                victim = min(removable)
-                scheduled.remove(victim)
-                heapq.heapify(scheduled)
-                dropped.append(victim[4])
-
-    dropped.sort(key=lambda e: e.to_date)
-    return [
-        {
-            'id': e.id,
-            'event_id': e.event_id,
-            'title': e.title,
-            'score': e.score,
-            'queue': e.queue,
-            'is_ready': e.is_ready,
-            'category': e.category,
-            'source': e.source,
-            'from_date': e.from_date.isoformat() if e.from_date else None,
-            'to_date': e.to_date.isoformat() if e.to_date else None,
-        }
-        for e in dropped
-    ]
-
-
-@db_session
-def route_unschedulable_events(
-    db,
-    protect_first: int = 5,
-    weekday_slots: int = 4,
-    weekend_slots: int = 3,
-    min_runway_days: int = 1,
-    limit: int = 0,
-    slots_per_weekday: Optional[List[int]] = None,
-) -> List[int]:
-    """Route events that cannot be posted before their ``to_date`` off the
-    channel into the ``OnlyApi`` status.
-
-    The unschedulable set is computed by :func:`find_unschedulable_events` (same
-    capacity model, runway floor and victim priority). This mirrors
-    :func:`route_events_to_api`: ``status -> 'OnlyApi'`` and ``post_date`` cleared.
-
-    If ``limit > 0`` only the first ``limit`` events are routed — the list is
-    ordered by ``to_date``, so the most urgent overflow goes first.
-
-    Returns the list of routed ids.
-    """
-    events = find_unschedulable_events(
-        db=db,
-        protect_first=protect_first,
-        weekday_slots=weekday_slots,
-        weekend_slots=weekend_slots,
-        min_runway_days=min_runway_days,
-        slots_per_weekday=slots_per_weekday,
-    )
-    ids = [e['id'] for e in events]
-    if limit and limit > 0:
-        ids = ids[:limit]
-
-    if ids:
-        for event in db.query(Events2Posts).filter(Events2Posts.id.in_(ids)).all():
-            if routing_locked(event.score_breakdown):
-                continue
-            bd = dict(parse_breakdown(event.score_breakdown) or {})
-            bd['routing'] = {'reason': 'capacity'}
-            event.score_breakdown = bd
-            event.status = 'OnlyApi'
-            event.post_date = None
-        db.commit()
-    return ids
-
-
-@db_session
-def rebalance_channel_queue(db, cfg=None, dry_run=True):
-    """Fill real posting slots from evaluated candidates, respecting manual choices."""
-    from .scoring import can_return_to_channel, is_talk_event
-    cfg = cfg or {}
-    now = datetime.now(timezone.utc)
-    horizon = max(1, min(30, int(cfg.get('horizon_days', 14))))
-    lead = timedelta(hours=max(0, int(cfg.get('min_lead_hours', 24))))
-    slots = get_posting_slots(db=db, kind='event')
-    if not slots:
-        return {'changes': [], 'skipped': 'no_event_slots'}
+def _channel_schedule_plan(rows, slots, cfg, now):
+    """Match candidates to real slots; return a read-only, reviewable plan."""
     from zoneinfo import ZoneInfo
+    from .scoring import can_return_to_channel, is_talk_event
+
     tz = ZoneInfo(getattr(settings, 'timezone', None) or 'Europe/Moscow')
+    now = _as_utc(now)
     today = now.astimezone(tz).date()
+    horizon = max(1, min(90, int(cfg.get('horizon_days', 14))))
+    end = datetime.combine(today + timedelta(days=horizon), datetime.min.time(), tzinfo=tz)
     times = sorted({datetime.combine(today + timedelta(days=d), t, tzinfo=tz)
-                    for d in range(horizon) for start, end, t in slots
-                    if (start == -1 or start <= (today + timedelta(days=d)).weekday() <= end)
+                    for d in range(horizon) for start, stop, t in slots
+                    if (start == -1 or start <= (today + timedelta(days=d)).weekday() <= stop)
                     and datetime.combine(today + timedelta(days=d), t, tzinfo=tz) > now})
-    rows = db.query(Events2Posts).filter(
-        Events2Posts.status.in_(('ReadyToPost', 'OnlyApi', 'Posted')),
-        Events2Posts.to_date > now,
-    ).with_for_update().all()
-    ready = sorted([e for e in rows if e.status == 'ReadyToPost'],
+    ready = sorted((e for e in rows if e.status == 'ReadyToPost'),
                    key=lambda e: (e.queue is None, e.queue or 0, e.id))
-    protect = max(0, int(cfg.get('protect_first', 2)))
-    protected = {e.id for e in ready[:protect]}
+    protected = {e.id for e in ready[:max(0, int(cfg.get('protect_first', 2)))]}
     protected.update(e.id for e in ready if routing_locked(e.score_breakdown))
+    by_id = {e.id: e for e in rows}
+    lead = timedelta(hours=max(0, int(cfg.get('min_lead_hours', 24))))
+    advance = timedelta(days=max(1, int(cfg.get('max_advance_days', 21))))
+    windows, deadlines = {}, {}
+    for e in rows:
+        start, stop = _as_utc(e.from_date), _as_utc(e.to_date)
+        if not start or not stop or stop <= now:
+            windows[e.id] = []
+            continue
+        multi_day = stop - start >= timedelta(days=2)
+        notice = timedelta(0) if routing_locked(e.score_breakdown) else lead
+        deadline = stop if multi_day else min(stop, start - notice)
+        deadlines[e.id] = deadline
+        windows[e.id] = [i for i, t in enumerate(times)
+                         if t >= start - advance and t <= deadline and t < stop
+                         and (multi_day or t < start)]
+    # A post already sent a few minutes ahead of its scheduled time owns its slot.
+    occupied = {i for i, t in enumerate(times) for e in rows
+                if e.status == 'Posted' and _as_utc(e.post_date) == t
+                and not can_return_to_channel(e.status, e.score, e.score_breakdown)}
+    owners, fixed, warnings = {}, set(), []
+    for e in ready:
+        if e.id not in protected:
+            continue
+        available = [i for i in windows[e.id] if i not in occupied and i not in owners]
+        current = _as_utc(e.post_date)
+        index = next((i for i in available if times[i] == current), None)
+        if index is None and available:
+            index = available[0]
+        if index is None:
+            warnings.append({'id': e.id, 'reason': 'protected_without_valid_slot'})
+        else:
+            owners[index] = e.id
+            fixed.add(e.id)
     pool = [e for e in rows if e.id not in protected and
             (e.status == 'ReadyToPost' or can_return_to_channel(e.status, e.score, e.score_breakdown))]
-    safe_pool = []
-    for e in pool:
-        if e.status != 'ReadyToPost':
-            dup = find_embedding_duplicate(db=db, embedding=e.embedding,
+    chosen = list(fixed)
+
+    def place(event_id, seen):
+        for index in reversed(windows[event_id]):
+            if index in seen or index in occupied:
+                continue
+            seen.add(index)
+            owner = owners.get(index)
+            if owner is None or (owner not in fixed and place(owner, seen)):
+                owners[index] = event_id
+                return True
+        return False
+
+    while pool:
+        talks = sum(is_talk_event(by_id[i].title, by_id[i].category) for i in chosen)
+        allowance = max(2, math.ceil((len(chosen) + 1) * 2 / 7))
+        def rank(e):
+            diversity = 8 if talks >= allowance and is_talk_event(e.title, e.category) else 0
+            incumbent = int(cfg.get('switch_margin', 5)) if e.status == 'ReadyToPost' else 0
+            return ((e.score or 0) + incumbent - diversity, -e.id)
+        event = max(pool, key=rank)
+        pool.remove(event)
+        if place(event.id, set()):
+            chosen.append(event.id)
+    # Compact the feasible matching, keeping urgent events before flexible ones.
+    matched = dict(owners)
+    pending = set(owners.values()) - fixed
+    compact = {i: event_id for i, event_id in owners.items() if event_id in fixed}
+    for index in range(len(times)):
+        if index in occupied or index in compact:
+            continue
+        eligible = [i for i in pending if index in windows[i]]
+        if eligible:
+            event_id = min(eligible, key=lambda i: (deadlines[i], -(by_id[i].score or 0), i))
+            compact[index] = event_id
+            pending.remove(event_id)
+    owners = matched if pending else compact
+    selected = set(owners.values())
+    changes = []
+    runway = today + timedelta(days=max(0, int(cfg.get('min_runway_days', 1))))
+    for e in ready:
+        if e.id in selected or e.id in protected:
+            continue
+        stop = _as_utc(e.to_date)
+        # Future opportunities outside the planning horizon remain queued, undated.
+        if stop and stop > now and stop.astimezone(tz).date() >= runway and deadlines.get(e.id, end) < end:
+            changes.append({'id': e.id, 'status': 'OnlyApi', 'reason': 'capacity'})
+    for event_id in sorted(selected):
+        if by_id[event_id].status != 'ReadyToPost':
+            changes.append({'id': event_id, 'status': 'ReadyToPost', 'reason': 'editorial'})
+    assignments = [{'id': owners[i], 'post_date': times[i].isoformat()}
+                   for i in sorted(owners)]
+    for e in ready:
+        if e.id not in selected and e.id not in protected:
+            warnings.append({'id': e.id, 'reason': 'no_valid_slot_in_horizon'})
+    return {'changes': changes, 'assignments': assignments, 'warnings': warnings}
+
+
+@db_session
+def schedule_channel_events(db, cfg=None, dry_run=True):
+    """The single owner of channel dates and capacity-based status changes."""
+    from .scoring import can_return_to_channel
+    cfg = cfg if cfg is not None else settings.route_unschedulable or {}
+    slots = get_posting_slots(db=db, kind='event')
+    if slots is None or not slots:
+        return {'changes': [], 'assignments': [], 'warnings': [], 'routed_ids': [],
+                'routed_count': 0, 'dry_run': dry_run, 'skipped': 'slots_unavailable' if slots is None else 'no_event_slots'}
+    if not dry_run and db.get_bind().dialect.name == 'postgresql':
+        from sqlalchemy import text
+        db.execute(text('SELECT pg_advisory_xact_lock(hashtext(:scope))'),
+                   {'scope': f'dsn:channel-schedule:{current_city()}'})
+    now = datetime.now(timezone.utc)
+    query = db.query(Events2Posts).filter(
+        Events2Posts.status.in_(('ReadyToPost', 'OnlyApi', 'Posted')),
+        or_(Events2Posts.status == 'ReadyToPost', Events2Posts.to_date > now),
+    ).options(load_only(
+        Events2Posts.id, Events2Posts.status, Events2Posts.score, Events2Posts.score_breakdown,
+        Events2Posts.queue, Events2Posts.post_date, Events2Posts.from_date, Events2Posts.to_date,
+        Events2Posts.title, Events2Posts.category, Events2Posts.embedding_model,
+    ))
+    if not dry_run:
+        query = query.with_for_update()
+    rows = query.all()
+    returning = [e.id for e in rows if can_return_to_channel(e.status, e.score, e.score_breakdown)]
+    embeddings = dict(db.query(Events2Posts.id, Events2Posts.embedding).filter(Events2Posts.id.in_(returning)).all()) if returning else {}
+    pool = []
+    for e in rows:
+        if e.status == 'OnlyApi' or (e.status == 'Posted' and can_return_to_channel(e.status, e.score, e.score_breakdown)):
+            if not can_return_to_channel(e.status, e.score, e.score_breakdown):
+                continue
+            dup = find_embedding_duplicate(db=db, embedding=embeddings.get(e.id),
                 embedding_model=e.embedding_model, from_date=e.from_date, to_date=e.to_date,
                 exclude_id=e.id, max_distance=(_get_scoring_config() or {}).get('embedding_dedup_max_distance', .08))
             if dup:
                 continue
-        safe_pool.append(e)
-    pool = safe_pool
-    assignments = {}
-    chosen = []
-    chosen_ids = set()
-    committed = [e for e in ready if e.id in protected]
-    for slot in times:
-        if committed:
-            event = committed.pop(0)
-        else:
-            eligible = []
-            for e in pool:
-                if e.id in chosen_ids or _as_utc(e.to_date) <= slot:
-                    continue
-                # Multi-day runs may already be open; one-off events need notice.
-                ongoing = (_as_utc(e.to_date) - _as_utc(e.from_date)) >= timedelta(days=2) if e.from_date else False
-                if not ongoing and (not e.from_date or _as_utc(e.from_date) < slot + lead):
-                    continue
-                eligible.append(e)
-            if not eligible:
-                continue
-            talk_count = sum(is_talk_event(e.title, e.category) for e in chosen[-6:])
-            def rank(e):
-                diversity = 8 if talk_count >= 2 and is_talk_event(e.title, e.category) else 0
-                # Keep an incumbent unless the alternative is materially better.
-                incumbent = int(cfg.get('switch_margin', 5)) if e.status == 'ReadyToPost' else 0
-                return ((e.score or 0) + incumbent - diversity, -_as_utc(e.to_date).timestamp(), -e.id)
-            event = max(eligible, key=rank)
-        chosen.append(event)
-        assignments[event.id] = slot
-        chosen_ids.add(event.id)
-    # Protected rows outside the horizon are still untouchable.
-    chosen_ids.update(protected)
-    changes = []
-    for e in ready:
-        if e.id not in chosen_ids and not routing_locked(e.score_breakdown):
-            changes.append({'id': e.id, 'status': 'OnlyApi', 'reason': 'capacity'})
-    for e in chosen:
-        if e.status != 'ReadyToPost':
-            changes.append({'id': e.id, 'status': 'ReadyToPost', 'reason': 'editorial'})
+        pool.append(e)
+    result = _channel_schedule_plan(pool, slots, cfg, datetime.now(timezone.utc))
+    result['dry_run'] = dry_run
+    limit = max(0, int(cfg.get('limit', 30)))
+    if limit and len(result['changes']) > limit:
+        result['skipped'] = 'change_limit'
+        result['routed_ids'], result['routed_count'] = [], 0
+        return result
+    result['routed_ids'] = [c['id'] for c in result['changes'] if c['status'] == 'OnlyApi']
+    result['routed_count'] = len(result['routed_ids'])
     if not dry_run:
         by_id = {e.id: e for e in rows}
-        for change in changes:
+        for change in result['changes']:
             e = by_id[change['id']]
             bd = dict(parse_breakdown(e.score_breakdown) or {})
             bd['routing'] = {'reason': change['reason']}
             e.score_breakdown = bd
             e.status = change['status']
-            e.post_date = None
-        # Rebuild only automatic assignments; Django can subsequently fill empty slots.
-        active = [e for e in chosen if e.status == 'ReadyToPost']
-        for index, e in enumerate(active):
+        assigned = {a['id'] for a in result['assignments']}
+        for e in rows:
+            if e.status == 'ReadyToPost' and e.id not in assigned:
+                e.post_date = None
+            elif e.status != 'ReadyToPost' and e.id in result['routed_ids']:
+                e.post_date = None
+        for index, assignment in enumerate(result['assignments']):
+            e = by_id[assignment['id']]
             e.queue = index * 2 + 2
-            if e.id not in protected:
-                e.post_date = assignments[e.id]
+            e.post_date = datetime.fromisoformat(assignment['post_date'])
+        deferred = sorted((e for e in rows if e.status == 'ReadyToPost' and e.id not in assigned),
+                          key=lambda e: (e.queue is None, e.queue or 0, e.id))
+        for index, e in enumerate(deferred, start=len(assigned)):
+            e.queue = index * 2 + 2
         db.commit()
-    return {'changes': changes, 'dry_run': dry_run}
+    return result
+
+
+@db_session
+def rebalance_channel_queue(db, cfg=None, dry_run=True):
+    """Compatibility entry point; scheduling has one implementation."""
+    return schedule_channel_events(db=db, cfg=cfg, dry_run=dry_run)
+
+
+@db_session
+def route_unschedulable_events(db, cfg=None, dry_run=False, **legacy):
+    """Compatibility entry point for the former capacity-only router."""
+    config = {**(cfg if cfg is not None else settings.route_unschedulable or {}), **legacy}
+    return schedule_channel_events(db=db, cfg=config, dry_run=dry_run)
+
+
+@db_session
+def find_unschedulable_events(db, protect_first=2, **legacy):
+    """Compatibility preview of the unified plan's capacity removals."""
+    cfg = {**(settings.route_unschedulable or {}), **legacy, 'protect_first': protect_first}
+    result = schedule_channel_events(db=db, cfg=cfg, dry_run=True)
+    ids = [c['id'] for c in result['changes'] if c['status'] == 'OnlyApi']
+    columns = ('id', 'event_id', 'title', 'score', 'queue', 'is_ready', 'category', 'source', 'from_date', 'to_date')
+    rows = db.query(*(getattr(Events2Posts, key) for key in columns)).filter(Events2Posts.id.in_(ids)).all()
+    return [{key: value.isoformat() if isinstance(value, datetime) else value
+             for key, value in row._asdict().items()} for row in rows]

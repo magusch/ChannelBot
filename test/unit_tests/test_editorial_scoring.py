@@ -97,7 +97,9 @@ def test_capacity_routing_respects_manual_marker(db_session_fixture):
 
 
 def test_rebalance_dry_run_and_real_slot_selection(db_session_fixture, monkeypatch):
-    incumbent = event_row(9010, score=60)
+    anchor = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+    incumbent = event_row(9010, score=60, from_date=anchor+timedelta(days=1, hours=12),
+                          to_date=anchor+timedelta(days=1, hours=14))
     candidate = event_row(9011, status='OnlyApi', score=90,
                           score_breakdown={'editorial': {'score': 95}, 'routing': {'reason': 'capacity'}})
     db_session_fixture.add_all([incumbent, candidate]); db_session_fixture.commit()

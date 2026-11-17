@@ -130,14 +130,6 @@ def _city_beat_schedules():
             'schedule': crontab(minute=15, hour=5),  # after auto_promote (05:00), before prepare (05:25)
         }
 
-    if settings.route_unschedulable.get('enabled'):
-        beat_schedules['route-unschedulable-events'] = {
-            'task': 'davai_s_nami_bot.celery_tasks.route_unschedulable_events',
-            # after auto_route (05:15), before prepare (05:25) so we don't spend
-            # AI prep on events we're about to route off the channel
-            'schedule': crontab(minute=20, hour=5),
-        }
-
     beat_schedules['dedupe-channel-queue-early'] = {
         'task': 'davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
         'schedule': crontab(minute=22, hour=5),
@@ -161,19 +153,11 @@ def _city_beat_schedules():
         'schedule': crontab(minute=50, hour=5),
     }
 
-    if settings.features.get('channel_selection', {}).get('enabled'):
-        beat_schedules['rebalance-channel-queue'] = {
-            'task': 'davai_s_nami_bot.celery_tasks.rebalance_channel_queue',
+    if settings.route_unschedulable.get('enabled'):
+        beat_schedules['channel-schedule'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.route_unschedulable_events',
             'schedule': crontab(minute=10, hour=6),
-            'kwargs': {'dry_run': False},
         }
-
-    beat_schedules['distribute-event-queue'] = {
-        'task': 'davai_s_nami_bot.celery_tasks.distribute_event_queue',
-        'schedule': crontab(minute=0, hour=6),
-        # Protect the next two individual posts.
-        'kwargs': {'protect_first': 2},
-    }
 
     if settings.features.get('prepare_api_events_limit', 0):
         beat_schedules['prepare-api-events'] = {

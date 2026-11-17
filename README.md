@@ -134,10 +134,9 @@ sees the result of the previous one on the same day.
 | `auto_promote_by_score` | 05:00 | always | NotApproved.score ≥ 70 → Events2Posts (`is_ready=NULL`) |
 | `auto_moderate_mid_score_events` | 05:10 (Mon/Wed/Fri) | always | AI-moderate score 40–69; low scores → rejected |
 | `auto_route_to_api` | 05:15 | `auto_route_to_api.enabled` | Low-priority ReadyToPost → `OnlyApi` (off the channel queue, still in API) |
-| `route_unschedulable_events` | 05:20 | `route_unschedulable.enabled` | ReadyToPost that can't fit the schedule before `to_date` → `OnlyApi` |
+| `route_unschedulable_events` | 06:10 | `route_unschedulable.enabled` | One planner: choose candidates, assign real slots, route overflow to OnlyApi |
 | `prepare_unprepared_events` | 05:25 | `prepare_events_limit > 0` | AI text preparation for `is_ready=NULL` events |
 | `embed_unembedded_events` | 05:45 | always | Build embeddings for fresh events |
-| `distribute_event_queue` | 06:00 | always | Rebalance the publish `queue` by urgency / category diversity |
 | `catch_up_daily_tasks` | 06:30–17:30 hourly | always | Re-run any nightly stage that was missed |
 | `process_reminders` | every 30 min | always | Reminders for users' favorite events |
 | `schedule_posting_tasks` | every 5 min | `task_event_post = true` | Individual post scheduler |
@@ -247,7 +246,7 @@ Task endpoints return a `task_id` — poll its status via `GET /api/tasks/status
 | POST | `/recalculate-scores/` | Recompute event scores |
 | POST | `/update-adaptive-scoring/` | Recompute adaptive scoring |
 | POST | `/auto-promote-by-score/` | Promote score ≥ 70 into Events2Posts |
-| POST | `/distribute-event-queue/` | Reorder the publish queue |
+| POST | `/distribute-event-queue/` | Run the unified channel scheduler (legacy endpoint) |
 | POST | `/prepare-unprepared-events/` | AI text preparation |
 | POST | `/auto-moderate-mid-score/` | AI moderation for score 40–69 |
 | GET | `/adaptive-scoring/` | Current adaptive weights |
@@ -390,16 +389,54 @@ requires editorial ≥90 and total ≥80, with no individual/unknown publication
 Historical Posted rows without provenance never return automatically. No historical
 status or publication backfill is performed.
 
-`features.channel_selection.enabled` schedules selection at 06:10 after daily
-queue maintenance. It uses real `PostingTime(kind=event)` slots; no slots means skip.
-Defaults: 14-day horizon, two protected events, 24-hour lead for single-session
-events, 5-point incumbent preference. After two conversational events among the
-previous six picks, another gets an 8-point selection penalty (not a score change).
-Ongoing multi-day events can still be selected before their end.
+`features.route_unschedulable.enabled` schedules the unified planner at 06:10,
+after preparation and deduplication. `channel_selection` is no longer used.
+The former rebalance/distribute task names are compatibility aliases, not periodic jobs.
+Django schedule refreshes call the same `POST /api/events/schedule/channel/` endpoint
+with `?city=spb&dry_run=false`; without `dry_run=false` it returns a preview.
+The plan returns `assignments`, `changes`, `warnings`, and routing counts.
+
+```json
+"route_unschedulable": {
+  "enabled": true,
+  "protect_first": 2,
+  "horizon_days": 14,
+  "min_lead_hours": 24,
+  "max_advance_days": 21,
+  "min_runway_days": 1,
+  "switch_margin": 5,
+  "limit": 30
+}
+```
+
+Only real `PostingTime(kind=event)` slots are used, in the city's timezone.
+Missing/empty slot data skips planning; legacy weekday/weekend counts are ignored.
+The next two queue entries and manually locked ReadyToPost rows have priority, but
+never keep a date after the event. Valid reserved dates are preserved; collisions
+are moved to another valid slot. A protected event with no valid slot keeps its
+status, gets no posting date, and appears in `warnings`.
+
+Single-session events need 24 hours' notice. A manually selected event may use
+shorter notice but must still be posted before it starts. Multi-day runs can be
+posted while ongoing, before `to_date`. Announcements start at most 21 days before
+opening. Exact matching preserves urgent events alongside flexible ones; dates
+are compacted in deadline order. After the conversational quota (~2/7 selected
+posts), another gets an 8-point selection penalty, not a score change.
+
 OnlyApi returns require a recorded capacity/low-priority routing reason,
 editorial ≥75 and total ≥75, or the stricter digest condition above; repeat and
 duplicate routes are excluded. Existing semantic dedup is checked before return.
-Unknown legacy OnlyApi routes are left alone. The selection task defaults to
-`dry_run=True`; preview via `rebalance_channel_queue.delay()` before an operational
-rollout. Selection writes actual slot dates; protected choices keep their dates.
-Django and ChannelBot changes must be deployed together to protect manual choices.
+Unknown legacy OnlyApi routes are left alone. Future events whose opportunities
+lie beyond the planning horizon stay queued without a date. Unselected near-term
+events go to OnlyApi unless protected or inside `min_runway_days` (left to expiry).
+No row is assigned a date outside its feasible window. Old invalid dates are
+cleared, and the sending query separately excludes ended events and started
+single-session events. Zero active event slots also blocks sending old dates.
+
+`limit` caps status changes: a larger plan returns `skipped=change_limit` without
+writing a partial schedule; 0 removes the cap. PostgreSQL takes a per-city
+transaction lock to serialize concurrent refreshes. Preview performs no writes.
+Deploy the ChannelBot endpoint before Django; the latter delegates refreshes to
+it and fails explicitly if it is unavailable. No independent date reshuffling or
+post-planning Django fill is performed. Reapply important historical manual choices
+before enabling the planner: their old statuses alone do not identify intent.
