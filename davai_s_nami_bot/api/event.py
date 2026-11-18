@@ -236,6 +236,6 @@ async def get_valid_event_by_id(event_id: int, request: Request):
 
 
 @router.post('/schedule/channel/', dependencies=[Depends(verify_token)])
-def schedule_channel(dry_run: bool = True):
+def schedule_channel(dry_run: bool = True, reselect: bool = False):
     """Preview or apply the city channel schedule, including capacity routing."""
-    return crud.schedule_channel_events(dry_run=dry_run)
+    return crud.schedule_channel_events(dry_run=dry_run, reselect=reselect)

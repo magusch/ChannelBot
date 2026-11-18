@@ -4303,7 +4303,7 @@ def distribute_event_queue(db, protect_first=None) -> int:
     cfg = dict(settings.route_unschedulable or {})
     if protect_first is not None:
         cfg['protect_first'] = protect_first
-    return len(schedule_channel_events(db=db, cfg=cfg, dry_run=False)['assignments'])
+    return len(schedule_channel_events(db=db, cfg=cfg, dry_run=False, reselect=False)['assignments'])
 
 
 @db_session
@@ -4429,6 +4429,7 @@ def _channel_schedule_plan(rows, slots, cfg, now):
 
     tz = ZoneInfo(getattr(settings, 'timezone', None) or 'Europe/Moscow')
     now = _as_utc(now)
+    preserve = cfg.get('preserve_schedule', False)
     today = now.astimezone(tz).date()
     horizon = max(1, min(90, int(cfg.get('horizon_days', 14))))
     end = datetime.combine(today + timedelta(days=horizon), datetime.min.time(), tzinfo=tz)
@@ -4440,6 +4441,11 @@ def _channel_schedule_plan(rows, slots, cfg, now):
                    key=lambda e: (e.queue is None, e.queue or 0, e.id))
     protected = {e.id for e in ready[:max(0, int(cfg.get('protect_first', 2)))]}
     protected.update(e.id for e in ready if routing_locked(e.score_breakdown))
+    manual_slots = {e.id for e in ready if isinstance(
+        (parse_breakdown(e.score_breakdown) or {}).get('manual_schedule'), dict)}
+    protected.update(manual_slots)
+    if preserve:
+        protected.update(e.id for e in ready if e.post_date and _as_utc(e.post_date) > now)
     by_id = {e.id: e for e in rows}
     lead = timedelta(hours=max(0, int(cfg.get('min_lead_hours', 24))))
     advance = timedelta(days=max(1, int(cfg.get('max_advance_days', 21))))
@@ -4450,7 +4456,7 @@ def _channel_schedule_plan(rows, slots, cfg, now):
             windows[e.id] = []
             continue
         multi_day = stop - start >= timedelta(days=2)
-        notice = timedelta(0) if routing_locked(e.score_breakdown) else lead
+        notice = timedelta(0) if routing_locked(e.score_breakdown) or e.id in manual_slots else lead
         deadline = stop if multi_day else min(stop, start - notice)
         deadlines[e.id] = deadline
         windows[e.id] = [i for i, t in enumerate(times)
@@ -4461,21 +4467,32 @@ def _channel_schedule_plan(rows, slots, cfg, now):
                 if e.status == 'Posted' and _as_utc(e.post_date) == t
                 and not can_return_to_channel(e.status, e.score, e.score_breakdown)}
     owners, fixed, warnings = {}, set(), []
-    for e in ready:
+    held_slots = {i for e in ready if e.id in protected for i in windows[e.id]
+                  if _as_utc(e.post_date) == times[i]} if preserve else set()
+    reserved = sorted(ready, key=lambda e: (e.id not in manual_slots, e.queue is None, e.queue or 0, e.id))
+    for e in reserved:
         if e.id not in protected:
             continue
         available = [i for i in windows[e.id] if i not in occupied and i not in owners]
         current = _as_utc(e.post_date)
+        if e.id in manual_slots:
+            requested = (parse_breakdown(e.score_breakdown) or {})['manual_schedule'].get('post_date')
+            if requested:
+                try:
+                    current = _as_utc(datetime.fromisoformat(requested))
+                except (ValueError, TypeError):
+                    warnings.append({'id': e.id, 'reason': 'invalid_manual_slot'})
         index = next((i for i in available if times[i] == current), None)
-        if index is None and available:
-            index = available[0]
+        fallback = [i for i in available if i not in held_slots]
+        if index is None and fallback:
+            index = fallback[0]
         if index is None:
             warnings.append({'id': e.id, 'reason': 'protected_without_valid_slot'})
         else:
             owners[index] = e.id
             fixed.add(e.id)
     pool = [e for e in rows if e.id not in protected and
-            (e.status == 'ReadyToPost' or can_return_to_channel(e.status, e.score, e.score_breakdown))]
+            (e.status == 'ReadyToPost' or (not preserve and can_return_to_channel(e.status, e.score, e.score_breakdown)))]
     chosen = list(fixed)
 
     def place(event_id, seen):
@@ -4493,6 +4510,8 @@ def _channel_schedule_plan(rows, slots, cfg, now):
         talks = sum(is_talk_event(by_id[i].title, by_id[i].category) for i in chosen)
         allowance = max(2, math.ceil((len(chosen) + 1) * 2 / 7))
         def rank(e):
+            if preserve:
+                return (-(e.queue if e.queue is not None else 10**12), -e.id)
             diversity = 8 if talks >= allowance and is_talk_event(e.title, e.category) else 0
             incumbent = int(cfg.get('switch_margin', 5)) if e.status == 'ReadyToPost' else 0
             return ((e.score or 0) + incumbent - diversity, -e.id)
@@ -4517,7 +4536,7 @@ def _channel_schedule_plan(rows, slots, cfg, now):
     changes = []
     runway = today + timedelta(days=max(0, int(cfg.get('min_runway_days', 1))))
     for e in ready:
-        if e.id in selected or e.id in protected:
+        if preserve or e.id in selected or e.id in protected:
             continue
         stop = _as_utc(e.to_date)
         # Future opportunities outside the planning horizon remain queued, undated.
@@ -4535,10 +4554,11 @@ def _channel_schedule_plan(rows, slots, cfg, now):
 
 
 @db_session
-def schedule_channel_events(db, cfg=None, dry_run=True):
+def schedule_channel_events(db, cfg=None, dry_run=True, reselect=True):
     """The single owner of channel dates and capacity-based status changes."""
     from .scoring import can_return_to_channel
-    cfg = cfg if cfg is not None else settings.route_unschedulable or {}
+    cfg = dict(cfg if cfg is not None else settings.route_unschedulable or {})
+    cfg['preserve_schedule'] = not reselect
     slots = get_posting_slots(db=db, kind='event')
     if slots is None or not slots:
         return {'changes': [], 'assignments': [], 'warnings': [], 'routed_ids': [],
@@ -4559,11 +4579,13 @@ def schedule_channel_events(db, cfg=None, dry_run=True):
     if not dry_run:
         query = query.with_for_update()
     rows = query.all()
-    returning = [e.id for e in rows if can_return_to_channel(e.status, e.score, e.score_breakdown)]
+    returning = [e.id for e in rows if reselect and can_return_to_channel(e.status, e.score, e.score_breakdown)]
     embeddings = dict(db.query(Events2Posts.id, Events2Posts.embedding).filter(Events2Posts.id.in_(returning)).all()) if returning else {}
     pool = []
     for e in rows:
-        if e.status == 'OnlyApi' or (e.status == 'Posted' and can_return_to_channel(e.status, e.score, e.score_breakdown)):
+        if not reselect and e.status == 'OnlyApi':
+            continue
+        if e.status == 'OnlyApi' or (reselect and e.status == 'Posted' and can_return_to_channel(e.status, e.score, e.score_breakdown)):
             if not can_return_to_channel(e.status, e.score, e.score_breakdown):
                 continue
             dup = find_embedding_duplicate(db=db, embedding=embeddings.get(e.id),
@@ -4583,6 +4605,7 @@ def schedule_channel_events(db, cfg=None, dry_run=True):
     result['routed_count'] = len(result['routed_ids'])
     if not dry_run:
         by_id = {e.id: e for e in rows}
+        queue_values = sorted({e.queue for e in rows if e.status == 'ReadyToPost' and e.queue is not None})
         for change in result['changes']:
             e = by_id[change['id']]
             bd = dict(parse_breakdown(e.score_breakdown) or {})
@@ -4595,14 +4618,17 @@ def schedule_channel_events(db, cfg=None, dry_run=True):
                 e.post_date = None
             elif e.status != 'ReadyToPost' and e.id in result['routed_ids']:
                 e.post_date = None
+        ready_count = sum(e.status == 'ReadyToPost' for e in rows)
+        while len(queue_values) < ready_count:
+            queue_values.append((queue_values[-1] if queue_values else 0) + 2)
         for index, assignment in enumerate(result['assignments']):
             e = by_id[assignment['id']]
-            e.queue = index * 2 + 2
+            e.queue = queue_values[index]
             e.post_date = datetime.fromisoformat(assignment['post_date'])
         deferred = sorted((e for e in rows if e.status == 'ReadyToPost' and e.id not in assigned),
                           key=lambda e: (e.queue is None, e.queue or 0, e.id))
         for index, e in enumerate(deferred, start=len(assigned)):
-            e.queue = index * 2 + 2
+            e.queue = queue_values[index]
         db.commit()
     return result
 

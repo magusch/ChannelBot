@@ -1435,7 +1435,7 @@ def route_unschedulable_events(dry_run=False):
 @celery_app.task
 def distribute_event_queue(protect_first=None):
     """Compatibility task: never reorder dates independently of the planner."""
-    result = crud.schedule_channel_events(dry_run=False)
+    result = crud.schedule_channel_events(dry_run=False, reselect=False)
     return {**result, 'reordered_count': len(result.get('assignments', []))}
 
 

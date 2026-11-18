@@ -393,7 +393,8 @@ status or publication backfill is performed.
 after preparation and deduplication. `channel_selection` is no longer used.
 The former rebalance/distribute task names are compatibility aliases, not periodic jobs.
 Django schedule refreshes call the same `POST /api/events/schedule/channel/` endpoint
-with `?city=spb&dry_run=false`; without `dry_run=false` it returns a preview.
+with `?city=spb&dry_run=false&reselect=false`: only fill free slots, preserving existing dates.
+Full reselection is daily at 06:10, or explicit `reselect=true`; `dry_run=true` previews it.
 The plan returns `assignments`, `changes`, `warnings`, and routing counts.
 
 ```json

@@ -703,7 +703,7 @@ def routing_locked(raw):
     """Presence of a manual transfer marker excludes automatic routing."""
     bd = parse_breakdown(raw) or {}
     manual = bd.get('manual')
-    return 'manual_transfer' in bd or (isinstance(manual, dict) and 'target' in manual)
+    return 'manual_transfer' in bd or 'manual_schedule' in bd or (isinstance(manual, dict) and 'target' in manual)
 
 
 def merge_editorial_result(event, answer):

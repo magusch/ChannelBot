@@ -117,9 +117,9 @@ def test_schedule_endpoint_is_authenticated_and_defaults_to_preview(client, monk
     assert client.post('/api/events/schedule/channel/').status_code in (401, 403)
     response = client.post('/api/events/schedule/channel/', headers={'Authorization': 'Bearer test'})
     assert response.status_code == 200
-    assert called == [{'dry_run': True}]
+    assert called == [{'dry_run': True, 'reselect': False}]
     assert client.post('/api/events/schedule/channel/?dry_run=false', headers={'Authorization': 'Bearer test'}).status_code == 200
-    assert called[-1] == {'dry_run': False}
+    assert called[-1] == {'dry_run': False, 'reselect': False}
 
 
 def test_sending_rejects_ended_events_but_allows_ongoing_exhibition(db_session_fixture, monkeypatch):
@@ -174,3 +174,38 @@ def test_legacy_task_names_share_the_same_planner(monkeypatch):
     celery_tasks.rebalance_channel_queue(dry_run=True)
     celery_tasks.distribute_event_queue()
     assert [call['dry_run'] for call in called] == [True, True, False]
+
+
+def test_two_manual_exhibition_slots_survive_daily_reselection():
+    first = datetime(2030, 1, 8, 10, tzinfo=timezone.utc)
+    second = datetime(2030, 1, 9, 10, tzinfo=timezone.utc)
+    kim = event(18276, start_days=-10, end_days=40, queue=28932, score=64, post_date=first,
+                score_breakdown={'manual_schedule': {'post_date': first.isoformat(), 'queue': 28932}})
+    aivazovsky = event(18619, start_days=-20, end_days=90, queue=28934, score=48, post_date=second,
+                      score_breakdown={'manual_schedule': {'post_date': second.isoformat(), 'queue': 28934}})
+    result = plan([kim, aivazovsky, event(3, start_days=4, score=100)], {'protect_first': 2})
+    assert assigned(result)[18276] == first
+    assert assigned(result)[18619] == second
+    assert result['changes'] == []
+    assert assigned(plan([kim, aivazovsky], {'protect_first': 2}))[18276] == first
+
+
+def test_intraday_fill_keeps_dates_and_does_not_promote_api():
+    first = datetime(2030, 1, 8, 10, tzinfo=timezone.utc)
+    second = datetime(2030, 1, 9, 10, tzinfo=timezone.utc)
+    rows = [event(1, start_days=4, score=30, post_date=first),
+            event(2, start_days=5, score=100, post_date=second),
+            event(3, start_days=5, status='OnlyApi', score=100,
+                  score_breakdown={'editorial': {'score': 100}, 'routing': {'reason': 'capacity'}})]
+    result = plan(rows, {'preserve_schedule': True})
+    assert assigned(result) == {1: first, 2: second}
+    assert result['changes'] == []
+
+
+def test_intraday_repair_does_not_steal_another_valid_slot():
+    reserved = datetime(2030, 1, 7, 10, tzinfo=timezone.utc)
+    rows = [event(1, start_days=4, queue=1, post_date=NOW+timedelta(days=20)),
+            event(2, start_days=4, queue=2, post_date=reserved)]
+    result = plan(rows, {'preserve_schedule': True})
+    assert assigned(result)[2] == reserved
+    assert assigned(result)[1] > reserved
