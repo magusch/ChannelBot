@@ -9,6 +9,7 @@
     "vk_posting_enabled": false,
     "prepare_events_limit": 0,
     "prepare_api_events_limit": 0,
+    "place_geocoding": {"enabled": true, "limit": 30},
     "city": "spb",
     "timezone": "Europe/Moscow",
     "metro_adjacency": {},

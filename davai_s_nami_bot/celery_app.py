@@ -148,6 +148,14 @@ def _city_beat_schedules():
         'kwargs': {'limit': 100, 'table': 'both'},
     }
 
+    geo_cfg = settings.features.get('place_geocoding') or {}
+    if geo_cfg.get('enabled', True):
+        beat_schedules['geocode-places'] = {
+            'task': 'davai_s_nami_bot.celery_tasks.geocode_places',
+            'schedule': crontab(minute=30, hour=2, day_of_week='sun'),
+            'kwargs': {'limit': geo_cfg.get('limit', 30)},
+        }
+
     beat_schedules['dedupe-channel-queue'] = {
         'task': 'davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
         'schedule': crontab(minute=50, hour=5),

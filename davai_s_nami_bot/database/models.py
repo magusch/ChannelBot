@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, UniqueConstraint, SmallInteger, Time
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, UniqueConstraint, SmallInteger, Time, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -93,6 +93,11 @@ class Place(Base):
     main_place_id = Column(Integer, ForeignKey('place_place.id'), nullable=True)
     district_id = Column(Integer, ForeignKey('place_district.id'), nullable=True)
     district_raw = Column(String, nullable=False, default='')
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    geocoding_status = Column(String(30), nullable=True)
+    geocoded_at = Column(DateTime(timezone=True), nullable=True)
+    geocoding_metadata = Column(JSONB, nullable=True)
     events = relationship("Events2Posts", back_populates="place")
     keywords = relationship("PlaceKeyword", back_populates="place")
     schedules = relationship("PlaceSchedule", back_populates="place")

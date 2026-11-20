@@ -53,6 +53,39 @@ dev_channel = clients.DevClient()
 CHANNEL_LINK = os.getenv('CHANNEL_LINK')
 
 
+@celery_app.task(soft_time_limit=540, time_limit=600)
+def geocode_places(limit=30):
+    """Geocode a bounded batch of places in the current city once a week."""
+    from .database.database_orm import get_db_session
+    from .helper.geo import GeoClient, GeocodingError
+    from .helper.geo.places import geocode_missing_places
+
+    city = city_context.current_city()
+    lock = redis_client.lock(f'place-geocoding:{city}', timeout=660, blocking_timeout=0)
+    try:
+        acquired = lock.acquire(blocking=False)
+    except Exception:
+        log.warning('Place geocoding skipped: Redis unavailable for %s', city)
+        return {'error': 'redis_unavailable'}
+    if not acquired:
+        return {'skipped': 'already_running'}
+    try:
+        try:
+            client = GeoClient()
+        except GeocodingError:
+            log.warning('Place geocoding provider is not configured for %s', city)
+            return {'error': 'provider_unavailable'}
+        with get_db_session() as db:
+            result = geocode_missing_places(db, client, limit=limit)
+        log.info('Place geocoding %s: %s', city, result)
+        return result
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            log.warning('Place geocoding lock release failed for %s', city)
+
+
 # --- Daily-task catch-up tracking ----------------------------------------
 # Beat may miss a cron slot if the container restarts; missed firings are not
 # backfilled. We mark each tracked task after it finishes (success OR failure)
