@@ -1,0 +1,273 @@
+# -*- coding: utf-8 -*-
+"""Prompts for themed digests, split the same way as event-preparation prompts.
+
+* **Editorial part** — the voice of the digest: what the intro should do, how
+  long a comment is, what is banned. Owned by the editor, read from a Redis
+  param (`theme_post_user_message`) and **replacing** the code default entirely.
+  Stacking a param on top of the default does not work — the rules contradict
+  each other and the model returns mush. `theme_post_extra_rules` is the small
+  additive slot for a spot fix.
+* **Contract** — the JSON shape, the ids, the character ceilings, the
+  `{{id|label}}` markers. Owned by the code: a careless prompt edit here breaks
+  parsing or produces a post that cannot be rendered, so it is always appended
+  and cannot be overridden.
+
+Kept separate from :mod:`helper.ai.prompts` (which does event preparation)
+because the two have different contracts and different editors — one writes
+event descriptions, the other writes the digest around them.
+"""
+
+import json
+import logging
+
+from ..helper.ai.prompts import fill_city
+
+log = logging.getLogger(__name__)
+
+SYSTEM_PARAM = 'theme_post_system_message'
+EDITORIAL_PARAM = 'theme_post_user_message'
+EXTRA_RULES_PARAM = 'theme_post_extra_rules'
+
+
+def _city_loc():
+    """City name in the prepositional case ("о мероприятиях в …"); SPb default."""
+    try:
+        from ..settings.settings_loader import settings
+
+        return getattr(settings, 'city_name_loc', None) or 'Санкт-Петербурге'
+    except Exception:
+        return 'Санкт-Петербурге'
+
+
+def default_system_message():
+    return (
+        f"Ты ведёшь Telegram-канал о мероприятиях в {_city_loc()}. "
+        "Аудитория — 17–29 лет. Пишешь как человек, который сам туда ходит и "
+        "делится находками: живо, но без рекламы и без восторгов."
+    )
+
+
+def default_editorial_message():
+    """Editorial prompt used when no param is set."""
+    return """Ты составляешь подборку мероприятий на неделю — как блогер, который сам по ним ходит.
+
+Вступление: 2–3 предложения от первого лица, как пишет блогер, а не афиша.
+
+Да, перескажи, что в подборке — но так, чтобы читать было интересно: не голым перечислением, а с деталью, которая цепляет. «Ткачество как искусство» — это перечисление; «как станок Жаккарда довёл ремесло до Chanel» — это уже повод пойти.
+
+Личный выбор — только с названием. «Я бы сходил» без имени мероприятия запрещено: читатель не понимает, о чём речь. Запрещённые обороты: «сходил бы на любое», «хотя бы на одно из этих», «на ту, где…», «из этих трёх».
+  Плохо: «Я бы сходил хотя бы на один из этих трёх — тут есть и лингвистика, и разговор про триггеры».
+  Хорошо: «Сам пойду на „Триггерный музей“: разговор про то, почему музейные вещи цепляют, ведёт арт-терапевт».
+
+Не повторяй слова из заголовка подборки. Если она называется «Бесплатно на этой неделе», слово «бесплатные» во вступлении уже лишнее — это и так понятно.
+
+Не заканчивай дежурным выводом («все три выглядят интересными», «есть из чего выбрать», «каждый найдёт своё»). Лучше закончить на конкретике.
+
+Без вопросов к читателю, без «мы собрали», без канцелярита.
+
+Комментарий к мероприятию: 1–2 предложения. Первое — что это такое и чем отличается от соседних. Второе — конкретика, которую не угадать по названию: имена, что в программе, формат, для кого. Название не повторяй — оно стоит рядом. Дату, место и цену не пиши — они подставляются отдельно.
+
+Не описывай всё по одной схеме: где-то факт, где-то субъективная оценка («на любителя», «если любите тишину»). Сухой юмор уместен. Не строй все комментарии одинаково — одинаковое начало у пяти подряд читается как шаблон.
+
+Запрещены клише («погрузиться в атмосферу», «машина времени», «не пропустите», «что может быть лучше», «мы собрали для вас»), рекламные эпитеты («уникальный», «незабываемый»), восклицательные знаки, эмодзи и markdown."""
+
+
+def with_theme_rules(editorial, theme_extra):
+    """Append a theme's own voice rules (``prompt_extra`` in its filter_params).
+
+    The editorial params are shared by every theme, so standup, a weekend list
+    and a film festival all sounded the same. A theme-level slot changes one
+    theme without touching the rest; like ``theme_post_extra_rules`` it adds to
+    the editorial part and never touches the code-owned contract.
+    """
+    if isinstance(theme_extra, (list, tuple)):
+        theme_extra = "\n".join(str(r).strip() for r in theme_extra if str(r).strip())
+    theme_extra = (theme_extra or "").strip()
+    if not theme_extra:
+        return editorial
+    return f"{editorial}\n\nПравила этой подборки:\n{theme_extra}"
+
+
+def resolve_prompts(dsn_param):
+    """``(system_message, editorial_message)`` for a themed digest."""
+    def param(name):
+        try:
+            value = dsn_param.site_parameters(name, last=1)
+        except Exception as e:  # noqa: BLE001 — a Redis hiccup must not break a post
+            log.warning(f"theme_prompts: failed to read param {name!r}: {e}")
+            return None
+        return value if value and str(value).strip() else None
+
+    system = param(SYSTEM_PARAM) or default_system_message()
+    editorial = param(EDITORIAL_PARAM) or default_editorial_message()
+
+    extra = param(EXTRA_RULES_PARAM)
+    if extra:
+        editorial = f"{editorial}\n\nДополнительные правила:\n{extra}"
+
+    return fill_city(system), fill_city(editorial)
+
+
+def _period_block(period):
+    """The window the digest covers — the model otherwise assumes "this week"."""
+    if not period:
+        return ""
+    return f"""
+Период подборки: {period}. Говори о нём только так или конкретными днями
+(«в субботу», «27 сентября»). Не называй его «неделей», если это не неделя, и
+не пиши «на этой неделе» про выходные или про две недели вперёд."""
+
+
+def _recent_intros_block(recent_intros):
+    """Intros of the latest digests, so the new one does not start the same way."""
+    intros = [str(i).strip() for i in recent_intros or [] if str(i).strip()]
+    if not intros:
+        return ""
+    listed = "\n".join(f"- {i}" for i in intros)
+    return f"""
+Вступления прошлых подборок канала, сверху — самое свежее. Не начинай так же, как
+самое свежее, и не повторяй их обороты и конструкции — читатель видит их подряд в ленте:
+{listed}"""
+
+
+FACTS_RULE = """
+Пиши только то, что есть в полях мероприятия. Не додумывай программу, формат и
+участников. Если у мероприятия "thin": true — описания почти нет: одно короткое
+предложение по тому, что известно (формат, место, для кого), без пересказа
+названия другими словами. Слова-догадки «похоже», «видимо», «наверное», «судя по
+названию», «обещают» запрещены: не знаешь — не пиши."""
+
+
+def _context(period, recent_intros):
+    return _period_block(period) + _recent_intros_block(recent_intros) + "\n" + FACTS_RULE
+
+
+NAMING_RULE = """
+Как называть мероприятие в тексте — так, чтобы предложение звучало по-русски:
+— Если название — имя человека или группы («Глеб Капелюх», «Саша Борсук»),
+  пиши имя без кавычек и склоняй: «сольник Глеба Капелюха», «у Саши Борсук».
+— Кавычки — только для названия программы, спектакля, фильма, лекции, и рядом
+  с ним слово, что это: «на спектакле «Аплодисменты»», «лекция «Знаки отсутствия»».
+— Никогда не «в «Название»» / «на «Название»» без такого слова.
+— Подзаголовок после тире или двоеточия не переписывай: «Глеб Капелюх — лучшие
+  шутки и фокусы» → «Глеб Капелюх».
+"""
+
+COMMENT_RULES = """
+В комментарии к мероприятию:
+— Не копируй промо-штампы организаторов («свежий материал», «живой звук и пластика», «главные хиты и редкие треки», «погрузиться в атмосферу», «не оставит равнодушным»).
+— Опиши формат и жанр человеческим языком: что за звук, какой вайб, кому зайдёт (фанатам тяжёлого гитарного звука, любителям абсурда, для спокойного вечера).
+— Не пересказывай служебные оговорки площадки (согласие на съёмку, правила возврата и входа).
+— Без воды: второе предложение либо добавляет характерную деталь (кто играет, откуда приехали, фишка программы), либо его нет."""
+
+_INTRO_STYLE = """— Не строй вступление сухим перечислением или списком.
+— Не пытайся искусственно склеить совершенно разные события через противительный союз («А на мастер-классе...»).
+— Без дежурных клише («мы собрали», «каждый найдёт своё», «не пропустите») и напыщенных метафор («формы одного хаоса», «про следы и утраты»).
+— Не используй слова из заголовка «{theme_title}» и однокоренные с ними."""
+
+
+def intro_rules(theme_title, intro_max, described=False, has_also=True):
+    """What the intro is for and how it names events. Always from code."""
+    style = _INTRO_STYLE.format(theme_title=theme_title)
+    if described:
+        return f"""intro — 1–2 живых предложения от себя, до {intro_max} символов: вводная мысль или личный выбор из подборки.
+— Назови своего главного фаворита (хедлайнера) с одной конкретной деталью, либо коротко очерти выбор/контраст («от драмы в MOÑ до лёгкой комедии»).
+— Не повторяй даты, цены и адреса — они указаны в карточках ниже.
+— Не пытайся перечислить все события через силу.
+{style}"""
+    return f"""intro — 1–2 предложения от себя, до {intro_max} символов: ориентир по подборке.
+— Назови 1–2 самых заметных события с конкретной деталью (кто выступает, в чём формат), либо дай живой ориентир по подборке.
+— Не пытайся искусственно склеивать несовместимые форматы в одно предложение (например, рейв и тихий мастер-класс через союз «а на…»).
+{style}"""
+
+
+def _also_block(also, with_details=False):
+    """Events that are in the post but not described — context for the intro."""
+    also = [e for e in also or [] if str(e.get("title") or "").strip()]
+    if not also:
+        return ""
+    if with_details:
+        listed = json.dumps(also, ensure_ascii=False, default=str)
+        return (
+            "\nТоже есть в подборке (одной строкой в конце, комментарии к ним не "
+            f"нужны):\n{listed}"
+        )
+    listed = "\n".join(f"- {str(e['title']).strip()}" for e in also)
+    return (
+        "\nЭто тоже есть в подборке, но комментировать их не надо — используй "
+        f"только чтобы понять контекст подборки:\n{listed}"
+    )
+
+
+def comments_contract(
+    theme_title, payload, comment_max, intro_max=260, also=(), period="",
+    recent_intros=(), described=False,
+):
+    """Response contract for the list layouts. Always from code."""
+    return f"""
+
+Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
+
+Верни СТРОГО JSON без markdown-обёртки, вида:
+{{"intro": "...", "comments": [{{"id": <id>, "text": "..."}}]}}
+
+{NAMING_RULE}
+{intro_rules(theme_title, intro_max, described=described, has_also=bool(also))}
+comments — по одному на каждое мероприятие из списка, с тем же id.
+text — до {comment_max} символов.
+{COMMENT_RULES}
+
+Мероприятия (JSON):
+{json.dumps(payload, ensure_ascii=False, default=str)}
+{_also_block(also, with_details=described)}"""
+
+
+def prose_contract(
+    theme_title, payload, prose_max, paragraph_max, intro_max=260, also=(),
+    period="", recent_intros=(),
+):
+    """Response contract for the flowing-text layout. Always from code."""
+    return f"""
+
+Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
+
+Верни СТРОГО JSON: {{"intro": "...", "paragraphs": ["...", "..."]}}
+
+{NAMING_RULE}
+{intro_rules(theme_title, intro_max, described=True, has_also=bool(also))}
+paragraphs — 2–3 абзаца сплошного текста, каждый объединяет 2–3 мероприятия по
+смыслу: одна тема, один день, один формат, «на выбор». Не по одному мероприятию
+на абзац, не список.
+
+— Абзац до {paragraph_max} символов, весь текст до {prose_max} символов.
+— На каждое мероприятие — одна короткая мысль, максимум одно предложение.
+— Упомяни каждое мероприятие ровно один раз и пометь маркером:
+  {{{{id}}}} — подставится название ссылкой,
+  {{{{id|твои слова}}}} — ссылкой станут твои слова (так лучше).
+  Маркер — часть предложения, не отдельная строка.
+— Дату, место и цену вплетай в предложение словами, а не отдельной строкой:
+  «в четверг на Лендоке, вход 500₽», «в воскресенье, бесплатно».
+— Цену бери **ровно** из поля price: не пересчитывай, не округляй, не добавляй «от».
+  Если price пустой — про цену не пиши вообще. Придуманная цена хуже отсутствующей.
+— Цена должна быть у каждого упомянутого мероприятия: читатель решает по ней.
+
+Мероприятия (JSON):
+{json.dumps(payload, ensure_ascii=False, default=str)}
+{_also_block(also, with_details=True)}"""
+
+
+def intro_contract(theme_title, payload, intro_max=260, also=(), period="", recent_intros=()):
+    """Response contract for layouts that only need an intro. Always from code."""
+    return f"""
+
+Тема подборки: «{theme_title}».
+{_context(period, recent_intros)}
+
+Мероприятия (JSON):
+{json.dumps(payload, ensure_ascii=False, default=str)}
+{_also_block(also)}
+Верни СТРОГО JSON: {{"intro": "..."}} — только вступление.
+{NAMING_RULE}
+{intro_rules(theme_title, intro_max)}"""

@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Response, Cookie
+from fastapi import APIRouter, Response, Cookie, Request
 
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status
 
-from ..core.security import create_access_token, create_refresh_token_cookie, oauth2_scheme, decode_access_token,\
+from .dependencies import CurrentUser
+from .request_log import track_request
+
+from ..core.security import create_access_token, create_refresh_token_cookie, decode_access_token,\
     check_telegram_auth_data
+from .. import city as city_module
+from ..city_context import UnknownCity
 from ..pydantic_models import UserCreate, UserOut, Token, UserLogin, UserUpdate, TelegramLoginData
 from .. import crud
 
@@ -94,49 +99,37 @@ def refresh_access_token(
 
 
 @router.get("/me", response_model=UserOut)
-def read_users_me(token: str = Depends(oauth2_scheme)):
+def read_users_me(user: CurrentUser):
     """Return the current authorized user information"""
-
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    nickname = decode_access_token(token)
-    if nickname is None:
-        raise credentials_exception
-
-    current_user = crud.get_user_by_nickname(nickname=nickname)
-    return current_user
+    return user
 
 
 @router.put("/me", response_model=UserOut)
 def update_user(
     user_update: UserUpdate,
-    token: str = Depends(oauth2_scheme)
+    user: CurrentUser
 ):
     """Updates the current authorized user's information"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
 
-    nickname = decode_access_token(token)
-    if nickname is None:
-        raise credentials_exception
-    updated_user = crud.update_user(nickname=nickname, user_update=user_update)
+    if "city_id" in user_update.model_fields_set:
+        try:
+            user_update.city_id = city_module.validate_city(user_update.city_id)
+        except UnknownCity as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    updated_user = crud.update_user(nickname=user.nickname, user_update=user_update)
     return updated_user
 
 
 @router.post("/telegram/login", response_model=Token)
 def telegram_login(
-        login_data: TelegramLoginData, response: Response,
+        login_data: TelegramLoginData, response: Response, request: Request,
 ):
     """
     Checks Telegram login data, creates or retrieves the user,
     """
+    # No body in the log: init_data is a credential.
+    track_request(request)
 
     telegram_user_info = check_telegram_auth_data(login_data.init_data)
     if not telegram_user_info:
@@ -147,6 +140,7 @@ def telegram_login(
 
     telegram_id = telegram_user_info['id']
     user = crud.get_or_create_user_by_telegram_id(telegram_id, telegram_user_info)
+    track_request(request, auth_user_id=user["id"])
 
     if not user["is_active"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")

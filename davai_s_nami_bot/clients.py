@@ -1,4 +1,4 @@
-import os, datetime
+import json, os, datetime
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Any, Dict, Union
@@ -6,11 +6,15 @@ from typing import Any, Dict, Union
 import requests
 
 from telebot import TeleBot
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters
 
+from . import city as city_module
+from . import city_context
 from . import events
 from . import crud
 
 from .helper.dsn_parameters import DSNParameters
+from .helper.markdown_v2 import escape_v2
 
 
 def format_text(text: str, style: str = None):
@@ -34,6 +38,35 @@ def format_text(text: str, style: str = None):
         formatted = text
 
     return formatted
+
+
+class _CityDestinations:
+    """``constants`` of a client, resolved for the current city on every access."""
+
+    def __init__(self, platform: str, dev_falls_back_to_default: bool = False):
+        self.platform = platform
+        self.dev_falls_back_to_default = dev_falls_back_to_default
+
+    def __get__(self, obj, owner=None):
+        destinations = city_module.channel_destinations(self.platform)
+        if self.dev_falls_back_to_default and not destinations["dev"]["destination_id"]:
+            # Logs of a city without its own dev channel still reach someone.
+            default = city_module.channel_destinations(
+                self.platform, city_context.DEFAULT_CITY
+            )
+            destinations["dev"] = default["dev"]
+        return destinations
+
+
+def _normalize_channel_link(link):
+    if not link:
+        return None
+    link = str(link).strip().rstrip("/")
+    if link.startswith("http"):
+        return link
+    if link.startswith("t.me/"):
+        return f"https://{link}"
+    return f"https://t.me/{link.lstrip('@')}"
 
 
 class BaseClient(ABC):
@@ -70,10 +103,7 @@ class BaseClient(ABC):
 
 
 class Telegram(BaseClient):
-    constants = dict(
-        prod={"destination_id": os.environ.get("CHANNEL_ID")},
-        dev={"destination_id": os.environ.get("DEV_CHANNEL_ID")},
-    )
+    constants = _CityDestinations("telegram")
     name = "telegram_channel"
     formatter_style = None
 
@@ -84,15 +114,22 @@ class Telegram(BaseClient):
             parse_mode="MarkdownV2",
         )
         self.param = DSNParameters()
-        self.channel_link = self.param.site_parameters('channel_link', last=1)
+
+    @property
+    def channel_link(self):
+        info = city_module.get_city()
+        link = info.channel_link if info else None
+        if not link and city_context.current_city() == city_context.DEFAULT_CITY:
+            link = (
+                self.param.site_parameters('channel_link', last=1)
+                or city_module.city_value("channel_link")
+            )
+        return _normalize_channel_link(link)
 
     def send_post(self, event: events.Event, image_path: str, environ: str = "prod"):
         message = super().send_post(event, image_path, environ=environ)
         #explored_date = datetime.datetime.now()
         crud.add_posted_event_to_dsn_bot(event, message.message_id)
-
-        if self.channel_link is None:
-            self.channel_link = self.param.site_parameters('channel_link', last=1)
 
         post_url = self.channel_link + f"/{message.message_id}" if self.channel_link else message.message_id
         crud.set_post_url(event_id=event.event_id, post_url=post_url)
@@ -103,24 +140,131 @@ class Telegram(BaseClient):
             print("Error adding exhibition to DSN bot")
             print(e)
 
-    def send_text(self, text: str, *, destination_id: Union[int, str]):
+    @staticmethod
+    def _inline_keyboard(buttons):
+        """``[{"text": ..., "url"|"callback_data": ...}]`` → an inline keyboard,
+        one button a row.
+
+        Buttons cost nothing against the caption limit — Telegram counts the text
+        only. A callback button on a channel post reaches the bot that sent it:
+        the channel and DavaiSNami_bot share one token, so ``save_event:<id>`` is
+        handled there.
+        """
+        if not buttons:
+            return None
+        markup = InlineKeyboardMarkup()
+        for button in buttons:
+            button = button or {}
+            text, url = button.get("text"), button.get("url")
+            callback = button.get("callback_data")
+            if text and url:
+                markup.add(InlineKeyboardButton(text=text, url=url))
+            elif text and callback:
+                markup.add(InlineKeyboardButton(text=text, callback_data=callback))
+        return markup if markup.keyboard else None
+
+    def pin(self, message_id: int, *, destination_id: Union[int, str]):
+        """Pin a channel message silently (the bot needs the «pin messages» right)."""
+        return self._client.pin_chat_message(
+            destination_id, message_id, disable_notification=True
+        )
+
+    def unpin(self, message_id: int, *, destination_id: Union[int, str]):
+        return self._client.unpin_chat_message(destination_id, message_id)
+
+    def send_poll(
+        self, question: str, options: list, *, destination_id: Union[int, str],
+        reply_to: int = None, multiple: bool = True,
+    ):
+        """Anonymous poll (channels allow no other kind), as a reply when given."""
+        reply = (
+            ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)
+            if reply_to else None
+        )
+        return self._client.send_poll(
+            destination_id,
+            question,
+            options,
+            is_anonymous=True,
+            allows_multiple_answers=multiple,
+            disable_notification=True,
+            reply_parameters=reply,
+        )
+
+    def send_text(self, text: str, *, destination_id: Union[int, str], buttons=None):
         return self._client.send_message(
             chat_id=destination_id,
             text=text,
             disable_web_page_preview=True,
+            reply_markup=self._inline_keyboard(buttons),
         )
 
     def send_image(
-        self, text: str, image_path: str, *, destination_id: Union[int, str]
+        self, text: str, image_path: str, *, destination_id: Union[int, str],
+        buttons=None,
     ):
         with open(image_path, "rb") as image_obj:
             message = self._client.send_photo(
                 chat_id=destination_id,
                 photo=image_obj,
                 caption=text,
+                reply_markup=self._inline_keyboard(buttons),
             )
 
         return message
+
+    def send_rich(
+        self, text: str, image_paths=None, *, destination_id: Union[int, str],
+        buttons=None,
+    ):
+        """Send a Bot API 10.1 rich message: photos *inside* the text.
+
+        Called over plain HTTP rather than through TeleBot: the pinned
+        pyTelegramBotAPI (4.33) predates the method, and upgrading the library
+        for every posting path is a bigger change than one request. Photos are
+        uploaded as ``attach://`` parts — Telegram could not fetch our S3 URLs
+        directly ("failed to get HTTP URL content"), which is also why ordinary
+        event posts already upload bytes.
+        """
+        image_paths = list(image_paths or [])
+        media, files, handles = [], {}, []
+        try:
+            for index, path in enumerate(image_paths):
+                key = f"ev{index + 1}"
+                handle = open(path, "rb")
+                handles.append(handle)
+                files[key] = handle
+                media.append(
+                    {"id": key, "media": {"type": "photo", "media": f"attach://{key}"}}
+                )
+
+            payload = {"markdown": text}
+            if media:
+                payload["media"] = media
+
+            data = {
+                "chat_id": str(destination_id),
+                "rich_message": json.dumps(payload, ensure_ascii=False),
+            }
+            markup = self._inline_keyboard(buttons)
+            if markup:
+                data["reply_markup"] = markup.to_json()
+
+            response = requests.post(
+                f"https://api.telegram.org/bot{os.environ.get('BOT_TOKEN')}"
+                f"/sendRichMessage",
+                data=data,
+                files=files or None,
+                timeout=120,
+            )
+        finally:
+            for handle in handles:
+                handle.close()
+
+        body = response.json()
+        if not body.get("ok"):
+            raise RuntimeError(f"sendRichMessage failed: {body.get('description')}")
+        return body["result"]
 
     def send_file(
         self, destination_id: Union[int, str], file_path: str, mode: str = "r"
@@ -142,14 +286,7 @@ class VKRequests(BaseClient):
         upload_photo_wall=api_base_url + "method/photos.getWallUploadServer",
         save_photo_wall=api_base_url + "method/photos.saveWallPhoto",
     )
-    constants = dict(
-        prod={
-            "destination_id": os.environ.get("VK_GROUP_ID"),
-        },
-        dev={
-            "destination_id": os.environ.get("VK_DEV_GROUP_ID"),
-        },
-    )
+    constants = _CityDestinations("vk")
     name = "vk_group"
     formatter_style = "vk"
 
@@ -257,9 +394,10 @@ class DevClient(Telegram):
     """
     Клиент для отправки сообщений в dev канал.
     """
+    constants = _CityDestinations("telegram", dev_falls_back_to_default=True)
 
     def send_text(self, text: str):
-        super().send_text(text, **super().constants["dev"])
+        super().send_text(escape_v2(text), **super().constants["dev"])
 
     def send_file(self, path: str, mode: str = "r", with_remove: bool = False):
         super().send_file(file_path=path, mode=mode, **super().constants["dev"])

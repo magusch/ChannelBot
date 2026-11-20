@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, Mock
 def mock_dsn():
     dsn = MagicMock()
     dsn.site_parameters.return_value = None
+    dsn.task_parameter.return_value = None
     return dsn
 
 
@@ -144,6 +145,74 @@ class TestOpenAIHelper:
         assert result['ai_relevant'] is False
 
 
+# --- Answer parsing (shared by all providers) ---
+
+class TestAnswerParser:
+    GOOD = {
+        'title': '🎸 Концерт «Пасош»',
+        'prepared_text': 'Группа выступит с новой программой.',
+        'category': 'Концерты',
+        'relevant': True,
+        'reject_reason': '',
+    }
+
+    def _json(self, **over):
+        return json.dumps({**self.GOOD, **over}, ensure_ascii=False, indent=2)
+
+    def test_plain_json(self):
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        data = parse_event_answer(self._json())
+        assert data['title'] == '🎸 Концерт «Пасош»'
+        assert data['full_answer']
+
+    def test_markdown_fence(self):
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        data = parse_event_answer(f'```json\n{self._json()}\n```')
+        assert data['prepared_text'] == self.GOOD['prepared_text']
+
+    def test_truncated_tail_is_repaired(self):
+        # Real prod shape (ids 15578, 15631, 15670): the closing brace is missing
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        data = parse_event_answer(self._json().rstrip().rstrip('}').rstrip())
+        assert data['title'] == '🎸 Концерт «Пасош»'
+        assert data['prepared_text'] == self.GOOD['prepared_text']
+
+    def test_duplicated_closing_brace_is_ignored(self):
+        # Real prod shape (id 15545): one brace too many
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        data = parse_event_answer(self._json() + '\n}')
+        assert data['title'] == '🎸 Концерт «Пасош»'
+
+    def test_truncated_mid_string(self):
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        cut = self._json().split('"category"')[0] + '"category": "Конце'
+        data = parse_event_answer(cut)
+        assert data['title'] == '🎸 Концерт «Пасош»'
+
+    def test_prose_around_json(self):
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        data = parse_event_answer(f'Вот результат:\n{self._json()}\nГотово!')
+        assert data['category'] == 'Концерты'
+
+    def test_unparseable_json_returns_empty_not_raw_dump(self):
+        # The bug this parser exists for: a raw blob must never reach prepared_text
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        assert parse_event_answer('{"title": "x", "prepared_text": }') == {}
+        assert parse_event_answer(None) == {}
+        assert parse_event_answer('') == {}
+
+    def test_legacy_key_value_format_still_works(self):
+        from davai_s_nami_bot.helper.ai.answer_parser import parse_event_answer
+        answer = (
+            'заголовок => 🎸 Концерт группы;\n'
+            'текст => ' + 'Описание мероприятия. ' * 10 + ';\n'
+            'релевантно => да;'
+        )
+        data = parse_event_answer(answer)
+        assert data['заголовок'] == '🎸 Концерт группы'
+        assert data['релевантно'] == 'да'
+
+
 # --- OpenAI model/param compatibility ---
 
 class TestOpenAIModelParams:
@@ -152,6 +221,7 @@ class TestOpenAIModelParams:
         assert is_reasoning_model('gpt-5.4-mini')
         assert is_reasoning_model('gpt-5-mini')
         assert is_reasoning_model('o4-mini')
+        assert is_reasoning_model('gpt-6.1-sol')
         assert not is_reasoning_model('gpt-4o')
         assert not is_reasoning_model('gemini-2.5-flash')
         assert not is_reasoning_model(None)
@@ -200,6 +270,23 @@ class TestOpenAIModelParams:
         retry_kwargs = client.chat.completions.create.call_args.kwargs
         assert 'verbosity' not in retry_kwargs
         assert retry_kwargs['max_completion_tokens'] == 100
+
+    def test_rejected_max_tokens_is_renamed(self):
+        from openai import BadRequestError
+        from davai_s_nami_bot.helper.ai.openai_models import create_chat_completion
+
+        error = BadRequestError(
+            "Unsupported parameter: 'max_tokens' is not supported with this model.",
+            response=MagicMock(status_code=400, headers={}),
+            body={'param': 'max_tokens'},
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [error, 'ok']
+
+        assert create_chat_completion(client, 'new-model', [], max_tokens=100) == 'ok'
+        retry_kwargs = client.chat.completions.create.call_args.kwargs
+        assert retry_kwargs['max_completion_tokens'] == 100
+        assert 'max_tokens' not in retry_kwargs
 
     def test_unrelated_bad_request_propagates(self):
         from openai import BadRequestError
@@ -269,25 +356,89 @@ class TestGeminiHelper:
 
 class TestSkipFields:
     def test_skip_internal_fields(self):
-        from davai_s_nami_bot.helper.ai.claude_helper import _SKIP_FIELDS
+        from davai_s_nami_bot.helper.ai.prompts import format_event_info
         event = {
             'title': 'Test', 'full_text': 'Description',
             'post_date': '2026-03-10', 'queue': 5,
             'score': 72, 'score_breakdown': '{"total": 72}',
             'status': 'ReadyToPost', 'from_date': '2026-03-15',
             'price': '500', 'image_upload': 's3://bucket/img.jpg',
+            'to_date': None,
         }
-        filtered = {k: v for k, v in event.items()
-                    if k not in _SKIP_FIELDS and v is not None}
+        info = format_event_info(event)
 
-        assert 'post_date' not in filtered
-        assert 'queue' not in filtered
-        assert 'score' not in filtered
-        assert 'status' not in filtered
-        assert 'image_upload' not in filtered
-        assert 'title' in filtered
-        assert 'from_date' in filtered
-        assert 'full_text' in filtered
+        for internal in ('post_date', 'queue', 'score', 'status', 'image_upload'):
+            assert f'{internal}:' not in info
+        assert 'title: Test' in info
+        assert 'from_date: 2026-03-15' in info
+        assert 'to_date' not in info  # None values are dropped
+
+
+# --- Prompt assembly ---
+
+class TestPrompts:
+    def _dsn(self, **params):
+        dsn = MagicMock()
+        dsn.site_parameters.side_effect = lambda name, last=1: params.get(name)
+        return dsn
+
+    def test_shared_param_wins_over_provider_param(self):
+        from davai_s_nami_bot.helper.ai.prompts import resolve_prompts
+        dsn = self._dsn(ai_user_message='ОБЩИЙ', gemini_user_message='ПРОВАЙДЕРНЫЙ')
+        _, editorial = resolve_prompts(dsn, 'gemini')
+        assert editorial == 'ОБЩИЙ'
+
+    def test_provider_param_is_the_legacy_fallback(self):
+        from davai_s_nami_bot.helper.ai.prompts import resolve_prompts
+        _, editorial = resolve_prompts(self._dsn(openai_user_message='СТАРЫЙ'), 'openai')
+        assert editorial == 'СТАРЫЙ'
+
+    def test_code_default_when_no_params(self):
+        from davai_s_nami_bot.helper.ai.prompts import (
+            default_editorial_message, resolve_prompts,
+        )
+        system, editorial = resolve_prompts(self._dsn(), 'openai')
+        assert editorial == default_editorial_message()
+        assert 'редактор-копирайтер' in system
+
+    def test_extra_rules_are_appended_not_replacing(self):
+        from davai_s_nami_bot.helper.ai.prompts import resolve_prompts
+        dsn = self._dsn(ai_user_message='ОСНОВНОЙ', ai_extra_rules='Не используй слово «спикер».')
+        _, editorial = resolve_prompts(dsn, 'openai')
+        assert editorial.startswith('ОСНОВНОЙ')
+        assert 'спикер' in editorial
+
+    def test_blank_param_falls_through(self):
+        from davai_s_nami_bot.helper.ai.prompts import resolve_prompts
+        dsn = self._dsn(ai_user_message='   ', openai_user_message='СТАРЫЙ')
+        _, editorial = resolve_prompts(dsn, 'openai')
+        assert editorial == 'СТАРЫЙ'
+
+    def test_all_providers_get_the_same_voice(self):
+        from davai_s_nami_bot.helper.ai.prompts import resolve_prompts
+        dsn = self._dsn(ai_user_message='ЕДИНЫЙ ГОЛОС')
+        voices = {resolve_prompts(dsn, p)[1] for p in ('openai', 'gemini', 'claude')}
+        assert voices == {'ЕДИНЫЙ ГОЛОС'}
+
+    def test_contract_is_always_appended_and_lists_real_categories(self):
+        from davai_s_nami_bot.helper.ai.prompts import build_user_message
+        from davai_s_nami_bot.scoring import CATEGORY_ID_TO_NAME
+        message = build_user_message('ГОЛОС', {'title': 'Лекция'}, today='2026-08-14')
+        assert message.startswith('ГОЛОС')
+        assert 'строго в формате JSON' in message
+        assert 'title: Лекция' in message
+        assert 'Спорт' not in message  # категории нет в БД
+        for name in CATEGORY_ID_TO_NAME.values():
+            assert name in message
+
+    def test_param_read_failure_falls_back_to_default(self):
+        from davai_s_nami_bot.helper.ai.prompts import (
+            default_editorial_message, resolve_prompts,
+        )
+        dsn = MagicMock()
+        dsn.site_parameters.side_effect = ConnectionError('redis is down')
+        _, editorial = resolve_prompts(dsn, 'openai')
+        assert editorial == default_editorial_message()
 
 
 # --- Relevance check in update_event ---
@@ -305,3 +456,137 @@ class TestRelevanceCheck:
     def test_relevance_values(self, value, should_reject):
         is_reject = value is False or str(value).strip().lower() in ('нет', 'no', 'false')
         assert is_reject == should_reject
+
+
+# --- Parameter cache invalidation ---
+
+class TestParameterRevision:
+    """A param edited in Django must reach a running worker without a restart."""
+
+    def test_new_revision_forces_reload(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {
+            'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:spb:dsn_site:rev': '1',
+        }
+        monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
+
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        assert params.site_parameters('ai_model', last=1) == 'gemini'
+
+        # Django edit + POST /api/param/ → new blob and a bumped revision
+        store['parameters:spb:dsn_site'] = _json.dumps({'ai_model': ['openai']})
+        store['parameters:spb:dsn_site:rev'] = '2'
+
+        assert params.site_parameters('ai_model', last=1) == 'openai'
+
+    def test_same_revision_serves_memory_copy(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {
+            'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']}),
+            'parameters:spb:dsn_site:rev': '1',
+        }
+        reads = []
+
+        def fake_get(key):
+            reads.append(key)
+            return store.get(key)
+
+        monkeypatch.setattr(dp.redis_client, 'get', fake_get)
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        params.site_parameters('ai_model', last=1)
+        reads.clear()
+        params.site_parameters('ai_model', last=1)
+
+        # only the tiny revision key is re-read, not the 60KB blob
+        assert reads == ['parameters:spb:dsn_site:rev']
+
+    def test_missing_revision_marker_is_not_outdated(self, monkeypatch):
+        import json as _json
+        from davai_s_nami_bot.helper import dsn_parameters as dp
+
+        store = {'parameters:spb:dsn_site': _json.dumps({'ai_model': ['gemini']})}
+        monkeypatch.setattr(dp.redis_client, 'get', lambda key: store.get(key))
+        params = dp.DSNParameters.__new__(dp.DSNParameters)
+        params.sites = {}
+        params.update_interval = 3600
+
+        assert params.site_parameters('ai_model', last=1) == 'gemini'
+        assert params._is_outdated('dsn_site', None) is False
+
+
+class TestProviderSelection:
+    def test_unknown_provider_logs_and_falls_back(self, caplog):
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('gemini', 'G'), ('openai', 'O')]
+        helper.current_model_index = 1
+        helper.current_model = 'O'
+
+        with caplog.at_level('WARNING'):
+            helper.set_model_by_name('opeanai')  # typo
+
+        assert helper.current_model == 'G'
+        assert 'unknown provider' in caplog.text
+
+    def test_whitespace_around_value_is_tolerated(self):
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('gemini', 'G'), ('openai', 'O')]
+        helper.current_model_index = 0
+        helper.current_model = 'G'
+
+        helper.set_model_by_name(' OpenAI\n')
+        assert helper.current_model == 'O'
+
+    def test_one_helper_prepares_each_event_separately(self, mock_dsn):
+        from davai_s_nami_bot.helper.ai.open_ai_helper import OpenAIHelper
+        from davai_s_nami_bot.helper.ai_helper import AIHelper
+
+        provider = OpenAIHelper(mock_dsn)
+
+        def answer(event):
+            provider.answer = json.dumps({'title': event['title'], 'text': 'x'})
+
+        provider.refactor_post = answer
+        helper = AIHelper.__new__(AIHelper)
+        helper.models = [('openai', provider)]
+        helper.current_model_index = 0
+        helper.current_model = provider
+
+        titles = [helper.new_event_data({'title': t})['title'] for t in ('Ворона', 'Лихо Фест')]
+        assert titles == ['Ворона', 'Лихо Фест']
+
+
+class TestThinDescriptionRules:
+    def test_rules_added_for_empty_description(self):
+        from davai_s_nami_bot.helper.ai.prompts import build_user_message
+
+        msg = build_user_message("EDIT", {"title": "Концерт", "full_text": ""})
+        assert "почти нет описания" in msg
+        # Rules sit before the event data block.
+        assert msg.index("почти нет описания") < msg.index("Исходная информация:")
+        assert "title: Концерт" in msg.split("Исходная информация:")[-1]
+
+    def test_html_only_counts_as_thin(self):
+        from davai_s_nami_bot.helper.ai.prompts import is_thin_description
+
+        assert is_thin_description({"full_text": "<p><br></p><div>  </div>"})
+
+    def test_no_rules_for_normal_description(self):
+        from davai_s_nami_bot.helper.ai.prompts import build_user_message
+
+        event = {"title": "Лекция", "full_text": "Подробный рассказ о предмете. " * 5}
+        assert "почти нет описания" not in build_user_message("EDIT", event)

@@ -8,6 +8,7 @@ from .ai.gemini_helper import GeminiHelper
 from .ai.openai_models import chat_kwargs, create_chat_completion
 
 from .dsn_parameters import DSNParameters
+from ..scoring import merge_editorial_result
 
 log = logging.getLogger(__name__)
 
@@ -36,12 +37,14 @@ def lint_prepared_text(text: str) -> list[str]:
 
 
 class AIHelper:
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, task: str = None):
+        """``task`` (channel / api / digest) picks ``ai_model_<task>`` and
+        ``<provider>_model_<task>`` params when set, else the shared ones."""
         dsn_param = DSNParameters()
         self.perplexity_helper = PerplexityHelper(dsn_param)
-        self.openai_helper = OpenAIHelper(dsn_param)
-        self.claude_helper = ClaudeHelper(dsn_param)
-        self.gemini_helper = GeminiHelper(dsn_param)
+        self.openai_helper = OpenAIHelper(dsn_param, task)
+        self.claude_helper = ClaudeHelper(dsn_param, task)
+        self.gemini_helper = GeminiHelper(dsn_param, task)
 
         # Model in priority
         self.models = [
@@ -54,18 +57,24 @@ class AIHelper:
         self.current_model_index = 0
         self.current_model = self.models[self.current_model_index][1]
 
-        if model_name or dsn_param.site_parameters('ai_model', last=1):
-            self.set_model_by_name(model_name or dsn_param.site_parameters('ai_model', last=1))
+        provider = model_name or dsn_param.task_parameter('ai_model', task)
+        if provider:
+            self.set_model_by_name(provider)
 
     def set_model_by_name(self, model_name: str):
-        """Set current model by name."""
-        model_name = model_name.lower()
+        """Set current model by name (unknown name → first provider, with a log)."""
+        model_name = (model_name or '').strip().lower()
         for i, (name, model) in enumerate(self.models):
             if name == model_name:
                 self.current_model_index = i
                 self.current_model = model
+                log.info(f"AIHelper: provider set to {name}")
                 return
-        
+
+        log.warning(
+            f"AIHelper: unknown provider {model_name!r}, falling back to "
+            f"{self.models[0][0]}. Known: {[name for name, _ in self.models]}"
+        )
         self.current_model_index = 0
         self.current_model = self.models[0][1]
 
@@ -87,6 +96,7 @@ class AIHelper:
         return self.current_model.parse_ai_answer()
     
     def new_event_data(self, event):
+        self.current_model.answer = None
         ai_event = self.current_model.new_event_data(event)
         issues = lint_prepared_text(ai_event.get('prepared_text'))
         if issues:
@@ -95,7 +105,7 @@ class AIHelper:
                 f"new_event_data: prepared_text for event_id={event.get('event_id')} "
                 f"(model={model_name}) violates prompt rules: {issues}"
             )
-        return ai_event
+        return merge_editorial_result(event, ai_event)
 
     def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """Universal text generation using the current model.
@@ -111,7 +121,6 @@ class AIHelper:
             message = model.client.messages.create(
                 model=model.claude_model,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
@@ -130,7 +139,12 @@ class AIHelper:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                **chat_kwargs(model_id, temperature=temperature, max_tokens=max_tokens),
+                **chat_kwargs(
+                    model_id,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=getattr(model, 'reasoning_effort', None),
+                ),
             )
             finish_reason = completion.choices[0].finish_reason
             log.info(f"generate_text: {model_name} finish_reason={finish_reason}")

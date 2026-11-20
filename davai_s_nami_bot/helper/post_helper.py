@@ -7,9 +7,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from ..datetime_utils import NIGHT_END_HOUR, last_day  # noqa: F401 (re-exported)
 from .dsn_parameters import DSNParameters
 from .markdown_v2 import escape_v2, escape_v2_url
 from ..scoring import resolve_category_id
+
+
+def _dgis_slug():
+    """2GIS city slug of the current city (``city_city.dgis_slug``), else SPb."""
+    try:
+        from .. import city as city_module
+
+        info = city_module.get_city()
+        return (info.dgis_slug if info else None) or "spb"
+    except Exception:  # noqa: BLE001 — a link must not break the post
+        return "spb"
 
 
 @dataclass
@@ -27,6 +39,7 @@ TELEGRAM_BOT_NAME = os.environ.get("TELEGRAM_BOT_NAME", None)
 
 EXHIBITION_CATEGORY_ID = 11
 EXHIBITION_MIN_DAYS = 8
+
 
 
 WEEKNAMES = {
@@ -253,7 +266,9 @@ class PostHelper:
 
         escaped_addr = escape_v2(raw_address)
         if need_url:
-            addr_url = escape_v2_url(f"https://2gis.ru/spb/search/{raw_address}")
+            addr_url = escape_v2_url(
+                f"https://2gis.ru/{_dgis_slug()}/search/{raw_address}"
+            )
             return f"[{escaped_addr}]({addr_url})"
         return escaped_addr
 
@@ -266,6 +281,10 @@ class PostHelper:
                 day=date_to.day,
                 month=month_name(date_to),
             )
+
+        if date_to is not None and last_day(date_from, date_to) == date_from.date():
+            # Same day, or a single night that ends in the small hours.
+            date_to = None
 
         if date_to is None:
             return "{day} {month}".format(day=date_from.day, month=month_name(date_from))
@@ -307,7 +326,8 @@ class PostHelper:
             e_hour = date_to.hour
             e_minute = date_to.minute
 
-            if s_day == e_day:
+            if last_day(date_from, date_to) == date_from.date():
+                # Same day, or one night into the small hours: «Пт, 3 октября 23:00-06:00».
                 start_format = f"{s_weekday}, {s_day} {s_month} {s_hour:02}:{s_minute:02}-"
                 end_format = f"{e_hour:02}:{e_minute:02}"
             elif s_month != e_month:

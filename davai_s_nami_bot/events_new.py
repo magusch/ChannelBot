@@ -14,6 +14,7 @@ from typing import (
     Union,
 )
 
+from celery.exceptions import SoftTimeLimitExceeded
 from escraper.parsers import (
     ALL_EVENT_TAGS,
     MTS,
@@ -22,16 +23,28 @@ from escraper.parsers import (
     ConfigScraper,
     Culture,
     Kassir,
+    KazanKremlin,
     QTickets,
     Radario,
     Telegram,
     Ticketscloud,
     Timepad,
+    TNCloud,
+    Tripster,
+    Vibe,
+    Yandex,
 )
+from escraper.parsers.configs import SITES as CFG_SITES
+from escraper.parsers.tncloud import SITES as TNC_SITES
+from escraper.parsers.utils import city_name as escraper_city_name
 
 from . import crud
+from .helper.scraper_filters import tripster as tripster_filter
+from .helper.scraper_filters import vibe as vibe_filter
 from .helper.dsn_parameters import dsn_parameters
 from .logger import catch_exceptions, get_logger
+from . import city_context
+from .city_context import run_in_context
 from .settings.settings_loader import settings
 
 log = get_logger(__name__)
@@ -52,7 +65,92 @@ def _use_proxy(parser_name: str) -> bool:
     return settings.escraper_parameters.get(parser_name, {}).get("use_proxy", True)
 
 
+_SCRAPER_CITY_KEYS = {
+    "timepad": ("city",),
+    "radario": ("city",),
+    "qtickets": ("city",),
+    "ticketscloud": ("city",),
+    "mts": ("city",),
+    "culture": ("city",),
+    "afisha": ("city",),
+    "yandex": ("city",),
+    "tripster": ("city",),
+    "kassir": ("city_domain",),
+    "vk": ("vk_city_id", "vk_city"),
+    "cfg": ("sites",),
+    "tncloud": ("sites",),
+}
+
+#: Scrapers of a single city's venues (escraper city slug): never run elsewhere.
+_SCRAPER_FIXED_CITY = {
+    "kazan_kremlin": "kazan",
+}
+
+
+class ScraperCityMissing(ValueError):
+    """A non-default city has not configured where a scraper should collect."""
+
+
+def _own_scraper_settings(name: str) -> dict:
+    """The scraper's section of the current city's own `cities.<code>` overlay."""
+    own = (settings.cities_config.get(settings.city) or {}).get("escraper_parameters")
+    return (own or {}).get(name) or {}
+
+
+def _missing_city_keys(name: str) -> list:
+    """City keys a non-default city has not set for ``name`` (``[]`` = fine)."""
+    if settings.city == city_context.DEFAULT_CITY:
+        return []
+    own = _own_scraper_settings(name)
+    if name == "vibe":
+        # Vibe maps the bot's own city code (`vibe_filter.CITY_IDS`).
+        known = own.get("city_id") or settings.city in vibe_filter.CITY_IDS
+        return [] if known else ["city_id"]
+    return [key for key in _SCRAPER_CITY_KEYS.get(name, ()) if not own.get(key)]
+
+
+def _in_current_city(city_slug: Optional[str]) -> bool:
+    """Does an escraper city slug (``kazan``, ``spb``) name the current city?"""
+    if not city_slug:
+        return True
+    return escraper_city_name(city_slug) == escraper_city_name(settings.city)
+
+
+def _sites_of_current_city(name: str, sites: Iterable, registry: dict) -> list:
+    """Drop sites unknown to escraper or registered for another city."""
+    kept = []
+    for site in sites or []:
+        site_config = site if isinstance(site, dict) else registry.get(site)
+        if site_config is None:
+            log.warning(f"{name}: unknown site {site!r}, skipped.")
+        elif not _in_current_city(site_config.get("city")):
+            log.warning(
+                f"{name}: site {site!r} is in {site_config.get('city')!r}, "
+                f"not {settings.city!r} — skipped."
+            )
+        else:
+            kept.append(site)
+    return kept
+
+
 def _is_scraper_enabled(scraper_name: str) -> bool:
+    fixed_city = _SCRAPER_FIXED_CITY.get(scraper_name)
+    if fixed_city and not _in_current_city(fixed_city):
+        log.warning(f"Scraper '{scraper_name}' only covers {fixed_city!r}, skipped.")
+        return False
+    if not settings.scraper_configured(scraper_name):
+        log.warning(
+            f"Scraper '{scraper_name}' has no escraper_parameters in "
+            f"cities.{settings.city} — skipped for this city."
+        )
+        return False
+    missing = _missing_city_keys(scraper_name)
+    if missing:
+        log.warning(
+            f"Scraper '{scraper_name}' has no {missing} in "
+            f"cities.{settings.city}.escraper_parameters — it would collect SPb, skipped."
+        )
+        return False
     return settings.escraper_parameters.get(scraper_name, {}).get("enabled", True)
 
 
@@ -60,7 +158,10 @@ def get_city_param():
     cities = dsn_parameters.site_parameters("city")
     if cities:
         return cities[0]
-    return settings.city
+    from .city import get_city
+
+    info = get_city()
+    return (info.dgis_slug if info else None) or settings.city
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +192,7 @@ def _call_scraper(func: Callable, days: int, name: str) -> list:
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        future = executor.submit(drain)
+        future = executor.submit(run_in_context(drain))
         try:
             future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
@@ -99,6 +200,8 @@ def _call_scraper(func: Callable, days: int, name: str) -> list:
                 f"Scraper '{name}' exceeded {timeout}s timeout — "
                 f"keeping {len(collected)} partial events"
             )
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as e:
             log.error(
                 f"Scraper '{name}' raised after {len(collected)} events: {e}",
@@ -132,6 +235,72 @@ def _apply_filter(events: Iterable, events_filter: Optional[Callable]) -> Iterab
 def _get_event(parser, *args, **kwargs):
     event = parser.get_event(*args, **kwargs)
     return ParserEvent.from_parser(event)
+
+
+_MAX_EXCLUDE_IDS = 500
+
+
+def _fetch_tripster_experiences(
+    parser,
+    request_params: Dict[str, Any],
+    existed_event_ids: Optional[Iterable[str]] = None,
+    max_pages: int = 10,
+) -> List[Dict[str, Any]]:
+    """Fetch raw Tripster search results, following pagination.
+
+    escraper's `Tripster.get_events()` parses every result immediately and
+    reads only the first page. The selection in `tripster_filter` needs the
+    raw objects (rating, review_count, schedule, guide) and the whole pool to
+    pick from, so the search call is made here instead.
+    """
+    params = dict(request_params)
+    days = int(params.pop("days", 7) or 7)
+    today = datetime.now().date()
+    params["start_date"] = today.strftime("%Y-%m-%d")
+    params["end_date"] = (today + timedelta(days=days)).strftime("%Y-%m-%d")
+    params["need_upcoming_events"] = "true"
+    params["detailed"] = "true"
+    params["include_paid"] = "false"
+    if existed_event_ids:
+        ids = sorted(
+            (str(event_id).split("-")[-1] for event_id in existed_event_ids),
+            key=lambda value: int(value) if value.isdigit() else 0,
+            reverse=True,
+        )[:_MAX_EXCLUDE_IDS]
+        params["exclude_ids"] = ",".join(ids)
+
+    url = parser.search_api.format(partner_id=parser.partner_id)
+    query = params
+    items: List[Dict[str, Any]] = []
+
+    for _ in range(max(1, max_pages)):
+        response = parser._request_get(url, params=query, headers=parser.headers)
+        if not response:
+            log.warning(
+                f"Tripster: search request failed, keeping {len(items)} collected"
+            )
+            break
+        try:
+            payload = response.json()
+        except ValueError as e:
+            log.error(f"Tripster: unparsable search response: {e}")
+            break
+
+        items.extend(
+            obj for obj in payload.get("results") or [] if isinstance(obj, dict)
+        )
+        url = payload.get("next")
+        if not url:
+            break
+        # 'next' already carries the query string.
+        query = None
+    else:
+        log.warning(
+            f"Tripster: stopped at max_pages={max_pages} with {len(items)} "
+            f"experiences — the pool may be truncated"
+        )
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +577,75 @@ mts_parser = MTS(use_proxy=_use_proxy("mts"))
 culture_parser = Culture(use_proxy=_use_proxy("culture"))
 tg_parser = Telegram(use_proxy=_use_proxy("tg"))
 cfg_parser = ConfigScraper(use_proxy=_use_proxy("cfg"))
+kazan_kremlin_parser = KazanKremlin(use_proxy=_use_proxy("kazan_kremlin"))
+tncloud_parser = TNCloud(use_proxy=_use_proxy("tncloud"))
+
+#: Weekdays (Mon=0) the venue-site scrapers run in the daily rotation.
+DEFAULT_CFG_WEEKDAYS = (0, 3)
+
+VENUE_SCRAPERS = ("kazan_kremlin",)
+
+DEFAULT_CFG_SITES = (
+    "sevcable", "newholland", "levashovsky", "alexandrinsky", "erarta", "erarta_news",
+)
+
+
+def _cfg_weekdays():
+    """``escraper_parameters.cfg.weekdays`` or Mon/Thu."""
+    return _scraper_weekdays("cfg")
+
+
+def _scraper_weekdays(name: str, default=DEFAULT_CFG_WEEKDAYS):
+    """Read configured weekdays, falling back to the scraper's default."""
+    value = ((settings.escraper_parameters or {}).get(name) or {}).get("weekdays")
+    if value is None:
+        return default
+    try:
+        if isinstance(value, int):
+            days = [value]
+        elif isinstance(value, str):
+            if "-" in value:
+                start, end = (int(part) for part in value.split("-", 1))
+                days = range(start, end + 1)
+            else:
+                days = [int(part) for part in value.split(",") if part.strip()]
+        else:
+            days = [int(d) for d in value]
+        return tuple(int(d) % 7 for d in days)
+    except (TypeError, ValueError):
+        log.warning(f"Bad escraper_parameters.{name}.weekdays={value!r}, using {default}.")
+        return default
 kassir_parser = Kassir(use_proxy=_use_proxy("kassir"))
 afisha_parser = Afisha(use_proxy=_use_proxy("afisha"))
+yandex_parser = Yandex(use_proxy=_use_proxy("yandex"))
+vibe_parser = Vibe(use_proxy=_use_proxy("vibe"))
+
+DEFAULT_VIBE_EVERY_DAYS = 3
+DEFAULT_VIBE_DAYS = 20
+
+
+def vibe_due(today: date, every_days: int) -> bool:
+    """True on every ``every_days``-th day, counted by date ordinal."""
+    every_days = max(int(every_days or 1), 1)
+    return today.toordinal() % every_days == 0
+
+_tripster_parser = None
+_tripster_unavailable = False
+
+
+def get_tripster_parser() -> Optional[Tripster]:
+    """Return a Tripster parser, or None when credentials are missing."""
+    global _tripster_parser, _tripster_unavailable
+    if _tripster_parser is None and not _tripster_unavailable:
+        try:
+            _tripster_parser = Tripster(use_proxy=_use_proxy("tripster"))
+        except ValueError as e:
+            _tripster_unavailable = True
+            log.warning(
+                f"Tripster parser unavailable ({e}) — "
+                f"set TRIPSTER_TOKEN and TRIPSTER_PARTNER_ID to enable it."
+            )
+    return _tripster_parser
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +680,10 @@ class ScrapeEvents:
     _cfg_parser = cfg_parser
     _kassir_parser = kassir_parser
     _afisha_parser = afisha_parser
+    _yandex_parser = yandex_parser
+    _vibe_parser = vibe_parser
+    _kazan_kremlin_parser = kazan_kremlin_parser
+    _tncloud_parser = tncloud_parser
 
     PARSER_URLS = {
         "timepad.ru": _timepad_parser,
@@ -455,6 +695,7 @@ class ScrapeEvents:
         "culture.ru": _culture_parser,
         "t.me": _tg_parser,
         "kassir.ru": _kassir_parser,
+        "afisha.yandex.ru": _yandex_parser,
         "afisha.ru": _afisha_parser,
     }
 
@@ -472,6 +713,11 @@ class ScrapeEvents:
             "cfg": self.get_cfg_events,
             "kassir": self.get_kassir_events,
             "afisha": self.get_afisha_events,
+            "yandex": self.get_yandex_events,
+            "vibe": self.get_vibe_events,
+            "tripster": self.get_tripster_events,
+            "kazan_kremlin": self.get_kazan_kremlin_events,
+            "tncloud": self.get_tncloud_events,
         }
 
     # ------------------------------------------------------------------
@@ -498,34 +744,62 @@ class ScrapeEvents:
         weekday = date.today().weekday()
         if weekday % 2 != 0:
             return []
-        return self.run_scraper(
-            "timepad",
-            days,
-            request_params=self._timepad_request_params(approved=True),
-        )
+        try:
+            request_params = self._timepad_request_params(approved=True)
+        except ScraperCityMissing as e:
+            log.warning(f"{e} — approved organizations skipped.")
+            return []
+        if not request_params.get("organization_ids"):
+            log.warning("No approved Timepad organizations configured, skipping.")
+            return []
+        return self.run_scraper("timepad", days, request_params=request_params)
+
+    def not_approved_rotation(self, days: int, today: date = None) -> List[tuple]:
+        """Today's scrapers for non-approved organizations as ``(name, days)``"""
+        today = today or date.today()
+        weekday = today.weekday()
+        plan = []
+
+        if weekday % 2 == 1:
+            plan += [("qtickets", days * 2), ("ticketscloud", days * 2)]
+        else:
+            plan += [("timepad", days), ("radario", days)]
+
+        if weekday == 6:
+            plan.append(("vk", days))
+
+        if weekday == 0 or weekday == 4:
+            plan.append(("mts", days))
+        elif weekday == 2 or weekday == 5:
+            plan.append(("culture", days))
+        elif weekday == 3 or weekday == 6:
+            plan.append(("afisha", days))
+        elif weekday == 1:
+            plan.append(("yandex", days))
+
+        if weekday in _cfg_weekdays():
+            plan.append(("cfg", days))
+
+        for name in VENUE_SCRAPERS:
+            if name in settings.escraper_parameters and weekday in _scraper_weekdays(name):
+                plan.append((name, days))
+
+        if "kassir" in settings.escraper_parameters and weekday in _scraper_weekdays("kassir", (1,)):
+            plan.append(("kassir", days))
+
+        vibe_settings = settings.escraper_parameters.get("vibe")
+        if vibe_settings and vibe_due(
+            today, vibe_settings.get("every_days", DEFAULT_VIBE_EVERY_DAYS)
+        ):
+            plan.append(("vibe", days))
+
+        return plan
 
     def from_not_approved_organizations(self, days: int) -> List[ParserEvent]:
         """Get events from non-approved organizations, alternating by weekday."""
         events_list = []
-        weekday = date.today().weekday()
-
-        if weekday % 2 == 1:
-            for name in ("qtickets", "ticketscloud"):
-                events_list += self.run_scraper(name, days * 2)
-        else:
-            for name in ("timepad", "radario"):
-                events_list += self.run_scraper(name, days)
-
-        if weekday == 6:
-            events_list += self.run_scraper("vk", days)
-
-        if weekday == 0 or weekday == 4:
-            events_list += self.run_scraper("mts", days)
-        elif weekday == 2 or weekday == 5:
-            events_list += self.run_scraper("culture", days)
-        elif weekday == 3 or weekday == 6:
-            events_list += self.run_scraper("afisha", days)
-
+        for name, scraper_days in self.not_approved_rotation(days):
+            events_list += self.run_scraper(name, scraper_days)
         return events_list
 
     # ------------------------------------------------------------------
@@ -574,14 +848,26 @@ class ScrapeEvents:
                         timepad_params["bad_keywords"]
                     )
             else:
-                params["organization_ids"] = timepad_params.get(
-                    "approved_organization", []
+                params["organization_ids"] = ", ".join(
+                    timepad_params.get("approved_organization", [])
                 )
         elif approved:
-            params["organization_ids"] = []
+            params["organization_ids"] = ""
 
         if params["limit"] > 100:
             params["limit"] = 100
+
+        if settings.city != city_context.DEFAULT_CITY:
+            own_cities = (timepad_params or {}).get("city") or []
+            own_city = (
+                own_cities[0] if own_cities else _own_scraper_settings("timepad").get("city")
+            )
+            if not own_city:
+                raise ScraperCityMissing(
+                    f"Timepad: no city for {settings.city!r} (Django parameter "
+                    f"'city' or cities.{settings.city}.escraper_parameters.timepad.city)"
+                )
+            params["cities"] = own_city
 
         return params
 
@@ -892,10 +1178,8 @@ class ScrapeEvents:
         self, days: int = None, events_filter: Optional[Callable] = None
     ) -> Iterator[ParserEvent]:
         days = int(settings.escraper_parameters.get("cfg", {}).get("days", days))
-        sites = settings.escraper_parameters.get("cfg", {}).get(
-            "sites",
-            ["sevcable", "newholland", "levashovsky", "alexandrinsky"],
-        )
+        sites = settings.escraper_parameters.get("cfg", {}).get("sites", DEFAULT_CFG_SITES)
+        sites = _sites_of_current_city("cfg", sites, CFG_SITES)
         existed_event_ids = crud.get_event_id_by_prefix("CFG")
 
         # Per-site batches: an error on one site doesn't lose the others
@@ -915,6 +1199,58 @@ class ScrapeEvents:
                 site_events = []
             yield from _apply_filter(site_events, events_filter)
             time.sleep(1)
+
+    # ------------------------------------------------------------------
+    # Venue parsers with their own API: Kazan Kremlin, TN-Cloud box offices
+    # ------------------------------------------------------------------
+
+    def get_kazan_kremlin_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Exhibitions and dated events of kazan-kremlin.ru."""
+        kremlin_settings = settings.escraper_parameters.get("kazan_kremlin", {})
+        request_params = {}
+        if kremlin_settings.get("types"):
+            request_params["types"] = list(kremlin_settings["types"])
+        if kremlin_settings.get("max_event_days"):
+            request_params["max_event_days"] = int(kremlin_settings["max_event_days"])
+        existed_event_ids = crud.get_event_id_by_prefix(KazanKremlin.source)
+        yield from _apply_filter(
+            _iter_events(
+                self._kazan_kremlin_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids,
+            ),
+            events_filter,
+        )
+
+    def get_tncloud_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Dated programmes of TN-Cloud museum box offices (``sites``)."""
+        tnc_settings = settings.escraper_parameters.get("tncloud", {})
+        sites = _sites_of_current_city("tncloud", tnc_settings.get("sites") or [], TNC_SITES)
+        existed_event_ids = crud.get_event_id_by_prefix(TNCloud.source)
+
+        # Per-site batches: an error on one site doesn't lose the others
+        for site in sites:
+            request_params = {"site": site}
+            if "with_prices" in tnc_settings:
+                request_params["with_prices"] = bool(tnc_settings["with_prices"])
+            try:
+                site_events = list(
+                    _iter_events(
+                        self._tncloud_parser,
+                        request_params=request_params,
+                        tags=ALL_EVENT_TAGS,
+                        existed_event_ids=existed_event_ids,
+                    )
+                )
+            except Exception as e:
+                log.error(f"Error getting events from TN-Cloud {site}: {e}")
+                site_events = []
+            yield from _apply_filter(site_events, events_filter)
 
     # ------------------------------------------------------------------
     # Kassir
@@ -990,11 +1326,175 @@ class ScrapeEvents:
         )
 
     # ------------------------------------------------------------------
+    # Yandex Afisha
+    # ------------------------------------------------------------------
+
+    def get_yandex_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        yandex_settings = settings.escraper_parameters.get("yandex", {})
+        days = int(yandex_settings.get("days", days) or 7)
+
+        # City is a URL slug on afisha.yandex.ru ('saint-petersburg'), not the
+        # short city code used by the other scrapers.
+        yandex_city = yandex_settings.get("city", "saint-petersburg")
+        yandex_cities = dsn_parameters.read_param("yandex").get("city")
+        if yandex_cities:
+            yandex_city = yandex_cities[0]
+
+        request_params = {
+            "city": yandex_city,
+            "date_from": date.today().strftime("%Y-%m-%d"),
+            "days": days,
+        }
+        yandex_categories = yandex_settings.get("categories")
+        if yandex_categories:
+            request_params["categories"] = yandex_categories
+
+        existed_event_ids = crud.get_event_id_by_prefix("YA")
+        yield from _apply_filter(
+            _iter_events(
+                self._yandex_parser,
+                request_params=request_params,
+                tags=ALL_EVENT_TAGS,
+                existed_event_ids=existed_event_ids,
+            ),
+            events_filter,
+        )
+
+    # ------------------------------------------------------------------
+    # Vibe — city feed of Ticketscloud (all organizers); every few days
+    # ------------------------------------------------------------------
+
+    def get_vibe_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """TC events of every organizer of the city, via the Vibe feed.
+
+        Ids are ``TC-<id>`` like the Ticketscloud scraper, so the two dedupe
+        against each other. Ticketland events of the feed are not requested.
+        """
+        vibe_settings = settings.escraper_parameters.get("vibe", {})
+        # Own window: the rotation passes 7 days, Vibe looks further ahead.
+        days = int(vibe_settings.get("days", DEFAULT_VIBE_DAYS))
+        request_params = {
+            "city_id": str(
+                vibe_settings.get("city_id")
+                or vibe_filter.CITY_IDS.get(settings.city, "498817")
+            ),
+            "days": days,
+            "systems": ["TC"],
+            "exclude_categories": vibe_filter.merged_list(
+                vibe_settings, "exclude_categories", vibe_filter.DEFAULT_EXCLUDE_CATEGORIES
+            ),
+        }
+        if vibe_settings.get("max_pages"):
+            request_params["max_pages"] = int(vibe_settings["max_pages"])
+        if not self._vibe_parser.partner:
+            log.warning(
+                "Vibe: no partner id in TC_TOKEN — events come without the TC "
+                "widget and organizer id."
+            )
+
+        selector = vibe_filter.VibeFilter(vibe_settings.get("filter"))
+        existed_event_ids = crud.get_event_id_by_prefix("TC")
+        raw_events = self._vibe_parser.get_events(
+            request_params=request_params,
+            tags=tuple(ALL_EVENT_TAGS) + ("org_id",),
+            existed_event_ids=existed_event_ids,
+        )
+
+        def selected():
+            for raw in raw_events or []:
+                if raw is None or not raw.is_registration_open:
+                    continue
+                if selector.accept(
+                    {
+                        "title": raw.title,
+                        "place_name": raw.place_name,
+                        "price_int": _parse_price_int(raw.price),
+                        "org_id": getattr(raw, "org_id", None),
+                    }
+                ):
+                    yield ParserEvent.from_parser(raw)
+            log.info(f"Vibe filter: {selector.summary()}")
+
+        yield from _apply_filter(selected(), events_filter)
+
+    # ------------------------------------------------------------------
+    # Tripster (excursions) — not in the weekday rotation, run explicitly
+    # ------------------------------------------------------------------
+
+    def get_tripster_events(
+        self, days: int = None, events_filter: Optional[Callable] = None
+    ) -> Iterator[ParserEvent]:
+        """Scrape Tripster excursions, keeping only the curated selection.
+
+        Unlike the other sources this one filters the raw API payload before
+        parsing: the signals worth selecting on (rating, review_count,
+        schedule, guide, duration) do not survive `Tripster.parse()`. See
+        `tripster_filter` for the policy and its settings.
+        """
+        parser = get_tripster_parser()
+        if parser is None:
+            return
+
+        tripster_settings = settings.escraper_parameters.get("tripster", {})
+        days = int(tripster_settings.get("days", days) or 7)
+
+        # Tripster wants its own city slug ('Saint_Petersburg', 'Kazan').
+        city_slug = tripster_settings.get("city", "Saint_Petersburg")
+        tripster_cities = dsn_parameters.read_param("tripster").get("city")
+        if tripster_cities:
+            city_slug = tripster_cities[0]
+
+        filter_config = tripster_settings.get("filter")
+        request_params = {
+            "city__slug": city_slug,
+            "days": days,
+            **tripster_filter.api_prefilter_params(filter_config),
+        }
+        existed_event_ids = crud.get_event_id_by_prefix("TRIPSTER")
+
+        raw_items = _fetch_tripster_experiences(
+            parser,
+            request_params,
+            existed_event_ids=existed_event_ids,
+            max_pages=int(tripster_settings.get("max_pages", 20)),
+        )
+        selected, funnel = tripster_filter.select_experiences(
+            raw_items, filter_config, days=days
+        )
+        log.info(
+            "Tripster selection funnel: "
+            + ", ".join(f"{stage}={count}" for stage, count in funnel.items())
+        )
+
+        events = []
+        for item in selected:
+            try:
+                parsed = parser.parse(item, tags=ALL_EVENT_TAGS)
+            except Exception as e:
+                log.error(f"Tripster: failed to parse experience {item.get('id')}: {e}")
+                continue
+            if not parsed.is_registration_open:
+                continue
+            events.append(ParserEvent.from_parser(parsed))
+
+        yield from _apply_filter(events, events_filter)
+
+    # ------------------------------------------------------------------
     # Single event by URL
     # ------------------------------------------------------------------
 
     def from_url(self, event_url: str) -> Optional[ParserEvent]:
         """Get event by URL, matching against known parser URL patterns."""
+        if "tripster.ru" in event_url:
+            parser = get_tripster_parser()
+            if parser is None:
+                return None
+            return _get_event(parser, exp_url=event_url)
+
         for parser_base_url, parser in self.PARSER_URLS.items():
             if parser_base_url in event_url:
                 return _get_event(parser, event_url=event_url)
@@ -1054,6 +1554,10 @@ def from_approved_organizations(days: int) -> List[ParserEvent]:
 
 def from_not_approved_organizations(days: int) -> List[ParserEvent]:
     return _default_scraper.from_not_approved_organizations(days)
+
+
+def not_approved_rotation(days: int) -> List[tuple]:
+    return _default_scraper.not_approved_rotation(days)
 
 
 def from_url(event_url: str) -> Optional[ParserEvent]:

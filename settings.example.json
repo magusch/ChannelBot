@@ -8,20 +8,44 @@
     "task_digest_post": false,
     "vk_posting_enabled": false,
     "prepare_events_limit": 0,
+    "prepare_api_events_limit": 0,
+    "place_geocoding": {"enabled": true, "limit": 30},
     "city": "spb",
     "timezone": "Europe/Moscow",
+    "metro_adjacency": {},
     "content_generator": {
-      "ai_model_name": "openai"
+      "exclude_place_ids": [473],
+      "ai_model_name": "openai",
+      "bot_url": "https://t.me/YourBot",
+      "theme_post_enabled": false,
+      "theme_post_hour": 12,
+      "theme_post_minute": 0,
+      "theme_post_days": "*",
+      "theme_post_days_ahead": 2,
+      "theme_post_repeat_days": 3,
+      "theme_post_publish_after_last_event": true,
+      "theme_post_publish_offset_hours": 2,
+      "theme_post_publish_latest_hour": 22,
+      "theme_post_publish_latest_minute": 0,
+      "theme_post_publish_hour": 20,
+      "theme_post_publish_minute": 30
     },
     "query_analyzer": {
       "provider": "openai",
       "model": "gpt-4o-mini"
     },
+    "url_extractor": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "max_chars": 6000,
+      "daily_limit_per_sender": 30,
+      "notify": true
+    },
     "auto_route_to_api": {
       "enabled": false,
       "min_score": 55,
       "hard_min_score": 35,
-      "low_category_ids": [2, 14],
+      "low_category_ids": [2, 13],
       "far_days": 21,
       "far_min_score": 75,
       "limit": 100,
@@ -29,11 +53,26 @@
     },
     "route_unschedulable": {
       "enabled": false,
-      "protect_first": 5,
-      "weekday_slots": 4,
-      "weekend_slots": 3,
+      "protect_first": 2,
+      "horizon_days": 14,
+      "min_lead_hours": 24,
+      "max_advance_days": 21,
       "min_runway_days": 1,
-      "limit": 0
+      "switch_margin": 5,
+      "limit": 30
+    },
+    "route_mid_score_to_api": {
+      "enabled": false,
+      "min_score": 55,
+      "max_score": 69,
+      "listed_min_score": 40,
+      "min_taste": 75,
+      "min_posted": 3,
+      "history_days": 180,
+      "max_per_organizer": 3,
+      "max_per_listed_organizer": 10,
+      "limit": 30,
+      "onlyapi_organizers": ["5f5a3a5e50f7d892d28ffdb5", "shkaf--art-rezidentsiya-b"]
     },
     "escraper_parameters": {
       "timepad": {
@@ -46,6 +85,30 @@
         "city": "spb",
         "channels": ["@example_ticketscloud_channel"],
         "use_proxy": false
+      },
+      "vibe": {
+        "city_id": "498817",
+        "enabled": true,
+        "every_days": 3,
+        "days": 20,
+        "max_pages": 100,
+        "timeout_sec": 600,
+        "use_proxy": false,
+        "exclude_categories": ["Детям"],
+        "extra_exclude_categories": ["Мюзиклы"],
+        "filter": {
+          "max_price": 5000,
+          "max_per_organizer": 10,
+          "exclude_title_keywords": [
+            "при свечах", "artvibes", "арт-вечеринка", "рисуем",
+            "быстрых свиданий", "дискотек", "кавер"
+          ],
+          "extra_exclude_title_keywords": ["мастер-класс для детей"],
+          "exclude_places": [],
+          "extra_exclude_places": ["Петрикирхе"],
+          "exclude_organizers": [],
+          "extra_exclude_organizers": ["65e5d10cb732d7c529676624"]
+        }
       },
       "culture": {"city": "spb", "enabled": false},
       "mts": {"city": "spb", "days": 15, "timeout_sec": 180},
@@ -61,13 +124,33 @@
         "enabled": false
       },
       "cfg": {
-        "sites": [],
+        "sites": ["sevcable", "newholland", "levashovsky", "alexandrinsky", "erarta", "erarta_news"],
         "days": 10
+      },
+      "tncloud": {
+        "sites": ["rusmuseum"]
       },
       "afisha": {
         "city": "spb",
         "categories": ["concerts", "theatre", "exhibitions", "standup", "festivals", "musicals", "party"],
         "days": 30
+      },
+      "tripster": {
+        "city": "Saint_Petersburg", "days": 7, "max_pages": 20,
+        "filter": {
+          "min_rating": 4.75, "min_reviews": 3, "max_sessions": 0,
+          "types": ["group"],
+          "api_movement_types": ["foot", "museum", "room"],
+          "excluded_movement_types": ["bus", "motorship", "speedboat", "watership", "car"],
+          "max_price": 3500, "max_duration_hours": 5,
+          "max_group_size": 25, "require_local_topic": false,
+          "similar_title_threshold": 0.75, "max_per_guide": 3, "limit": 250
+        }
+      },
+      "yandex": {
+        "city": "saint-petersburg",
+        "categories": ["concert", "theatre", "festival", "standup", "show", "sport"],
+        "days": 7
       }
     },
     "scoring": {
@@ -93,14 +176,14 @@
         "1": 90, "8": 85, "6": 85,
         "9": 85, "10": 80, "7": 70,
         "11": 65, "3": 60, "4": 55,
-        "13": 55, "14": 50, "12": 50,
+        "12": 55, "13": 50,
         "5": 45, "2": 30
       },
       "source_scores": {
         "timepad": 70, "radario": 70, "tc": 65,
         "qt": 65, "mts": 60, "cltr": 60,
-        "cfg": 65, "kassir": 60, "afisha": 55, "other": 80,
-        "vk": 45, "tg": 40, "instagram": 40
+        "cfg": 65, "kassir": 60, "afisha": 55, "ya": 55, "tripster": 55, "other": 80,
+        "vk": 45, "tg": 40, "instagram": 40, "kremlin": 60, "tnc": 55
       },
       "boost_keywords": [
         "бесплатно", "премьера", "фестиваль", "открытие",
@@ -118,7 +201,7 @@
       "place_reputation": {
         "w_posted": 1.0,
         "w_ready": 0.5,
-        "w_onlyapi": 0.3,
+        "w_onlyapi": 0.0,
         "w_rejected": 1.0,
         "w_spam": 1.5,
         "auto_reject_threshold": 39
@@ -133,7 +216,15 @@
       "taste_min_neighbors": 3,
       "taste_max_neighbor_distance": 0.3,
       "embedding_dedup_max_distance": 0.08,
-      "embedding_dedup_lookup_days": 180
+      "embedding_dedup_lookup_days": 180,
+      "semantic_rerank": {
+        "w_semantic": 0.6,
+        "w_quality": 0.25,
+        "w_date": 0.15,
+        "w_keyword": 0.1,
+        "pool_multiplier": 4,
+        "date_halflife_days": 14
+      }
     }
   }
 }

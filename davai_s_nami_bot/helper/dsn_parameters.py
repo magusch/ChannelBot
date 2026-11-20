@@ -1,6 +1,8 @@
 import json, logging, time
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
+from davai_s_nami_bot import city_context
+from davai_s_nami_bot.city_context import current_city
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +18,9 @@ def fetch_and_store_parameters(parameters=None):
     because the caller may itself be the only worker that would run that task —
     send-task-and-wait then deadlocks until the 15s poll times out and we fall
     back to defaults.
+
+    Per city: Django answers ``?city=`` with that city's rows merged over the
+    shared (``all``) ones, and the blobs go to ``parameters:<city>:<site>``.
 
     Returns the parsed ``{site: {param_name: [values]}}`` dict. Raises
     ``requests`` exceptions on transport failure and ``ValueError`` when the
@@ -54,10 +59,46 @@ def fetch_and_store_parameters(parameters=None):
         else:
             dsn_parameters[site][name].append(param["value"])
 
+    revision = str(time.time())
     for site, params in dsn_parameters.items():
-        redis_client.setex(f'parameters:{site}', _PARAMETERS_TTL, json.dumps(params))
+        redis_client.setex(_blob_key(site), _PARAMETERS_TTL, json.dumps(params))
+        redis_client.setex(_revision_key(site), _PARAMETERS_TTL, revision)
 
     return dsn_parameters
+
+
+def _blob_key(site):
+    return f'parameters:{current_city()}:{site}'
+
+
+def _legacy_blob(site):
+    """The pre-multicity blob ``parameters:<site>`` — the default city's data
+    from before the deploy. Read only when the per-city key is missing and
+    Django cannot be reached, so the first minutes after a deploy (or a Django
+    outage right then) do not drop SPb to code-default prompts."""
+    if current_city() != city_context.DEFAULT_CITY:
+        return None
+    try:
+        return redis_client.get(f'parameters:{site}')
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"DSNParameters: legacy blob for {site!r} unreadable: {e}")
+        return None
+
+
+def _revision_key(site):
+    return f'{_blob_key(site)}:rev'
+
+
+def _current_revision(site):
+    """Revision marker stored next to the blob, as str; None if unavailable."""
+    try:
+        value = redis_client.get(_revision_key(site))
+    except Exception as e:  # noqa: BLE001 — Redis hiccup must not break lookups
+        log.warning(f"DSNParameters: revision check for {site!r} failed: {e}")
+        return None
+    if isinstance(value, bytes):
+        value = value.decode('utf-8', 'replace')
+    return value
 
 
 class DSNParameters:
@@ -70,12 +111,36 @@ class DSNParameters:
         return cls._instance
 
     def _initialize(self):
-        self.sites = {}
+        self._sites_by_city = {}
+        self._absent_by_city = {}
         self.update_interval = 3600
         self.start()
 
+    # In-memory copies are per city: the same singleton serves every city a
+    # worker runs, and Kazan must not read SPb's cached prompts or org lists.
+
+    @property
+    def sites(self):
+        return self.__dict__.setdefault('_sites_by_city', {}).setdefault(
+            current_city(), {}
+        )
+
+    @sites.setter
+    def sites(self, value):
+        self.__dict__.setdefault('_sites_by_city', {})[current_city()] = value
+
+    @property
+    def _absent_sites(self):
+        return self.__dict__.setdefault('_absent_by_city', {}).setdefault(
+            current_city(), {}
+        )
+
+    @_absent_sites.setter
+    def _absent_sites(self, value):
+        self.__dict__.setdefault('_absent_by_city', {})[current_city()] = value
+
     def start(self):
-        cached_site_params = redis_client.get(f'parameters:dsn_site')
+        cached_site_params = redis_client.get(_blob_key('dsn_site'))
         if not cached_site_params:
             self.update_parameters()
 
@@ -88,7 +153,9 @@ class DSNParameters:
         """
         start_time = time.time()
         while time.time() - start_time < timeout:
-            cached_site_params = redis_client.get(f'parameters:dsn_site')
+            cached_site_params = redis_client.get(_blob_key('dsn_site')) or _legacy_blob(
+                'dsn_site'
+            )
             if cached_site_params:
                 self._parameters_ready = True
                 return
@@ -113,6 +180,10 @@ class DSNParameters:
             list_params = ['city']
         elif site_name == 'culture':
             list_params = ['city']
+        elif site_name == 'kassir':
+            list_params = ['city_domain', 'categories']
+        elif site_name in ('afisha', 'yandex', 'tripster'):
+            list_params = ['city']
 
         if site_name not in self.sites.keys():
             self.sites[site_name] = {"params": {}, "last_updated": time.time()}
@@ -131,27 +202,64 @@ class DSNParameters:
         else:
             return None
 
+    def task_parameter(self, key, task=None):
+        """``<key>_<task>`` if set, else the shared ``<key>``."""
+        if task:
+            value = self.site_parameters(f'{key}_{task}', last=1)
+            if value and str(value).strip():
+                return value
+        return self.site_parameters(key, last=1)
+
     def read_param(self, site):
-        if site not in self.sites.keys() or self._is_stale(site):
-            cached_params = redis_client.get(f'parameters:{site}')
+        revision = _current_revision(site)
+        if site not in self.sites.keys() or self._is_stale(site) or self._is_outdated(
+            site, revision
+        ):
+            cached_params = redis_client.get(_blob_key(site))
             if cached_params is None:
-                log.warning(
-                    f"DSNParameters: 'parameters:{site}' missing from Redis, "
-                    f"refreshing synchronously from Django."
-                )
-                try:
-                    fetch_and_store_parameters()
-                except Exception as e:
-                    # Transport failure / stale session / bad JSON — fall through
-                    # to the in-memory or default fallback below.
-                    log.error(
-                        f"DSNParameters: synchronous refresh triggered by {site!r} "
-                        f"failed: {e}"
+                known_sites = None
+                absent = self._is_absent_in_django(site)
+                if absent:
+                    log.debug(
+                        f"DSNParameters: Django defines no parameters for {site!r}, "
+                        f"serving code defaults without a refresh."
                     )
-                cached_params = redis_client.get(f'parameters:{site}')
+                else:
+                    log.warning(
+                        f"DSNParameters: '{_blob_key(site)}' missing from Redis, "
+                        f"refreshing synchronously from Django."
+                    )
+                    try:
+                        known_sites = set(fetch_and_store_parameters())
+                    except Exception as e:
+                        # Transport failure / stale session / bad JSON — fall
+                        # through to the in-memory or default fallback below.
+                        log.error(
+                            f"DSNParameters: synchronous refresh triggered by "
+                            f"{site!r} failed: {e}"
+                        )
+                    cached_params = redis_client.get(_blob_key(site))
+                    if cached_params is None and known_sites is None:
+                        cached_params = _legacy_blob(site)
+                        if cached_params is not None:
+                            log.warning(
+                                f"DSNParameters: serving pre-multicity "
+                                f"'parameters:{site}' until Django answers."
+                            )
                 if cached_params is None:
                     now = time.time()
-                    if site in self.sites and self.sites[site].get("params"):
+                    if absent or (known_sites is not None and site not in known_sites):
+                        # Django answered fine and simply has no such site: a
+                        # scraper whose config lives in settings.json only.
+                        # Remember it so the next lookup skips the refresh.
+                        if not absent:
+                            self._absent_sites[site] = _current_revision('dsn_site')
+                            log.info(
+                                f"DSNParameters: Django defines no parameters for "
+                                f"{site!r}; callers use their own defaults "
+                                f"(settings.json). Not an error."
+                            )
+                    elif site in self.sites and self.sites[site].get("params"):
                         log.warning(
                             f"DSNParameters: refresh for {site!r} failed, serving "
                             f"this process's stale in-memory copy until the next "
@@ -159,13 +267,20 @@ class DSNParameters:
                         )
                         self.sites[site]["last_updated"] = now
                         return self.sites[site]["params"]
-                    log.warning(
-                        f"DSNParameters: no parameters available for {site!r} "
-                        f"(Redis empty, Django unreachable). site_parameters() will "
-                        f"return None and callers fall back to their hardcoded "
-                        f"defaults until the next refresh window "
-                        f"({self.update_interval}s)."
-                    )
+                    elif known_sites is None:
+                        log.warning(
+                            f"DSNParameters: no parameters available for {site!r} "
+                            f"(Redis empty, Django unreachable). site_parameters() "
+                            f"will return None and callers fall back to their "
+                            f"hardcoded defaults until the next refresh window "
+                            f"({self.update_interval}s)."
+                        )
+                    else:
+                        log.warning(
+                            f"DSNParameters: Django returned parameters for "
+                            f"{site!r} but Redis has no blob for it — serving "
+                            f"defaults until the next refresh window."
+                        )
                     self.sites[site] = {
                         "params": {},
                         "last_updated": now,
@@ -178,14 +293,37 @@ class DSNParameters:
                 "params": json.loads(cached_params),
                 "last_updated": time.time(),
                 "is_default": False,
+                # Re-read: a synchronous refresh above may have bumped it.
+                "rev": _current_revision(site),
             }
 
         self.default_params(site)
         return self.sites[site]["params"]
 
+    def _is_absent_in_django(self, site):
+        """True when a previous refresh showed Django has no such site.
+
+        Tied to the 'dsn_site' revision at that moment, so a later full refresh
+        (someone added the parameter in Django) makes us look again.
+        """
+        if site not in self._absent_sites:
+            return False
+        return self._absent_sites[site] == _current_revision('dsn_site')
+
     def _is_stale(self, site):
         last_updated = self.sites.get(site, {}).get("last_updated", 0)
         return (time.time() - last_updated) > self.update_interval
+
+    def _is_outdated(self, site, revision):
+        """True when Redis holds a newer revision than this process last loaded.
+
+        An unknown revision (Redis without the marker — e.g. a blob written by an
+        older deploy) is not treated as outdated: otherwise every lookup would
+        reload the blob until the next full refresh writes the marker.
+        """
+        if revision is None:
+            return False
+        return self.sites.get(site, {}).get("rev") != revision
 
     def update_parameters(self):
         celery_app.send_task(

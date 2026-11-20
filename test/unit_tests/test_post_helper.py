@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from davai_s_nami_bot.helper.post_helper import PostHelper, PlaceView, DictAsMethods
 from davai_s_nami_bot.database.models import (
     Events2Posts, EventsNotApproved, Place, PlaceKeyword, PlaceSchedule, Base,
+    Category, SubCategory,
 )
 from davai_s_nami_bot import crud
 
@@ -233,6 +234,42 @@ class TestPostHelperUnit:
         )
         helper = PostHelper(event)
         assert helper.date_to_title() == "10 и 11 мая"
+
+    def test_overnight_party_is_one_day(self):
+        msk = timezone(timedelta(hours=3))
+        event = _make_event_dict(
+            from_date=datetime(2026, 10, 2, 23, 0, tzinfo=msk),
+            to_date=datetime(2026, 10, 3, 6, 0, tzinfo=msk),
+        )
+        helper = PostHelper(event)
+        assert helper.date_to_title() == "2 октября"
+        assert helper.date_to_post() == "Пт, 2 октября 23:00-06:00"
+
+    def test_overnight_across_month_is_one_day(self):
+        msk = timezone(timedelta(hours=3))
+        event = _make_event_dict(
+            from_date=datetime(2026, 10, 31, 23, 0, tzinfo=msk),
+            to_date=datetime(2026, 11, 1, 5, 0, tzinfo=msk),
+        )
+        helper = PostHelper(event)
+        assert helper.date_to_title() == "31 октября"
+        assert helper.date_to_post() == "Сб, 31 октября 23:00-05:00"
+
+    def test_ending_after_night_hour_stays_two_days(self):
+        msk = timezone(timedelta(hours=3))
+        event = _make_event_dict(
+            from_date=datetime(2026, 10, 2, 23, 0, tzinfo=msk),
+            to_date=datetime(2026, 10, 3, 10, 0, tzinfo=msk),
+        )
+        assert PostHelper(event).date_to_title() == "2 и 3 октября"
+
+    def test_last_day_keeps_date_only_end_of_long_event(self):
+        from davai_s_nami_bot.helper.post_helper import last_day
+
+        # Date-only end stored as 00:00 UTC = 03:00 MSK: the end day is real.
+        assert last_day(datetime(2026, 10, 1, 10), datetime(2026, 10, 5, 3)).day == 5
+        # Starts after midnight: never folds before the start.
+        assert last_day(datetime(2026, 10, 3, 1), datetime(2026, 10, 3, 5)).day == 3
 
     def test_date_to_title_cross_month(self):
         event = _make_event_dict(
@@ -496,6 +533,48 @@ class TestRemakeEventPost:
     def test_remake_not_found(self, db_session_fixture):
         result = crud.remake_event_post(event_id=99999, save=False)
         assert result is None
+
+    def _event_with_stale_category(self, db, category):
+        db.add_all([
+            Category(id=4, name="Lectory"),
+            Category(id=5, name="Culture"),
+            SubCategory(name="Лекции", category_id=4),
+        ])
+        event = Events2Posts(
+            event_id="test-cat", title="Лекция", full_text="Text.",
+            post="Old post", prepared_text="Prepared.",
+            url="https://example.com", ticket_url="",
+            status="ReadyToPost", price="Бесплатно", address="Адрес",
+            from_date=datetime(2026, 6, 1, 19, 0),
+            to_date=datetime(2026, 6, 1, 22, 0),
+            category=category, main_category_id=5, source="timepad",
+        )
+        db.add(event)
+        db.commit()
+        return event
+
+    def test_remake_keeps_stored_category_by_default(self, db_session_fixture):
+        event = self._event_with_stale_category(db_session_fixture, "Лекции")
+        result = crud.remake_event_post(event_id=event.id, save=True)
+        assert result["main_category_id"] == 5
+
+    def test_remake_prefers_ai_category_string(self, db_session_fixture):
+        db = db_session_fixture
+        event = self._event_with_stale_category(db, "Лекции")
+        result = crud.remake_event_post(
+            event_id=event.id, save=True, prefer_category_str=True
+        )
+        assert result["main_category_id"] == 4
+        db.refresh(event)
+        assert event.main_category_id == 4
+
+    def test_remake_unknown_ai_category_keeps_stored(self, db_session_fixture):
+        db = db_session_fixture
+        event = self._event_with_stale_category(db, "Неизвестное")
+        result = crud.remake_event_post(
+            event_id=event.id, save=True, prefer_category_str=True
+        )
+        assert result["main_category_id"] == 5
 
 
 class TestMakePostFromDict:

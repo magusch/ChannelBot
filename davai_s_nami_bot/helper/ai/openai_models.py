@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 
 # Families that reject `max_tokens` and accept `reasoning_effort`.
-_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 
 # Tuning params that may be rejected per model; safe to drop and retry without.
 _OPTIONAL_PARAMS = ("verbosity", "reasoning_effort", "temperature")
@@ -85,12 +85,16 @@ def create_chat_completion(client, model, messages, **kwargs):
     whole event preparation. Errors we can't fix by dropping a param propagate.
     """
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    for _ in range(len(_OPTIONAL_PARAMS) + 1):
+    for _ in range(len(_OPTIONAL_PARAMS) + 2):
         try:
             return client.chat.completions.create(
                 model=model, messages=messages, **kwargs
             )
         except BadRequestError as e:
+            if "max_tokens" in kwargs and _rejects(e, "max_tokens"):
+                log.warning(f"model={model} rejected max_tokens, retrying as max_completion_tokens")
+                kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                continue
             dropped = _param_to_drop(e, kwargs)
             if dropped is None:
                 raise
@@ -102,16 +106,18 @@ def create_chat_completion(client, model, messages, **kwargs):
     raise RuntimeError("unreachable: retry budget exhausted")
 
 
-def _param_to_drop(error, kwargs):
-    """Name of the optional param the API complained about, or None."""
+def _rejects(error, name):
+    """True when the 400 names ``name`` as the offending param."""
     body = getattr(error, "body", None)
     param = getattr(error, "param", None) or (
         body.get("param") if isinstance(body, dict) else None
     )
-    message = str(error)
+    return param == name or f"'{name}'" in str(error)
+
+
+def _param_to_drop(error, kwargs):
+    """Name of the optional param the API complained about, or None."""
     for name in _OPTIONAL_PARAMS:
-        if name not in kwargs:
-            continue
-        if param == name or f"'{name}'" in message:
+        if name in kwargs and _rejects(error, name):
             return name
     return None

@@ -7,6 +7,7 @@ import requests
 from PIL import Image
 from pillow_heif import register_heif_opener
 import boto3
+from botocore.config import Config as BotoConfig
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +22,11 @@ s3_client = boto3.client("s3", region_name=AWS_REGION,
                          aws_access_key_id=AWS_ACCESS_KEY_ID,
                          aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
                          aws_session_token=AWS_SECRET_ACCESS_KEY,
-                         endpoint_url=AWS_S3_ENDPOINT_URL
+                         endpoint_url=AWS_S3_ENDPOINT_URL,
+                         config=BotoConfig(
+                             request_checksum_calculation="when_required",
+                             response_checksum_validation="when_required",
+                         ),
                          )
 
 
@@ -74,6 +79,39 @@ REQUIRED_CONSTANT_NAMES = [
 ]
 
 
+def _parse_constant_line(line):
+    """Parse one 'prod_constants' line into (tag, value), or None to skip it.
+
+    The file is hand-edited, and a bare `line.split()` used to raise on any
+    line that was not exactly two tokens — a single blank line, a comment or a
+    `KEY = value` written out of habit took down every import of this package.
+    Accepts `KEY value`, `KEY = value` and `KEY=value`, and keeps values that
+    contain spaces intact.
+    """
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+
+    head = line.split(maxsplit=1)[0]
+    if "=" in head:
+        tag, _, value = line.partition("=")
+    else:
+        parts = line.split(maxsplit=1)
+        if len(parts) < 2:
+            return None
+        tag, value = parts
+        value = value.lstrip()
+        if value.startswith("="):
+            value = value[1:]
+
+    tag, value = tag.strip(), value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    if not tag or not value:
+        return None
+    return tag, value
+
+
 def read_constants():
     if os.path.exists(CONSTANTS_FILE_NAME):
         warnings.warn(
@@ -88,7 +126,10 @@ def read_constants():
 
         with open(CONSTANTS_FILE_NAME) as file:
             for line in file:
-                tag, value = line.split()
+                parsed = _parse_constant_line(line)
+                if parsed is None:
+                    continue
+                tag, value = parsed
 
                 os.environ[tag] = value
 
@@ -118,7 +159,9 @@ def _download_from_s3(s3_key: str) -> bytes:
     return response["Body"].read()
 
 
-def prepare_image(image_url, s3_key: str = None):
+def prepare_image(image_url, s3_key: str = None, name: str = "img"):
+    """Download an image and write it next to the process as ``<name>.png/.jpg``.
+    """
     if image_url is None and s3_key is None:
         return None
     if isinstance(image_url, list) or image_url == '':
@@ -148,7 +191,7 @@ def prepare_image(image_url, s3_key: str = None):
 
     image_path = None
     with Image.open(io.BytesIO(image_bytes)) as img:
-            image_name = "img"
+            image_name = name
             img.thumbnail(IMG_MAXSIZE, THUMB_RESAMPLE)
 
             if img.mode != "RGB":
@@ -220,7 +263,6 @@ def upload_bytes_to_s3(bytes, ext: str) -> dict:
         Key=key,
         Body=bytes,
         ContentType="image/jpeg",
-        ContentEncoding="identity",
         ContentDisposition="inline",
         CacheControl="public, max-age=31536000",
         ACL="public-read",

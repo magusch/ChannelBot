@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..celery_app import celery_app
-from .dependencies import verify_token
+from ..database.models import Events2Posts, EventsNotApproved
+from .city import enter_city_of
+from .dependencies import log_api_request, verify_token
 from .schemas import (
     AiUpdateEventRequest,
     AiModerateEventsRequest,
+    EventFromUrlRequest,
+    ExtractEventsFromTextRequest,
     TaskResponse,
 )
 
@@ -24,6 +28,49 @@ async def ai_update_event(body: AiUpdateEventRequest):
         args=[body.event, body.is_new],
     )
     return TaskResponse(message='Task NEW EVENT added to queue', task_id=task.id)
+
+
+async def queue_extract_events_from_text(body: ExtractEventsFromTextRequest, request: Request):
+    """Queue AI extraction of events from raw text into EventsNotApproved."""
+    if not body.content.strip():
+        # A forwarded photo without a caption: nothing for the AI to read.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="content is empty"
+        )
+    await log_api_request(request, body.model_dump())
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.extract_events_from_text',
+        args=[body.content, body.source, body.image],
+    )
+    return TaskResponse(message='Task extract events from text added to queue', task_id=task.id)
+
+
+@router.post("/extract-events-from-text/", response_model=TaskResponse,
+              summary="Events from raw text",
+              description="AI reads a post text (e.g. a forwarded Telegram post), "
+              "extracts events and saves them to EventsNotApproved (status 'new') "
+              "of the request's city. Legacy alias: POST /api/create_post_by_ai/.")
+async def extract_events_from_text(body: ExtractEventsFromTextRequest, request: Request):
+    return await queue_extract_events_from_text(body, request)
+
+
+@router.post("/event-from-url/", response_model=TaskResponse,
+              summary="Event from any URL",
+              description="Any event page (not only sources we scrape): our parser by "
+              "domain → ticket widget on the page → schema.org JSON-LD → cheap LLM. "
+              "Found events land in EventsNotApproved with status 'pending' of the "
+              "request's city, and the dev channel gets a note. Poll the task for "
+              "{status: created|exists|rejected|failed|not_found|rate_limited, events, ...}.")
+async def event_from_url(body: EventFromUrlRequest, request: Request):
+    url = body.url.strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="url must be http(s)")
+    await log_api_request(request, body.model_dump())
+    task = celery_app.send_task(
+        'davai_s_nami_bot.celery_tasks.event_from_any_url',
+        args=[url, body.comment, body.submitted_by],
+    )
+    return TaskResponse(message='Task event from url added to queue', task_id=task.id)
 
 
 @router.post("/moderate-events/",
@@ -46,6 +93,7 @@ async def moderate_events(body: AiModerateEventsRequest):
               description="Moderate events from EventsNotApproved via AI.")
 async def moderate_not_approved_events(request: Request):
     data = await request.json()
+    await enter_city_of(EventsNotApproved, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.ai_moderate_not_approved_events',
@@ -59,6 +107,7 @@ async def moderate_not_approved_events(request: Request):
               description="Prepare event texts for publication via AI.")
 async def prepare_events(request: Request):
     data = await request.json()
+    await enter_city_of(Events2Posts, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.prepare_events',

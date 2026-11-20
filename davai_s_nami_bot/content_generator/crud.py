@@ -1,7 +1,12 @@
+import json
+
 from ..database.database_orm import db_session, orm_to_dict
+from ..database.models import Events2Posts
 from .models import ContentGeneratorEventSelection, ContentGeneratorFilterSet, \
     ContentGeneratorEventSelectionSelectedEvents, ContentGeneratorPostTemplate, \
     ContentGeneratorGeneratedPost, PostingSchedule
+
+from datetime import timezone
 
 from sqlalchemy import func
 
@@ -46,7 +51,7 @@ def get_event_selection(db, event_selection_id: int = None) -> ContentGeneratorE
         event_selection = db.query(ContentGeneratorEventSelection).get(event_selection_id)
     else:
         event_selection = db.query(ContentGeneratorEventSelection).order_by(func.random()).first()
-    return orm_to_dict(event_selection)
+    return orm_to_dict(event_selection) if event_selection else None
 
 
 @db_session
@@ -63,8 +68,142 @@ def add_selected_events(db, new_event_selection: ContentGeneratorEventSelection,
 @db_session
 def get_selected_events(db, event_selection_id: int) -> list[ContentGeneratorEventSelectionSelectedEvents]:
     """Getting selected events"""
-    selected_events = db.query(ContentGeneratorEventSelectionSelectedEvents).filter_by(eventselection_id=event_selection_id).all()
+    selected_events = (
+        db.query(ContentGeneratorEventSelectionSelectedEvents)
+        .filter_by(eventselection_id=event_selection_id)
+        .order_by(ContentGeneratorEventSelectionSelectedEvents.id.asc())
+        .all()
+    )
+    # Insertion order is the diverse ordering the post was built from.
     return [event.events2post_id for event in selected_events]
+
+
+@db_session
+def get_active_filter_sets(db, filter_type: str = None) -> list:
+    """Active filter sets, oldest id first — the rotation order for theme posts."""
+    query = db.query(ContentGeneratorFilterSet).filter(
+        ContentGeneratorFilterSet.is_active == True  # noqa: E712 (SQL expression)
+    )
+    if filter_type:
+        query = query.filter(ContentGeneratorFilterSet.filter_type == filter_type)
+    return [orm_to_dict(f) for f in query.order_by(ContentGeneratorFilterSet.id.asc()).all()]
+
+
+@db_session
+def get_recent_selection_filter_ids(db, last_selections: int = 20) -> list:
+    """``filter_set_id`` of the most recent selections, newest first."""
+    rows = (
+        db.query(ContentGeneratorEventSelection.filter_set_id)
+        .order_by(ContentGeneratorEventSelection.id.desc())
+        .limit(last_selections)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+@db_session
+def get_recently_used_event_ids(db, last_selections: int = 20) -> set:
+    """Event ids named in the last ``last_selections`` posts (not their hidden pools)."""
+    if not last_selections or last_selections <= 0:
+        return set()
+    selections = (
+        db.query(ContentGeneratorEventSelection.id, ContentGeneratorEventSelection.generation_settings)
+        .order_by(ContentGeneratorEventSelection.id.desc())
+        .limit(last_selections)
+        .all()
+    )
+    as_ids = lambda xs: [int(i) for i in xs or () if str(i).isdigit()]
+    used, partial = set(), {}
+    for selection_id, blob in selections:
+        settings = _settings_dict(blob)
+        if not settings and isinstance(blob, str):
+            try:
+                settings = _settings_dict(json.loads(blob))
+            except ValueError:
+                settings = {}
+        if settings.get("posted_ids"):
+            used.update(as_ids(settings["posted_ids"]))
+        else:
+            partial[selection_id] = settings
+    if not partial:
+        return used
+
+    pools = {}
+    for selection_id, event_id in (
+        db.query(
+            ContentGeneratorEventSelectionSelectedEvents.eventselection_id,
+            ContentGeneratorEventSelectionSelectedEvents.events2post_id,
+        )
+        .filter(ContentGeneratorEventSelectionSelectedEvents.eventselection_id.in_(list(partial)))
+        .order_by(ContentGeneratorEventSelectionSelectedEvents.id.asc())
+        .all()
+    ):
+        pools.setdefault(selection_id, []).append(event_id)
+    for selection_id, settings in partial.items():
+        pool = pools.get(selection_id, [])
+        shown = as_ids(settings.get("shown_ids"))
+        if not shown:
+            used.update(pool)
+            continue
+        # Older selections: rebuild the tail as themes.remaining_events does.
+        try:
+            tail = max(int(settings.get("tail") or 0), 0)
+        except (TypeError, ValueError):
+            tail = 0
+        rest = [i for i in pool if i not in set(shown)]
+        used.update(shown)
+        used.update(rest[:tail])
+    return used
+
+
+def get_selection_events(event_selection_id: int, limit: int = 50) -> dict:
+    """Events of a selection, still-valid ones only, in the stored order."""
+    from datetime import datetime, timezone
+
+    from .. import crud as dsn_crud
+    from ..pydantic_models import EventRequestParameters
+
+    event_ids = get_selected_events(event_selection_id)
+    if not event_ids:
+        return {"events": [], "total_count": 0, "dropped": 0}
+
+    found = dsn_crud.get_events_by_date_and_category(
+        EventRequestParameters(ids=event_ids)
+    )
+    now = datetime.now(timezone.utc)
+
+    events = []
+    for event in found["events"]:
+        to_date = event.get("to_date")
+        if to_date is not None:
+            if to_date.tzinfo is None:
+                to_date = to_date.replace(tzinfo=timezone.utc)
+            if to_date < now:
+                continue
+        events.append(event)
+
+    # Restore the selection's own order, not date or score order.
+    position = {event_id: i for i, event_id in enumerate(event_ids)}
+    events.sort(key=lambda e: position.get(e.get("id"), len(position)))
+
+    return {
+        "events": events[:limit] if limit else events,
+        "total_count": len(events),
+        "dropped": len(event_ids) - len(events),
+    }
+
+
+@db_session
+def update_event_selection(db, event_selection_id: int, fields: dict):
+    """Patch an existing selection (used to record which events the post shows)."""
+    selection = db.query(ContentGeneratorEventSelection).get(event_selection_id)
+    if not selection:
+        return None
+    for key, value in fields.items():
+        setattr(selection, key, value)
+    db.commit()
+    db.refresh(selection)
+    return orm_to_dict(selection)
 
 
 @db_session
@@ -75,6 +214,19 @@ def create_generated_post(db, new_generated_post: dict):
     db.commit()
     db.refresh(new_generated_post)
     return orm_to_dict(new_generated_post)
+
+
+@db_session
+def get_recent_generated_post_contents(db, limit: int = 5) -> list:
+    """``content`` of the latest generated posts, newest first."""
+    rows = (
+        db.query(ContentGeneratorGeneratedPost.content)
+        .filter(ContentGeneratorGeneratedPost.content.isnot(None))
+        .order_by(ContentGeneratorGeneratedPost.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows]
 
 
 @db_session
@@ -111,22 +263,228 @@ def get_pending_schedules(db, *, before_datetime=None, limit: int = 50):
 
 
 @db_session
-def get_next_schedule_per_platform(db):
-    """Return the nearest schedule per platform that is not posted yet.
-    Output: dict[platform] = schedule_dict
-    """
-    platforms = db.query(PostingSchedule.platform).filter(PostingSchedule.is_posted == False).distinct().all()
+def get_next_schedule_per_platform(db, not_before=None):
+    """Return the nearest not-yet-posted schedule per platform."""
+    base = db.query(PostingSchedule).filter(PostingSchedule.is_posted == False)  # noqa: E712
+    if not_before is not None:
+        base = base.filter(PostingSchedule.scheduled_time >= not_before)
+
     platform_to_schedule = {}
-    for (platform,) in platforms:
+    for (platform,) in base.with_entities(PostingSchedule.platform).distinct().all():
         schedule = (
-            db.query(PostingSchedule)
-            .filter(PostingSchedule.is_posted == False, PostingSchedule.platform == platform)
+            base.filter(PostingSchedule.platform == platform)
             .order_by(PostingSchedule.scheduled_time.asc())
             .first()
         )
         if schedule:
             platform_to_schedule[platform] = orm_to_dict(schedule)
     return platform_to_schedule
+
+
+@db_session
+def get_scheduled_dates(db, platform: str, since, until) -> set:
+    """Calendar dates in ``[since, until]`` that already hold an unposted schedule.
+
+    Dates are bucketed in the timezone of ``since`` when it is aware, so a caller
+    planning MSK evening slots gets MSK calendar dates back instead of UTC ones.
+    """
+    rows = (
+        db.query(PostingSchedule.scheduled_time)
+        .filter(
+            PostingSchedule.is_posted == False,  # noqa: E712
+            PostingSchedule.platform == platform,
+            PostingSchedule.scheduled_time >= since,
+            PostingSchedule.scheduled_time <= until,
+        )
+        .all()
+    )
+
+    tz = getattr(since, 'tzinfo', None)
+
+    def _date(value):
+        if tz is not None and value.tzinfo is not None:
+            return value.astimezone(tz).date()
+        return value.date()
+
+    return {_date(row[0]) for row in rows if row[0] is not None}
+
+
+@db_session
+def get_scheduled_times(db, platform: str, since, until) -> list:
+    """Aware (UTC) ``scheduled_time`` of unposted schedules in ``[since, until]``."""
+    rows = (
+        db.query(PostingSchedule.scheduled_time)
+        .filter(
+            PostingSchedule.is_posted == False,  # noqa: E712
+            PostingSchedule.platform == platform,
+            PostingSchedule.scheduled_time >= since,
+            PostingSchedule.scheduled_time <= until,
+        )
+        .all()
+    )
+    return [
+        value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        for (value,) in rows if value is not None
+    ]
+
+
+@db_session
+def get_scheduled_filter_ids(db, platform: str, since, until) -> set:
+    """Themes that already have a scheduled post in ``[since, until]``.
+
+    Read from PostingSchedule rather than from the selections table because this
+    answers "was it published on a day", which is what a repeat rule is about;
+    a selection can exist without ever reaching the channel.
+    """
+    rows = (
+        db.query(ContentGeneratorEventSelection.filter_set_id)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.event_selection_id
+            == ContentGeneratorEventSelection.id,
+        )
+        .join(
+            PostingSchedule,
+            PostingSchedule.generated_post_id == ContentGeneratorGeneratedPost.id,
+        )
+        .filter(
+            PostingSchedule.platform == platform,
+            PostingSchedule.scheduled_time >= since,
+            PostingSchedule.scheduled_time <= until,
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row[0] is not None}
+
+
+@db_session
+def count_stale_schedules(db, before) -> int:
+    """How many not-posted schedules are already past ``before`` (for logging)."""
+    return (
+        db.query(PostingSchedule)
+        .filter(
+            PostingSchedule.is_posted == False,  # noqa: E712
+            PostingSchedule.scheduled_time < before,
+        )
+        .count()
+    )
+
+
+def _settings_dict(value):
+    """``platform_settings`` as a dict (jsonb comes back decoded, text does not)."""
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            data = json.loads(value)
+            return data if isinstance(data, dict) else {}
+        except ValueError:
+            return {}
+    return {}
+
+
+@db_session
+def save_schedule_message(db, schedule_id: int, message_id: int, post_url: str = None):
+    """Store the channel message id of a posted schedule."""
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule is None or not message_id:
+        return
+    data = _settings_dict(schedule.platform_settings)
+    data["message_id"] = int(message_id)
+    if post_url:
+        data["post_url"] = post_url
+    schedule.platform_settings = json.dumps(data)
+    db.commit()
+
+
+@db_session
+def get_latest_posted_digest(db, filter_set_id: int, since) -> dict:
+    """Latest posted digest of a theme with a known message id, or ``{}``."""
+    rows = (
+        db.query(PostingSchedule.id, PostingSchedule.posted_at, PostingSchedule.platform_settings)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.id == PostingSchedule.generated_post_id,
+        )
+        .join(
+            ContentGeneratorEventSelection,
+            ContentGeneratorEventSelection.id == ContentGeneratorGeneratedPost.event_selection_id,
+        )
+        .filter(
+            ContentGeneratorEventSelection.filter_set_id == filter_set_id,
+            PostingSchedule.is_posted == True,  # noqa: E712
+            PostingSchedule.platform == "telegram",
+            PostingSchedule.posted_at >= since,
+        )
+        .order_by(PostingSchedule.posted_at.desc())
+        .all()
+    )
+    for schedule_id, posted_at, blob in rows:
+        message_id = _settings_dict(blob).get("message_id")
+        if message_id:
+            return {"schedule_id": schedule_id, "posted_at": posted_at, "message_id": int(message_id)}
+    return {}
+
+
+@db_session
+def update_schedule_settings(db, schedule_id: int, fields: dict):
+    """Merge ``fields`` into the schedule's ``platform_settings``."""
+    schedule = db.query(PostingSchedule).get(schedule_id)
+    if schedule is None:
+        return
+    data = _settings_dict(schedule.platform_settings)
+    data.update(fields)
+    schedule.platform_settings = json.dumps(data)
+    db.commit()
+
+
+@db_session
+def get_digest_poll_context(db, schedule_id: int) -> dict:
+    """``{message_id, poll_message_id, settings}`` of a posted digest, or ``{}``."""
+    row = (
+        db.query(PostingSchedule.platform_settings, ContentGeneratorEventSelection.generation_settings)
+        .join(
+            ContentGeneratorGeneratedPost,
+            ContentGeneratorGeneratedPost.id == PostingSchedule.generated_post_id,
+        )
+        .join(
+            ContentGeneratorEventSelection,
+            ContentGeneratorEventSelection.id == ContentGeneratorGeneratedPost.event_selection_id,
+        )
+        .filter(PostingSchedule.id == schedule_id)
+        .first()
+    )
+    if row is None:
+        return {}
+    platform, generation = row
+    sent = _settings_dict(platform)
+    settings = _settings_dict(generation)
+    # generation_settings is sometimes double-encoded JSON
+    if not settings and isinstance(generation, str):
+        try:
+            settings = _settings_dict(json.loads(generation))
+        except ValueError:
+            settings = {}
+    return {
+        "message_id": sent.get("message_id"),
+        "poll_message_id": sent.get("poll_message_id"),
+        "settings": settings,
+    }
+
+
+@db_session
+def get_events_brief(db, event_ids: list) -> list:
+    """``[{id, title, from_date}]`` in the order of ``event_ids`` (UTC-naive dates)."""
+    ids = [int(i) for i in event_ids if str(i).isdigit()]
+    if not ids:
+        return []
+    rows = (
+        db.query(Events2Posts.id, Events2Posts.title, Events2Posts.from_date)
+        .filter(Events2Posts.id.in_(ids))
+        .all()
+    )
+    by_id = {r.id: {"id": r.id, "title": r.title, "from_date": r.from_date} for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
 
 
 @db_session
@@ -142,13 +500,30 @@ def mark_schedule_posted(db, schedule_id: int, *, posted_at):
     return None
 
 
+MAX_ERROR_HISTORY = 2000
+
+
+def retry_error_history(previous, error, attempt):
+    """Append ``[N] error`` to earlier attempts, keeping the first error when trimming."""
+    entry = f"[{attempt}] {error}"
+    if not previous:
+        return entry
+    combined = f"{previous}\n{entry}"
+    if len(combined) <= MAX_ERROR_HISTORY:
+        return combined
+    first = previous.split("\n", 1)[0]
+    return f"{first}\n…\n{entry}"[:MAX_ERROR_HISTORY]
+
+
 @db_session
 def increment_schedule_retry(db, schedule_id: int, error_message: str = None):
     schedule = db.query(PostingSchedule).get(schedule_id)
     if schedule:
         schedule.retry_count = (schedule.retry_count or 0) + 1
         if error_message:
-            schedule.error_message = error_message
+            schedule.error_message = retry_error_history(
+                schedule.error_message, error_message, schedule.retry_count
+            )
         db.commit()
         # db.refresh(schedule)
         # return orm_to_dict(schedule)

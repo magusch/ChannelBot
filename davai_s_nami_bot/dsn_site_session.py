@@ -2,6 +2,8 @@ import logging
 import os
 import requests
 
+from .city_context import current_city
+
 log = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 15
@@ -48,9 +50,12 @@ def _headers():
     }
 
 
-def _current_session_get(url):
+def _current_session_get(url, params=None):
     """GET with the cached Django session, retried once with a forced
     re-login if the cached session turns out to be stale.
+
+    Always sends ``city`` (the current city): Django scopes every endpoint the
+    bot calls by it and falls back to SPb with a warning when it is missing.
 
     CSRFTOKEN/SESSION_ID are module-level and only fetched once per process,
     so if Django invalidates the session later (restart, secret rotation,
@@ -63,12 +68,16 @@ def _current_session_get(url):
     if CSRFTOKEN is None or SESSION_ID is None:
         create_session()
 
+    params = {**(params or {}), "city": current_city()}
+
     for attempt in range(2):
         session = requests.session()
         session.cookies["csrfmiddlewaretoken"] = CSRFTOKEN
         session.cookies["sessionid"] = SESSION_ID
         session.cookies["csrftoken"] = CSRFTOKEN
-        response = session.get(url, headers=_headers(), timeout=_REQUEST_TIMEOUT)
+        response = session.get(
+            url, params=params, headers=_headers(), timeout=_REQUEST_TIMEOUT
+        )
 
         if response.status_code not in (401, 403) and "login" not in response.url:
             return response
@@ -100,14 +109,10 @@ def remove_old():
 def fill_empty_post_time():
     _current_session_get(url=FILL_EMPTY_POST_TIME_URL)
 
-def parameter_for_dsn_channel(parameters={}):
-    query_parameters = '?'
-    for p_key, p_value in parameters.items():
-        query_parameters += f"{p_key}={p_value}&"
-    return _current_session_get(url=PARAMETERS_FOR_CHANNEL + query_parameters)
+def parameter_for_dsn_channel(parameters=None):
+    return _current_session_get(url=PARAMETERS_FOR_CHANNEL, params=parameters or {})
 
 def place_address(raw_address):
-    url = f"{PLACE_ADDRESS}?address={raw_address}"
-    return _current_session_get(url=url)
+    return _current_session_get(url=PLACE_ADDRESS, params={"address": raw_address})
 
 

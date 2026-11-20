@@ -5,11 +5,21 @@ from datetime import datetime
 
 from celery.result import AsyncResult
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from davai_s_nami_bot import crud
 from davai_s_nami_bot.api import register_routers
+from davai_s_nami_bot.api.ai import queue_extract_events_from_text
+from davai_s_nami_bot.api.schemas import ExtractEventsFromTextRequest
+from davai_s_nami_bot.api.city import CityMiddleware, enter_city_of
+from davai_s_nami_bot.api.request_log import RequestLogMiddleware, log_api_request
+from davai_s_nami_bot.content_generator.models import (
+    ContentGeneratorEventSelection,
+    ContentGeneratorFilterSet,
+)
+from davai_s_nami_bot.database.models import Events2Posts, EventsNotApproved, Place
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from davai_s_nami_bot.pydantic_models import EventRequestParameters, PlaceRequestParameters
 
@@ -118,6 +128,12 @@ app.add_middleware(
     allow_headers=["*"],  # Allowed headers
 )
 
+# City of each request (?city= or "city" in a JSON body), see api/city.py.
+app.add_middleware(CityMiddleware)
+
+# api_request_log for endpoints that call log_api_request/track_request.
+app.add_middleware(RequestLogMiddleware)
+
 security = HTTPBearer()
 
 API_TOKEN = os.environ.get('API_TOKEN', 'your-secure-api-token')
@@ -132,8 +148,9 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
 
 def get_cache_key(params: dict):
-    key = json.dumps(params, sort_keys=True)
-    return hashlib.md5(key.encode()).hexdigest()
+    from davai_s_nami_bot.api.dependencies import get_cache_key as city_cache_key
+
+    return city_cache_key(params)
 
 
 def serialize_datetime(obj):
@@ -141,29 +158,6 @@ def serialize_datetime(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
-
-
-async def log_api_request(request: Request, data=None):
-    """
-    Common function to log API requests
-    Args:
-        request: FastAPI request object
-        data: Request data (can be None for empty requests)
-    """
-    celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.log_api_request',
-        args=[
-            {
-                'ip': request.client.host,
-                'endpoint': str(request.url),
-                'method': request.method,
-                'status_code': 200,
-                'timestamp': datetime.now().isoformat(),
-                'user_agent': request.headers.get('User-Agent'),
-                'request_data': json.dumps(data) if data is not None else None,
-            }
-        ],
-    )
 
 
 @app.post('/api/schedule-update-events/', tags=["Tasks (legacy)"],
@@ -230,8 +224,10 @@ async def index():
            summary="Update parameters",
            description="Update DSN parameters from Redis.")
 async def update_parameters(token: str = Depends(verify_token)):
-    task = celery_app.send_task(
-        'davai_s_nami_bot.celery_tasks.update_parameters',
+    from davai_s_nami_bot.api.city import send_task_per_city
+
+    task = send_task_per_city(
+        celery_app, 'davai_s_nami_bot.celery_tasks.update_parameters',
     )
     return {'message': 'Task PARAMETERS added to queue', 'task_id': task.id}
 
@@ -244,6 +240,18 @@ async def check_ai_balance(token: str = Depends(verify_token)):
         'davai_s_nami_bot.celery_tasks.check_ai_balance',
     )
     return {'message': 'Task check AI balance added to queue', 'task_id': task.id}
+
+
+@app.post('/api/create_post_by_ai/', tags=["AI (legacy)"],
+          summary="Events from raw text (bot)",
+          description="What DavaiSNami_bot calls for a post an admin forwards to it. "
+          "Same as POST /api/ai/extract-events-from-text/.")
+async def create_post_by_ai(
+    body: ExtractEventsFromTextRequest,
+    request: Request,
+    token: str = Depends(verify_token),
+):
+    return await queue_extract_events_from_text(body, request)
 
 
 @app.post('/api/ai_update_event/', tags=["AI (legacy)"],
@@ -284,6 +292,7 @@ async def moderate_events(request: Request, token: str = Depends(verify_token), 
            description="Moderate events from EventsNotApproved via AI.")
 async def moderate_not_approved_events(request: Request, token: str = Depends(verify_token), ):
     data = await request.json()
+    await enter_city_of(EventsNotApproved, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.ai_moderate_not_approved_events',
@@ -297,6 +306,7 @@ async def moderate_not_approved_events(request: Request, token: str = Depends(ve
            description="Prepare event texts for publication via AI.")
 async def prepare_events(request: Request, token: str = Depends(verify_token), ):
     data = await request.json()
+    await enter_city_of(Events2Posts, (data or {}).get('ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.prepare_events',
@@ -334,7 +344,7 @@ async def get_valid_events(request: Request, token: str = Depends(verify_token))
 
     params = EventRequestParameters(**data).with_defaults()
 
-    result = crud.get_events_by_date_and_category(params)
+    result = await run_in_threadpool(crud.get_events_by_date_and_category, params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(result, default=serialize_datetime))
     return {"status": "success", "result": result}
 
@@ -348,6 +358,7 @@ async def get_valid_event_by_id(
     token: str = Depends(verify_token),
 ):
     await log_api_request(request, {"ids": [event_id]})
+    await enter_city_of(Events2Posts, [event_id])
 
     cached_data = redis_client.get(f"event_{event_id}")
     if cached_data:
@@ -356,7 +367,7 @@ async def get_valid_event_by_id(
     data = {"ids": [event_id]}
 
     params = EventRequestParameters(**data).with_defaults()
-    result = crud.get_events_by_date_and_category(params)
+    result = await run_in_threadpool(crud.get_events_by_date_and_category, params)
     redis_client.setex(f"event_{event_id}", 60 * 10, json.dumps(result, default=serialize_datetime))
 
     return {"status": "success", "result": result}
@@ -377,7 +388,7 @@ async def get_places(
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
 
     params = PlaceRequestParameters(**data)
-    places = crud.get_places(params)
+    places = await run_in_threadpool(crud.get_places, params)
     redis_client.setex(cache_key, 60 * 10, json.dumps(places, default=serialize_datetime))
     result = {"status": "success", "result": {'request': data, 'places': places}}
     return result
@@ -396,6 +407,7 @@ async def get_place_by_id(
 ):
 
     await log_api_request(request, {'place_id': place_id})
+    await enter_city_of(Place, [place_id])
     cached_data = redis_client.get(f"place_{place_id}")
     if cached_data:
         return {"status": "success", "message": 'cached', "result": json.loads(cached_data)}
@@ -403,7 +415,7 @@ async def get_place_by_id(
     data = {"ids": [place_id]}
 
     params = PlaceRequestParameters(**data)
-    places = crud.get_places(params)
+    places = await run_in_threadpool(crud.get_places, params)
     redis_client.setex(f"place_{place_id}", 60 * 10, json.dumps(places, default=serialize_datetime))
     result = {"status": "success", "result": {'request': data, 'places': places}}
     return result
@@ -426,13 +438,10 @@ async def get_exhibitions(request: Request, token: str = Depends(verify_token)):
 async def search(query: str, limit: int = 10, type: str = 'event',
         request: Request = None, token: str = Depends(verify_token)):
     events, places = [], []
-    if type == 'event':
-        events = crud.search_events_by_string(query, limit)
-    elif type == 'place':
-        places = crud.search_places_by_name(query, limit)
-    else:
-        events = crud.search_events_by_string(query, limit)
-        places = crud.search_places_by_name(query, limit)
+    if type != 'place':
+        events = await run_in_threadpool(crud.search_events_by_string, query, limit)
+    if type != 'event':
+        places = await run_in_threadpool(crud.search_places_by_name, query, limit)
     await log_api_request(request, {'query': query, 'limit': limit, 'type': type})
     return {"events": events, "places": places}
 
@@ -458,6 +467,7 @@ async def upload_image_to_s3(request: Request = None, token: str = Depends(verif
            description="Bulk upload of event images to AWS S3 by a list of IDs.")
 async def upload_event_images_to_s3(request: Request = None, token: str = Depends(verify_token)):
     data = await request.json()
+    await enter_city_of(Events2Posts, data.get('event_ids') or [])
 
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.upload_event_images_to_s3',
@@ -472,6 +482,7 @@ async def upload_event_images_to_s3(request: Request = None, token: str = Depend
            description="Create an event selection by filter configuration (filter_set_id).")
 async def content_generator_event_selection(request: Request, token: str = Depends(verify_token)):
     data = await request.json()
+    await enter_city_of(ContentGeneratorFilterSet, [data.get('filter_set_id')])
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_event_selection',
         args=[data['filter_set_id']],
@@ -484,6 +495,7 @@ async def content_generator_event_selection(request: Request, token: str = Depen
            description="Generate a post from a template and an event selection.")
 async def content_generator_generate_post(request: Request, token: str = Depends(verify_token)):
     data = await request.json()
+    await enter_city_of(ContentGeneratorEventSelection, [data.get('event_selection_id')])
     generated_by_id = data.get('generated_by_id') or None
     task = celery_app.send_task(
         'davai_s_nami_bot.celery_tasks.content_generator_generate_post',

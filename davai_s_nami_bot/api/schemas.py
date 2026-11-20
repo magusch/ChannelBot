@@ -30,6 +30,28 @@ class AiModerateEventsRequest(BaseModel):
     examples: Optional[List[dict]] = Field(None, description="Few-shot examples")
 
 
+class EventFromUrlRequest(BaseModel):
+    """A link someone sent to the bot: any event page, not only sources we scrape."""
+
+    url: str = Field(..., description="Event page URL (http/https)")
+    comment: Optional[str] = Field(None, description="Sender's text next to the link")
+    submitted_by: Optional[str] = Field(None, description="Sender id (rate limit, logs)")
+
+
+class ExtractEventsFromTextRequest(BaseModel):
+    """Raw text (a forwarded Telegram post) to turn into events.
+
+    The shape is what DavaiSNami_bot sends for a message an admin forwards to it.
+    """
+
+    content: str = Field(..., description="Post text or caption (HTML or plain)")
+    image: Optional[str] = Field(None, description="Image URL, if any")
+    source: str = Field("telegram", description="Source label stored on the event")
+    message_id: Optional[int] = Field(None, description="Bot-side message id (logged only)")
+    forward_from: Optional[int] = Field(None, description="Original author id (logged only)")
+    forward_date: Optional[str] = Field(None, description="Original post date, ISO (logged only)")
+
+
 # Scraping
 class NewEventFromSitesRequest(BaseModel):
     """Request to scrape events from the specified sites."""
@@ -97,6 +119,33 @@ class ContentGeneratorGeneratePostAIRequest(BaseModel):
     title: Optional[str] = Field(None, description="Post title (optional)")
 
 
+class ContentGeneratorScheduleThemePostRequest(BaseModel):
+    """Request to run the theme-post planner (draft + PostingSchedule row)."""
+
+    filter_set_id: Optional[int] = Field(
+        None, description="Build this theme for the next free slot; omit to use rotation"
+    )
+    days_ahead: Optional[int] = Field(
+        None, description="How many upcoming publication slots to keep filled (default: settings)"
+    )
+    platform: str = Field("telegram", description="Target platform")
+    publish_hour: Optional[int] = Field(
+        None, description="Fallback publication hour for a day with no event posts"
+    )
+    publish_minute: Optional[int] = Field(None, description="Fallback publication minute")
+
+
+class ContentGeneratorThemePostRequest(BaseModel):
+    """Request to build a themed digest post."""
+
+    filter_set_id: Optional[int] = Field(
+        None, description="Theme (filter set) ID; omit to rotate to the stalest active theme"
+    )
+    dry_run: bool = Field(
+        False, description="Render the post without writing selection/post/collage"
+    )
+
+
 # Similar events (embedding-based)
 class SimilarEventsResult(BaseModel):
     """Envelope shared between the hot (success) and cold (pending) responses."""
@@ -138,3 +187,27 @@ class SimilarEventsResponse(BaseModel):
     result: SimilarEventsResult
     task_id: Optional[str] = Field(None, description="Embed-job task id (only status='pending')")
     message: Optional[str] = Field(None, description="Human-readable hint (e.g. retry on pending)")
+
+
+class CityOut(BaseModel):
+    """A city for a city switcher. Built from `city.CityInfo`"""
+    code: str
+    name: str
+    name_gen: str
+    name_loc: str = Field(..., description="Prepositional case without «в»: «Казани»")
+    timezone: str
+    is_active: bool
+    is_default: bool = Field(False, description="The city a request without `city` gets")
+    channel_link: Optional[str] = None
+    bot_url: Optional[str] = None
+
+
+class CitiesResult(BaseModel):
+    cities: List[CityOut]
+
+
+class CitiesResponse(BaseModel):
+    """Response from GET /cities/."""
+
+    status: str = "success"
+    result: CitiesResult

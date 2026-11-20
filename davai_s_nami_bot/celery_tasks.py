@@ -7,12 +7,15 @@ from openai import OpenAIError
 
 from davai_s_nami_bot.celery_app import celery_app, redis_client
 from celery import chain, chord
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.signals import task_postrun, task_prerun
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from .pydantic_models import EventRequestParameters, PlaceRequestParameters
 
+from . import city as city_module
+from . import city_context
 from . import crud
 from . import clients
 from . import events_new as events
@@ -30,7 +33,9 @@ from .helper.ai_helper import AIHelper
 from .helper.ai.gemini_event_moderator import GeminiEventModerator as EventModerator
 from .helper.ai.query_analyzer import QueryAnalyzer, format_date_range_ru
 from .helper.ai.raw_text_event_extractor import RawTextEventExtractor
+from .helper.ai.url_event_extractor import UrlEventExtractor
 from .helper.dsn_parameters import DSNParameters, fetch_and_store_parameters
+from .helper.markdown_v2 import escape_v2, escape_v2_url
 from .helper.embeddings import (
     EmbeddingClient,
     build_embedding_input,
@@ -38,11 +43,47 @@ from .helper.embeddings import (
 )
 
 from .content_generator.services import GeneratorPost, Posting
+from .content_generator import crud as cg_crud
+from .content_generator import theme_post
+from .content_generator import themes
 
 log = get_logger(__file__)
 dev_channel = clients.DevClient()
 
 CHANNEL_LINK = os.getenv('CHANNEL_LINK')
+
+
+@celery_app.task(soft_time_limit=540, time_limit=600)
+def geocode_places(limit=30):
+    """Geocode a bounded batch of places in the current city once a week."""
+    from .database.database_orm import get_db_session
+    from .helper.geo import GeoClient, GeocodingError
+    from .helper.geo.places import geocode_missing_places
+
+    city = city_context.current_city()
+    lock = redis_client.lock(f'place-geocoding:{city}', timeout=660, blocking_timeout=0)
+    try:
+        acquired = lock.acquire(blocking=False)
+    except Exception:
+        log.warning('Place geocoding skipped: Redis unavailable for %s', city)
+        return {'error': 'redis_unavailable'}
+    if not acquired:
+        return {'skipped': 'already_running'}
+    try:
+        try:
+            client = GeoClient()
+        except GeocodingError:
+            log.warning('Place geocoding provider is not configured for %s', city)
+            return {'error': 'provider_unavailable'}
+        with get_db_session() as db:
+            result = geocode_missing_places(db, client, limit=limit)
+        log.info('Place geocoding %s: %s', city, result)
+        return result
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            log.warning('Place geocoding lock release failed for %s', city)
 
 
 # --- Daily-task catch-up tracking ----------------------------------------
@@ -51,7 +92,8 @@ CHANNEL_LINK = os.getenv('CHANNEL_LINK')
 # so `catch_up_daily_tasks` can re-queue only the ones that never started.
 
 _DAILY_MARKER_PREFIX = 'dsn:daily_task:'
-_DAILY_MARKER_TTL = 12 * 3600  # cleared by next morning's pipeline
+_DAILY_MARKER_TTL = 36 * 3600
+_CATCH_UP_GRACE = timedelta(minutes=10)
 
 
 def _daily_task_schedule():
@@ -64,16 +106,17 @@ def _daily_task_schedule():
     schedule = [
         ('davai_s_nami_bot.celery_tasks.full_update', 4, 40, None, {}),
         ('davai_s_nami_bot.celery_tasks.auto_promote_by_score',
-         5, 0, None, {'min_score': 70, 'limit': 20}),
+         5, 0, None, settings.auto_promote_kwargs()),
         ('davai_s_nami_bot.celery_tasks.auto_moderate_mid_score_events',
          5, 10, {1, 3, 5}, {'min_score': 40, 'max_score': 69, 'sample_size': 10}),
         ('davai_s_nami_bot.celery_tasks.embed_unembedded_events',
          5, 45, None, {'limit': 100, 'table': 'both'}),
         ('davai_s_nami_bot.celery_tasks.dedupe_channel_queue',
          5, 50, None, {}),
-        ('davai_s_nami_bot.celery_tasks.distribute_event_queue',
-         6, 0, None, {'protect_first': 8}),
     ]
+    if (settings.route_unschedulable or {}).get('enabled'):
+        schedule.append(('davai_s_nami_bot.celery_tasks.route_unschedulable_events',
+                         6, 10, None, {}))
     if (settings.auto_route_to_api or {}).get('enabled'):
         schedule.append((
             'davai_s_nami_bot.celery_tasks.auto_route_to_api',
@@ -84,11 +127,40 @@ def _daily_task_schedule():
             'davai_s_nami_bot.celery_tasks.prepare_unprepared_events',
             5, 25, None, {'limit': settings.prepare_events_limit},
         ))
-    return schedule
+    return [_shift_for_city(row) for row in schedule]
 
 
-def _daily_marker_key(task_name: str, msk_date) -> str:
-    return f'{_DAILY_MARKER_PREFIX}{task_name}:{msk_date.isoformat()}'
+def _shift_for_city(row):
+    """Move a row by the current city's beat offset (see celery_app._shift)."""
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    offset = settings.beat_offset_minutes()
+    if not offset:
+        return row
+    task_name, hour, minute, weekdays, kwargs = row
+    total = (hour * 60 + minute + offset) % (24 * 60)
+    return task_name, total // 60, total % 60, weekdays, kwargs
+
+
+def _daily_marker_key(task_name: str, msk_date, city: str = None) -> str:
+    city = city or city_context.current_city()
+    return f'{_DAILY_MARKER_PREFIX}{city}:{task_name}:{msk_date.isoformat()}'
+
+
+def _legacy_daily_marker_keys(task_name: str, msk_date, city: str = None) -> list:
+    """Marker names written before multicity (default city only)."""
+    return [
+        f'{_DAILY_MARKER_PREFIX}{name}:{msk_date.isoformat()}'
+        for name in city_module.legacy_keys(task_name, city)
+    ]
+
+
+def _signal_city(task):
+    """The task's city from its header. Not the context: the receiver that
+    leaves the task's city may already have run before ours."""
+    from davai_s_nami_bot.celery_app import _task_city
+
+    return _task_city(task) or city_context.DEFAULT_CITY
 
 
 def _tracked_daily_task_names() -> set:
@@ -112,7 +184,7 @@ def _mark_daily_task_started(sender=None, task_id=None, task=None, **kwargs):
     try:
         today = get_msk_today().date()
         redis_client.set(
-            _daily_marker_key(task.name, today),
+            _daily_marker_key(task.name, today, _signal_city(task)),
             'started',
             ex=_DAILY_MARKER_TTL,
             nx=True,
@@ -133,7 +205,7 @@ def _record_daily_task_run(sender=None, task_id=None, task=None, state=None, **k
     try:
         today = get_msk_today().date()
         redis_client.set(
-            _daily_marker_key(task.name, today),
+            _daily_marker_key(task.name, today, _signal_city(task)),
             state or 'ran',
             ex=_DAILY_MARKER_TTL,
         )
@@ -179,12 +251,159 @@ def post_to_telegram():
             log.info(f"Event {event.event_id} marked as Error (timeout)")
         raise
     finally:
-        redis_client.delete('posting_event')
+        redis_client.delete(city_module.city_key('posting_event'))
         schedule_posting_tasks.apply_async()
         try:
             dev_channel.send_file(LOG_FILE, mode="r+b", with_remove=True)
         except Exception as e:
             log.error(f"врFailed to send log to dev channel: {e}")
+
+
+def _digest_post_url(client_post, message):
+    """Channel URL of the message just sent, or None when it cannot be built."""
+    message_id = None
+    if isinstance(message, dict):
+        message_id = message.get('message_id')
+    else:
+        message_id = getattr(message, 'message_id', None)
+    link = getattr(client_post, 'channel_link', None)
+    if not message_id or not link:
+        return None
+    return f"{link}/{message_id}"
+
+
+def _remember_message(schedule_id, client_post, message):
+    """Store the sent message id on the schedule."""
+    message_id = (
+        message.get('message_id') if isinstance(message, dict)
+        else getattr(message, 'message_id', None)
+    )
+    if not message_id:
+        return
+    try:
+        cg_crud.save_schedule_message(
+            schedule_id, message_id, _digest_post_url(client_post, message)
+        )
+    except Exception as e:
+        log.error(f"Could not save message id for schedule {schedule_id}: {e}")
+
+
+def _digest_poll_context(schedule_id):
+    """(context, poll config) for a sent digest, or (None, None) without a poll."""
+    context = cg_crud.get_digest_poll_context(schedule_id)
+    cfg = theme_post.poll_config(context.get('settings')) if context else None
+    return (context, cfg) if cfg else (None, None)
+
+
+def _schedule_digest_poll(schedule_id):
+    """Queue the theme's «куда идёте» poll a little after the digest."""
+    try:
+        context, cfg = _digest_poll_context(schedule_id)
+        if not cfg:
+            return
+        send_digest_poll.apply_async(
+            args=[schedule_id], countdown=cfg['delay_minutes'] * 60
+        )
+        log.info(f"Digest poll for schedule {schedule_id} in {cfg['delay_minutes']} min")
+    except Exception as e:
+        log.error(f"Could not queue digest poll for schedule {schedule_id}: {e}")
+
+
+@celery_app.task
+def send_digest_poll(schedule_id: int):
+    """Send the «куда идёте» poll as a reply to the digest, once."""
+    context, cfg = _digest_poll_context(schedule_id)
+    if not cfg:
+        return {'status': 'no_poll'}
+    if context.get('poll_message_id'):
+        return {'status': 'already_sent', 'poll_message_id': context['poll_message_id']}
+    if not context.get('message_id'):
+        return {'status': 'no_message_id'}
+
+    shown = context['settings'].get('shown_ids') or []
+    events = cg_crud.get_events_brief(shown)
+    for event in events:
+        if event.get('from_date'):
+            event['from_date'] = (
+                event['from_date'].replace(tzinfo=timezone.utc).astimezone(theme_post.MSK_TZ)
+            )
+    options = themes.poll_options(events, limit=cfg['options'], other=cfg['other'])
+    if not options:
+        return {'status': 'not_enough_events'}
+
+    client = clients.Telegram()
+    destination_id = clients.Telegram.constants['prod']['destination_id']
+    message = client.send_poll(
+        cfg['question'], options, destination_id=destination_id,
+        reply_to=context['message_id'], multiple=cfg['multiple'],
+    )
+    poll_message_id = getattr(message, 'message_id', None)
+    if poll_message_id:
+        cg_crud.update_schedule_settings(schedule_id, {'poll_message_id': poll_message_id})
+    log.info(f"Digest poll sent for schedule {schedule_id}: {poll_message_id}")
+    return {'status': 'sent', 'poll_message_id': poll_message_id, 'options': options}
+
+
+PINNED_DIGEST_KEY = 'digest_pinned_message_id'  # per city, see city.city_key
+
+
+@celery_app.task
+def pin_digests():
+    """Pin a theme's latest digest at its `pin` moment, unpinning the previous one."""
+    now = datetime.now(theme_post.MSK_TZ)
+    pinned_raw = city_module.get_with_legacy(redis_client, PINNED_DIGEST_KEY)
+    pinned = int(pinned_raw) if pinned_raw else None
+    client, destination_id = None, None
+    done = []
+
+    for filter_set in cg_crud.get_active_filter_sets(filter_type="semantic"):
+        pin_cfg = theme_post._theme_params(filter_set).get("pin")
+        if not theme_post.pin_is_due(pin_cfg, now):
+            continue
+        latest = cg_crud.get_latest_posted_digest(
+            filter_set["id"], (now - timedelta(days=7)).astimezone(timezone.utc)
+        )
+        message_id = latest.get("message_id")
+        if not message_id or message_id == pinned:
+            continue
+        if client is None:
+            client = clients.Telegram()
+            destination_id = clients.Telegram.constants['prod']['destination_id']
+        try:
+            if pinned:
+                try:
+                    client.unpin(pinned, destination_id=destination_id)
+                except Exception as e:  # already unpinned by hand — not fatal
+                    log.warning(f"Could not unpin digest {pinned}: {e}")
+            client.pin(message_id, destination_id=destination_id)
+        except Exception as e:
+            log.error(f"Could not pin digest {message_id} ({filter_set['name']!r}): {e}")
+            continue
+        redis_client.set(city_module.city_key(PINNED_DIGEST_KEY), message_id)
+        pinned = message_id
+        done.append({"theme": filter_set["name"], "message_id": message_id})
+        log.info(f"Pinned digest {message_id} ({filter_set['name']!r})")
+    return {"pinned": done}
+
+
+def _mark_digested_events(platform, client_post, message, postings):
+    """Take the digest's events off the channel queue, pointing them at the post.
+
+    Runs only after a successful send: a draft that never goes out must not cost
+    its events their own post. Telegram only — VK has no per-message URL here.
+    """
+    event_ids = postings.get('mark_event_ids') or []
+    if platform != 'telegram' or not event_ids:
+        return
+    try:
+        post_url = _digest_post_url(client_post, message)
+        result = crud.mark_events_as_digested(event_ids, post_url)
+        log.info(
+            f"Digest events: {result['moved']} moved ReadyToPost→OnlyApi, "
+            f"{result['skipped']} already elsewhere (url={post_url})"
+        )
+    except Exception as e:
+        log.error(f"Could not mark digested events: {e}")
 
 
 @celery_app.task
@@ -202,23 +421,55 @@ def post_generated_by_schedule(schedule_id: int):
         elif platform == 'vk':
             client_post = clients.VKRequests()
             destination_id = clients.VKRequests.constants['prod']['destination_id']
+        if client_post and not destination_id:
+            # Telegram answers "chat not found" to chat_id "None" — say what is missing.
+            error = (
+                f"no {platform} destination for city {city_context.current_city()!r} "
+                f"(city_city channel_id / vk_group_id is empty)"
+            )
+            log.error(f"Failed to post schedule {schedule_id}: {error}")
+            cg_crud.increment_schedule_retry(schedule_id, error_message=error)
+            client_post = None
         if client_post:
             try:
-                if postings['image_path']:
-                    client_post.send_image(text=postings['post_text'], image_path=postings['image_path'],
-                                           destination_id=destination_id)
+                # Buttons are Telegram-only; the VK client has no equivalent.
+                extra = (
+                    {'buttons': postings.get('buttons')}
+                    if platform == 'telegram' and postings.get('buttons')
+                    else {}
+                )
+                if postings.get('format') == 'rich' and platform == 'telegram':
+                    message = client_post.send_rich(
+                        text=postings['text'],
+                        image_paths=postings.get('image_paths'),
+                        destination_id=destination_id,
+                        **extra,
+                    )
+                elif postings.get('image_path'):
+                    message = client_post.send_image(
+                        text=postings['text'], image_path=postings['image_path'],
+                        destination_id=destination_id, **extra)
                 else:
-                    client_post.send_text(text=postings['post_text'], destination_id=destination_id)
+                    message = client_post.send_text(
+                        text=postings['text'], destination_id=destination_id, **extra)
                 posting_class.schedule_posted(schedule_id)
                 log.info(f"Schedule {schedule_id} marked as posted successfully")
+                if platform == 'telegram':
+                    _remember_message(schedule_id, client_post, message)
+                    _schedule_digest_poll(schedule_id)
+                _mark_digested_events(platform, client_post, message, postings)
             except Exception as e:
                 log.error(f"Failed to post schedule {schedule_id}: {e}")
+                cg_crud.increment_schedule_retry(schedule_id, error_message=str(e))
     else:
         log.info(f"No postings generated for schedule_id={schedule_id}")
     # Clean up Redis so schedule_generated_posting_tasks can reschedule
     if platform:
-        redis_client.delete(f'cg_posting_event:{platform}')
+        redis_client.delete(city_module.city_key(f'cg_posting_event:{platform}'))
 
+
+
+SCHEDULED_TASK_ALIVE_STATES = ('PENDING', 'RECEIVED', 'STARTED', 'RETRY')
 
 
 @celery_app.task
@@ -227,7 +478,7 @@ def schedule_posting_tasks():
     msk_today = get_msk_today()
     event_time = dsn_site.next_posting_time(msk_today)
 
-    redis_key = 'posting_event'
+    redis_key = city_module.migrate_legacy_key(redis_client, 'posting_event')
 
     if event_time is None or event_time - msk_today > timedelta(hours=1):
         if event_time is None:
@@ -256,7 +507,7 @@ def schedule_posting_tasks():
         task_alive = False
         if current_task_id:
             task_result = celery_app.AsyncResult(current_task_id)
-            task_alive = task_result.state in ('PENDING', 'RETRY')
+            task_alive = task_result.state in SCHEDULED_TASK_ALIVE_STATES
 
         if not task_alive:
             log.info(
@@ -292,15 +543,30 @@ def schedule_posting_tasks():
         log.info(f"Posting task scheduled to {event_time_str} (task_id: {result.id})")
 
 
+GENERATED_POST_SCHEDULE_WINDOW = timedelta(hours=1)
+
+THEME_ATTEMPTS_PER_SLOT = 15
+
+
 @celery_app.task
 def schedule_generated_posting_tasks():
     """Schedule per-platform generated post tasks based on PostingSchedule table."""
     log.info("Scheduling generated posting tasks based on PostingSchedule entries")
     time_posting_by_platform = Posting(log).get_next_time_posting()
 
-    for platform, schedule in time_posting_by_platform:
+    now_utc = datetime.now(timezone.utc)
+    for platform, schedule in time_posting_by_platform.items():
+        wait = schedule['eta_utc'] - now_utc
+        if wait > GENERATED_POST_SCHEDULE_WINDOW:
+            log.info(
+                f"Next generated post ({platform}) at {schedule['eta_utc']}, "
+                f"in {wait}, too far ahead — leaving it in the DB for now"
+            )
+            continue
 
-        redis_key = f'cg_posting_event:{platform}'
+        redis_key = city_module.migrate_legacy_key(
+            redis_client, f'cg_posting_event:{platform}'
+        )
         current_scheduled_info = redis_client.hgetall(redis_key)
         need_schedule = False
 
@@ -311,7 +577,7 @@ def schedule_generated_posting_tasks():
             task_alive = False
             if current_task_id:
                 task_result = celery_app.AsyncResult(current_task_id)
-                task_alive = task_result.state in ('PENDING', 'RETRY')
+                task_alive = task_result.state in SCHEDULED_TASK_ALIVE_STATES
 
             if not task_alive:
                 log.info(f"Stored task {current_task_id} ({platform}) is no longer alive, rescheduling")
@@ -319,8 +585,16 @@ def schedule_generated_posting_tasks():
             else:
                 current_scheduled_time = datetime.strptime(current_scheduled_time_str, '%Y-%m-%d %H:%M:%S')
                 current_scheduled_time = pytz.UTC.localize(current_scheduled_time)
+                current_schedule_id = current_scheduled_info.get(b'schedule_id', b'').decode('utf-8')
                 if abs(current_scheduled_time - schedule['eta_utc']) > timedelta(minutes=5):
                     log.info(f"Time changed for {platform}, rescheduling")
+                    need_schedule = True
+                elif current_schedule_id != str(schedule['schedule_id']):
+                    # Swapped slots: the queued task would find its own row moved and skip.
+                    log.info(
+                        f"Slot {platform} now holds schedule {schedule['schedule_id']} "
+                        f"(queued: {current_schedule_id}), rescheduling"
+                    )
                     need_schedule = True
                 else:
                     log.info(f"Task {current_task_id} ({platform}) still alive, skipping")
@@ -333,10 +607,11 @@ def schedule_generated_posting_tasks():
                 if current_task_id:
                     celery_app.control.revoke(current_task_id, terminate=False)
 
-            result = post_generated_by_schedule.apply_async((schedule['id'],), eta=schedule['eta_utc'])
+            schedule_id = schedule['schedule_id']
+            result = post_generated_by_schedule.apply_async((schedule_id,), eta=schedule['eta_utc'])
             schedule_time_str = schedule['eta_utc'].strftime('%Y-%m-%d %H:%M:%S')
             redis_client.hset(redis_key,
-                              mapping={'time': schedule_time_str, 'task_id': result.id, 'schedule_id': str(schedule['id'])})
+                              mapping={'time': schedule_time_str, 'task_id': result.id, 'schedule_id': str(schedule_id)})
             log.info(f"Generated posting task ({platform}) scheduled to {schedule_time_str}")
 
 
@@ -372,11 +647,18 @@ def update_events():
         msk_today=msk_today
     )
 
-    log.info("Getting new events from other organizations for next 7 days")
-    other_events = events.from_not_approved_organizations(days=7)
-    log.info(f"Collected {len(other_events)} events")
-
-    _update_events(other_events, table="events_eventsnotapprovednew", msk_today=msk_today)
+    for name, days in events.not_approved_rotation(days=7):
+        log.info(f"Getting new events from {name} for next {days} days")
+        try:
+            other_events = events.run_scraper(name, days)
+            log.info(f"Collected {len(other_events)} events from {name}")
+            _update_events(
+                other_events, table="events_eventsnotapprovednew", msk_today=msk_today
+            )
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:
+            log.exception(f"Scraper '{name}' failed, continuing with the next one")
 
     events_count = len(crud.get_events_from_all_tables())
 
@@ -405,7 +687,7 @@ def _update_events(events, table, msk_today):
 @celery_app.task(soft_time_limit=1800, time_limit=1920)
 def update_event_from_sites(sites=None, days=7):
     if sites is None or sites[0] == 'all':
-        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir', 'afisha']
+        sites = ['timepad', 'ticketscloud', 'radario', 'vk', 'qtickets', 'mts', 'culture', 'kassir', 'afisha', 'yandex']
     log.info("Start updating events from special sites.")
     msk_today = get_msk_today()
 
@@ -486,12 +768,11 @@ def events_from_url(event_url=None):
 
 @celery_app.task
 def download_event_page(urls=[]):
+    """Admin 'Scrape' links no parser knows: extract and add straight to the queue."""
     for url in urls:
-        response = requests.get(url)
-        if response.status_code < 300:
-            body = BeautifulSoup(response.text, 'html.parser').get_text()
-            event = {'full_text': body, 'url': url}
-            ai_update_event.apply_async([event, 1])
+        result = event_from_any_url(url, trusted=True)
+        if result.get("created_ids") or result.get("existing"):
+            crud.delete_scrape_rows([url])
 
 
 @celery_app.task(
@@ -502,11 +783,11 @@ def download_event_page(urls=[]):
     retry_backoff_max=600,
     rate_limit='2/m',
 )
-def ai_update_event(self, event={}, is_new=0):
+def ai_update_event(self, event={}, is_new=0, task=None):
     log.info("Start get post from url.")
 
     msk_today = get_msk_today()
-    ai_helper = AIHelper()
+    ai_helper = AIHelper(task=task)
 
     ai_event = ai_helper.new_event_data(event)
     if is_new == 1:
@@ -637,7 +918,7 @@ def prepare_unprepared_events(limit: int = 15):
 
     update_tasks = chord(
         (
-            chain(ai_update_event.s(event), update_event.s(event['id']))
+            chain(ai_update_event.s(event, task='channel'), update_event.s(event['id']))
             for event in events
         ),
         remake_events.s(),
@@ -646,6 +927,56 @@ def prepare_unprepared_events(limit: int = 15):
     task_group = update_tasks.apply_async()
     return {
         "message": f"AI prepare started for {len(events)} events.",
+        "task_id": task_group.id,
+    }
+
+
+@celery_app.task
+def prepare_api_events(limit: int = None):
+    """Beat task: AI-prepare `OnlyApi` events so digests don't quote raw source text.`
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    if limit is None:
+        limit = settings.features.get("prepare_api_events_limit", 0)
+    limit = int(limit or 0)
+    if limit <= 0:
+        log.info("prepare_api_events: disabled (prepare_api_events_limit=0)")
+        return {"message": "disabled", "count": 0}
+
+    channel_backlog = crud.count_unprepared_events(statuses=("ReadyToPost",))
+    channel_limit = int(settings.prepare_events_limit or 0)
+    if channel_limit and channel_backlog >= channel_limit:
+        log.info(
+            f"prepare_api_events: skipped, channel backlog {channel_backlog} "
+            f">= prepare_events_limit {channel_limit}"
+        )
+        return {
+            "message": "skipped: channel queue has priority",
+            "count": 0,
+            "channel_backlog": channel_backlog,
+        }
+
+    events = crud.get_unprepared_events(
+        limit=limit, statuses=("OnlyApi",), queue_head=0
+    )
+    if not events:
+        log.info("No unprepared OnlyApi events found.")
+        return {"message": "No unprepared OnlyApi events.", "count": 0}
+
+    log.info(
+        f"Preparing {len(events)} OnlyApi events "
+        f"(ids={[e.get('id') for e in events]})."
+    )
+    task_group = chord(
+        (
+            chain(ai_update_event.s(event, task='api'), update_event.s(event['id']))
+            for event in events
+        ),
+        remake_events.s(),
+    ).apply_async()
+    return {
+        "message": f"AI prepare started for {len(events)} OnlyApi events.",
         "task_id": task_group.id,
     }
 
@@ -1035,6 +1366,12 @@ def auto_promote_by_score(
     # auto_promote_high_score_events has vectors to compare (the nightly
     # embed_unembedded_events run happens later, at 05:45).
     taste_pool_min = min_score - 10
+    # route_mid_score_to_api selects on taste too — score its pool as well.
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    mid_cfg = settings.route_mid_score_to_api or {}
+    if mid_cfg.get('enabled'):
+        taste_pool_min = min(taste_pool_min, mid_cfg.get('min_score', 55))
     try:
         embed_unembedded_events(
             limit=150, table="not_approved", min_score=taste_pool_min, only_future=True
@@ -1072,6 +1409,26 @@ def auto_promote_by_score(
 
 
 @celery_app.task
+def route_mid_score_to_api(dry_run: bool = False):
+    """Move evidenced mid-score NotApproved events (55-69) into OnlyApi.
+
+    Config: settings.route_mid_score_to_api, policy: helper.mid_score_filter.
+    dry_run=True returns the selection without writing.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.route_mid_score_to_api or {}
+    result = crud.route_mid_score_to_api(cfg=cfg, dry_run=dry_run)
+    log.info(
+        f"Mid-score → OnlyApi: promoted={len(result['promoted_ids'])} "
+        f"selected={len(result['selected'])} dry_run={dry_run}"
+    )
+    if result['promoted_ids']:
+        upload_event_images_to_s3.apply_async(args=[result['promoted_ids']])
+    return result
+
+
+@celery_app.task
 def auto_route_to_api():
     """Move low-priority ReadyToPost events off the channel into the OnlyApi status.
 
@@ -1096,43 +1453,38 @@ def auto_route_to_api():
 
 
 @celery_app.task
-def route_unschedulable_events():
-    """Route ReadyToPost events that won't fit before their to_date to OnlyApi.
-
-    Parameters are read from settings.route_unschedulable. If the section is
-    empty or enabled=False the task is not scheduled in beat; a manual call still
-    runs with crud.route_unschedulable_events defaults.
-    """
-    from davai_s_nami_bot.settings.settings_loader import settings
-
-    cfg = settings.route_unschedulable or {}
-    routed_ids = crud.route_unschedulable_events(
-        protect_first=cfg.get('protect_first', 5),
-        weekday_slots=cfg.get('weekday_slots', 4),
-        weekend_slots=cfg.get('weekend_slots', 3),
-        min_runway_days=cfg.get('min_runway_days', 1),
-        limit=cfg.get('limit', 0),
-    )
-    log.info(f"Routed {len(routed_ids)} unschedulable events to OnlyApi (cfg={cfg})")
-    return {"routed_count": len(routed_ids), "routed_ids": routed_ids}
+def route_unschedulable_events(dry_run=False):
+    """Plan channel slots and both directions of automatic routing."""
+    if crud.get_posting_slots('event') == []:
+        return {'routed_count': 0, 'routed_ids': [], 'assignments': [],
+                'changes': [], 'warnings': [], 'skipped': 'no_event_slots'}
+    result = crud.route_unschedulable_events(dry_run=dry_run, slots_per_weekday=None)
+    if isinstance(result, list):  # Compatibility with older worker adapters.
+        result = {'routed_count': len(result), 'routed_ids': result}
+    log.info(f"Channel schedule: {result}")
+    return result
 
 
 @celery_app.task
-def distribute_event_queue(protect_first: int = 10):
-    """Reorder the publication queue for content variety."""
-    reordered = crud.distribute_event_queue(protect_first=protect_first)
-    log.info(f"Reordered {reordered} events in posting queue")
-    return {"reordered_count": reordered}
+def distribute_event_queue(protect_first=None):
+    """Compatibility task: never reorder dates independently of the planner."""
+    result = crud.schedule_channel_events(dry_run=False, reselect=False)
+    return {**result, 'reordered_count': len(result.get('assignments', []))}
 
 
 @celery_app.task
 def auto_moderate_mid_score_events(
     min_score: int = 40, max_score: int = 69, sample_size: int = 10
 ):
-    """AI moderation of a random sample of mid-score events."""
+    """Auto-reject score < min_score, then AI-moderate a random mid-score sample.
+
+    sample_size=0 keeps only the auto-reject.
+    """
     # Auto-reject junk (score < min_score)
     rejected_count = crud.auto_reject_low_score_events(max_score=min_score - 1)
     log.info(f"Auto-rejected {rejected_count} events with score < {min_score}")
+    if sample_size <= 0:
+        return {"rejected_count": rejected_count, "moderated_count": 0, "approved_ids": []}
 
     # Random sample for AI moderation
     events = crud.get_mid_score_events_sample(
@@ -1164,21 +1516,29 @@ def update_event(new_event_data, event_id):
     if new_event_data is None:
         return {"message": f"Skipping event {event_id}, no update data"}
 
-    new_event_data = {k: v for k, v in new_event_data.items() if v}
+    new_event_data = {k: v for k, v in new_event_data.items() if v is not None}
 
     # AI relevance check — reject irrelevant events before posting
     ai_relevant = new_event_data.pop('ai_relevant', True)
     ai_reject_reason = new_event_data.pop('ai_reject_reason', None)
     if ai_relevant is False or str(ai_relevant).strip().lower() in ('нет', 'no', 'false'):
         log.info(f"Event {event_id} rejected by AI: {ai_reject_reason}")
-        crud.reject_event_by_ai(event_id, reason=ai_reject_reason)
-        return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
+        if crud.reject_event_by_ai(event_id, reason=ai_reject_reason):
+            return {"message": f"Event {event_id} rejected by AI", "reason": ai_reject_reason}
 
     if new_event_data.get('prepared_text'):
         new_event_data['is_ready'] = True
         if crud.update_approved_event(event_id, new_event_data):
-            crud.remake_event_post(event_id, save=True)
-            return {**new_event_data, "event_id": event_id}
+            crud.remake_event_post(
+                event_id,
+                save=True,
+                prefer_category_str=bool(new_event_data.get('category')),
+            )
+            score_data = crud.recalculate_event_score(event_id) or {}
+            if 'score_breakdown' in score_data:
+                from .scoring import parse_breakdown
+                score_data['score_breakdown'] = parse_breakdown(score_data['score_breakdown']) or {}
+            return {**new_event_data, **score_data, "event_id": event_id}
 
     return {"message": f"Skipping event {event_id}, no update data"}
 
@@ -1269,27 +1629,32 @@ def send_message_to_telegram(message: str, chat_id: int):
         log.error(f"Failed to send message to chat {chat_id}: {e}")
 
 
-@celery_app.task
-def event_reminder():
-    reminders = crud.event_reminder()
-    for reminder in reminders:
-        post_url = reminder['post_url']
-        text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
-        remind_datetime = reminder['remind_datetime']
-
-        send_message_to_telegram.apply_async(
-            args=[text_message, reminder['telegram_id']], eta=remind_datetime
-        )
+def reminder_text(reminder):
+    """MarkdownV2 reminder for a saved event: title (linked to the channel post
+    when there is one) and the start in MSK. The Telegram client sends with
+    parse_mode=MarkdownV2, so every piece is escaped here."""
+    title = escape_v2(reminder.get('title') or 'мероприятие')
+    url = reminder.get('post_url') or ''
+    name = f"[{title}]({escape_v2_url(url)})" if url.startswith('http') else title
+    text = f"⏰ Напоминаю: скоро {name}"
+    start = reminder.get('from_date')
+    if start:
+        # from_date is stored in UTC; a naive value is UTC as well.
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        local = start.astimezone(theme_post.MSK_TZ)
+        text += escape_v2(f"\nНачало — {themes._plain_date(local)} в {local:%H:%M}.")
+    return text
 
 
 @celery_app.task
 def process_reminders():
     reminders = crud.get_pending_reminders()
     for reminder in reminders:
+        if not reminder['telegram_id']:
+            continue
         try:
-            post_url = reminder['post_url']
-            text_message = f"Reminder Event: [{reminder['title']}]({post_url}) is happening soon. Don't miss it!"
-            send_message_to_telegram.delay(text_message, reminder['telegram_id'])
+            send_message_to_telegram.delay(reminder_text(reminder), reminder['telegram_id'])
             crud.mark_reminder_sent(reminder['id'])
         except Exception as e:
             log.error(f"Failed to send reminder {reminder['id']}: {e}")
@@ -1304,11 +1669,14 @@ def content_generator_event_selection(filter_set_id: int):
 
 @celery_app.task
 def content_generator_generate_post(
-    post_template_id: int, event_selection_id: int, generated_by_id: int
+    event_selection_id: int, post_template_id: int, generated_by_id: int = None
 ):
+    # Order matches the API router and generate_post_by_template.
     generator_post = GeneratorPost()
     post = generator_post.generate_post_by_template(
-        post_template_id, event_selection_id, generated_by_id
+        event_selection_id=event_selection_id,
+        post_template_id=post_template_id,
+        generated_by_id=generated_by_id,
     )
     return post
 
@@ -1328,6 +1696,173 @@ def content_generator_generate_post_ai(
         title=title,
     )
     return post
+
+
+@celery_app.task
+def content_generator_theme_post(filter_set_id: int = None, dry_run: bool = False):
+    """Build one themed digest post (semantic selection → AI comments → render).
+
+    Without ``filter_set_id`` the least-recently-posted active theme is used, so
+    the beat entry rotates through themes on its own. ``dry_run=True`` returns
+    the rendered post without writing anything — for previewing a new theme.
+    """
+    result = theme_post.build_theme_post(filter_set_id=filter_set_id, dry_run=dry_run)
+    log.info(
+        f"Theme post: status={result.get('status')} theme={result.get('theme')!r} "
+        f"len={result.get('length')} (raw {result.get('raw_length')}) "
+        f"shown={len(result.get('shown_ids') or [])} pool={result.get('pool_size')}"
+    )
+    return result
+
+
+@celery_app.task(soft_time_limit=1800, time_limit=1920)
+def schedule_theme_post(
+    days_ahead: int = None, platform: str = 'telegram', publish_hour: int = None,
+    publish_minute: int = None, filter_set_id: int = None,
+):
+    """Keep the next ``days_ahead`` publication slots filled with themed drafts.
+
+    Runs daily and tops the plan back up rather than producing exactly one post:
+    a two-day plan means a bad draft can be fixed or deleted in Django a day
+    before it goes out, and one failed run doesn't leave a hole in the channel.
+
+    Idempotent — a slot that already holds an unposted schedule is skipped, so
+    re-running mid-day adds nothing. Each draft is built for **its own**
+    publication date (dates, weekend-theme preference), and themes planned
+    earlier in the same run are excluded from later slots so a two-day plan does
+    not run the same theme twice.
+    """
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = settings.content_generator or {}
+    if days_ahead is None:
+        days_ahead = 1 if filter_set_id else cfg.get('theme_post_days_ahead', 2)
+    publish_hour = publish_hour if publish_hour is not None else cfg.get('theme_post_publish_hour', 20)
+    publish_minute = (
+        publish_minute if publish_minute is not None
+        else cfg.get('theme_post_publish_minute', 30)
+    )
+    after_last = cfg.get('theme_post_publish_after_last_event', True)
+    offset_hours = cfg.get('theme_post_publish_offset_hours', 2)
+    latest = time(
+        cfg.get('theme_post_publish_latest_hour', 22),
+        cfg.get('theme_post_publish_latest_minute', 0),
+    )
+    fallback = time(publish_hour, publish_minute)
+
+    def resolve_time(day):
+        """Publication time for `day`, after that day's last individual event post."""
+        last_event_at = None
+        if after_last:
+            day_start = datetime.combine(day, time.min, tzinfo=theme_post.MSK_TZ)
+            last_event_at = crud.get_last_event_post_time(
+                day_start, day_start + timedelta(days=1) - timedelta(seconds=1)
+            )
+        return theme_post.slot_after_last_event(
+            day, last_event_at, offset_hours, fallback, latest, theme_post.MSK_TZ
+        )
+
+    now = datetime.now(theme_post.MSK_TZ)
+    digest_slots = crud.get_posting_slots('digest')
+    by_slot = bool(digest_slots)
+    if by_slot:
+        slots = theme_post.digest_slot_plan(now, days_ahead, digest_slots)
+    else:
+        slots = theme_post.planning_slots(now, days_ahead, resolve_time)
+    log.info(
+        f"Theme post planner: {len(slots)} slot(s), "
+        f"{'PostingTime digest slots' if by_slot else 'after-last-event fallback'}"
+    )
+    if not slots:
+        log.info("Theme post planner: nothing to schedule (days_ahead=0)")
+        return {'status': 'ok', 'planned': []}
+
+    repeat_days = cfg.get('theme_post_repeat_days', 3)
+    recent_themes = set()
+    if repeat_days:
+        recent_themes = cg_crud.get_scheduled_filter_ids(
+            platform,
+            (now - timedelta(days=int(repeat_days))).replace(tzinfo=None),
+            (now + timedelta(days=int(days_ahead) + 1)).replace(tzinfo=None),
+        )
+        if recent_themes:
+            log.info(
+                f"Theme post planner: themes {sorted(recent_themes)} ran within "
+                f"{repeat_days} days, excluded from rotation"
+            )
+
+    since = slots[0].replace(hour=0, minute=0, second=0, microsecond=0)
+    until = slots[-1].replace(hour=23, minute=59, second=59, microsecond=0)
+    if by_slot:
+        scheduled = cg_crud.get_scheduled_times(platform, since, until)
+
+        def is_taken(slot):
+            return theme_post.slot_is_taken(slot, scheduled)
+    else:
+        taken_dates = cg_crud.get_scheduled_dates(platform, since, until)
+
+        def is_taken(slot):
+            return slot.date() in taken_dates
+
+    planned, used_filter_ids = [], list(recent_themes)
+    for slot in slots:
+        if is_taken(slot):
+            log.info(f"Theme post planner: {slot} already scheduled, skipping")
+            continue
+
+        if filter_set_id:
+            result = theme_post.build_theme_post(
+                filter_set_id=filter_set_id, target_date=slot.date()
+            )
+        else:
+            tried = list(used_filter_ids)
+            for _ in range(THEME_ATTEMPTS_PER_SLOT):
+                result = theme_post.build_theme_post(
+                    target_date=slot.date(), exclude_filter_ids=tried, slot_hour=slot.hour
+                )
+                if result.get('status') == 'ok' or not result.get('filter_set_id'):
+                    break
+                log.info(
+                    f"Theme post planner: {slot.date()} — theme "
+                    f"{result.get('theme')!r} skipped ({result.get('status')}), "
+                    f"trying the next one"
+                )
+                tried.append(result['filter_set_id'])
+
+        if result.get('status') != 'ok':
+            log.info(
+                f"Theme post planner: {slot.date()} not scheduled "
+                f"({result.get('status')})"
+            )
+            planned.append({'date': str(slot.date()), **result})
+            continue
+
+        try:
+            schedule = cg_crud.create_posting_schedule({
+                'generated_post_id': result['id'],
+                'scheduled_time': slot.astimezone(timezone.utc),
+                'platform': platform,
+            })
+        except Exception as e:
+            log.error(
+                f"Theme post {result['id']} built but could not be scheduled for "
+                f"{slot}: {e}"
+            )
+            planned.append({'date': str(slot.date()), 'status': 'schedule_failed',
+                            'error': str(e), **result})
+            continue
+
+        result['schedule_id'] = schedule['id']
+        used_filter_ids.append(result['filter_set_id'])
+        if by_slot:
+            scheduled.append(slot)
+        planned.append({'date': str(slot.date()), 'time': slot.strftime('%H:%M'), **result})
+        log.info(
+            f"Theme post {result['id']} ({result.get('theme')!r}) scheduled for "
+            f"{slot} ({platform})"
+        )
+
+    return {'status': 'ok', 'planned': planned}
 
 
 @celery_app.task
@@ -1389,6 +1924,106 @@ def extract_events_from_text(text: str, source: str, image: str = None):
     )
 
     return result
+
+
+URL_SUBMIT_DAILY_LIMIT = 30
+URL_RESULT_TTL = 3 * 24 * 3600
+
+
+def _url_submit_allowed(submitted_by, limit) -> bool:
+    """Per-sender daily cap for links sent by anyone through the bot."""
+    if not submitted_by or not limit:
+        return True
+    key = f"url_submit:{submitted_by}:{get_msk_today():%Y%m%d}"
+    count = redis_client.incr(key)
+    if count == 1:
+        redis_client.expire(key, 2 * 24 * 3600)
+    return count <= limit
+
+
+def _notify_url_submission(url, submitted_by, comment, summary):
+    lines = [f"📥 Ссылка{f' от {submitted_by}' if submitted_by else ''}: {url}"]
+    if comment:
+        lines.append(f"Комментарий: {comment[:300]}")
+    lines.append(f"Итог: {summary['status']} ({summary.get('method') or summary.get('error') or '-'})")
+    for e in summary["events"]:
+        when = (e.get("from_date") or "")[:16].replace("T", " ")
+        lines.append(f"• {e['title']} — {when} · {e.get('price') or 'цена ?'}")
+    for r in summary["existing"]:
+        lines.append(f"= уже есть: {r['title']} (id {r['id']}, {r['status']})")
+    for r in summary["rejected"]:
+        lines.append(f"× {r.get('title') or r.get('note') or ''} — {r['reason']}")
+    if summary.get("created_ids"):
+        lines.append(f"Во входящих (pending): {summary['created_ids']}")
+    dev_channel.send_text("\n".join(lines))
+
+
+@celery_app.task(soft_time_limit=240)
+def event_from_any_url(url: str, comment: str = None, submitted_by: str = None,
+                       trusted: bool = False):
+    """Any event page → events: untrusted go to NotApproved 'pending', trusted to the queue."""
+    from davai_s_nami_bot.settings.settings_loader import settings
+
+    cfg = (settings.features or {}).get("url_extractor") or {}
+    if not trusted and not _url_submit_allowed(
+        submitted_by, cfg.get("daily_limit_per_sender", URL_SUBMIT_DAILY_LIMIT)
+    ):
+        return {"status": "rate_limited", "url": url}
+
+    cache_key = city_module.city_key(f"url_extract:{url.strip()}")
+    cached = redis_client.get(cache_key)
+    if cached and not trusted:
+        summary = json.loads(cached)
+        summary["cached"] = True
+        return summary
+
+    result = UrlEventExtractor().extract(url)
+    existing = crud.find_events_by_event_ids([e["event_id"] for e in result.events])
+    known = {r["event_id"] for r in existing}
+    fresh = [e for e in result.events if e["event_id"] not in known]
+
+    created_ids = []
+    if fresh:
+        if trusted:
+            created_ids = crud.add_events_to_post(
+                [events.BaseEvent(**e) for e in fresh], explored_date=get_msk_today()
+            ) or []
+        else:
+            created_ids = crud.add_events(
+                [events.BaseEvent(**e, status="pending") for e in fresh],
+                explored_date=get_msk_today(),
+            )
+
+    if created_ids:
+        status = "created"
+    elif existing:
+        status = "exists"
+    elif result.rejected:
+        status = "rejected"
+    elif result.error:
+        status = "failed"
+    else:
+        status = "not_found"
+    summary = {
+        **result.to_dict(),
+        "status": status,
+        "trusted": trusted,
+        "created_ids": created_ids,
+        "existing": existing,
+    }
+    summary["events"] = [e for e in summary["events"] if e["event_id"] not in known]
+    log.info(
+        f"event_from_any_url {url}: {status} method={result.method} "
+        f"created={created_ids} tokens={result.tokens} error={result.error}"
+    )
+    if status != "failed" or not trusted:
+        redis_client.setex(cache_key, URL_RESULT_TTL, json.dumps(summary, default=str))
+    if cfg.get("notify", True):
+        try:
+            _notify_url_submission(url, submitted_by, comment, summary)
+        except Exception as e:
+            log.warning(f"event_from_any_url: dev notification failed: {e}")
+    return summary
 
 
 @celery_app.task
@@ -1661,14 +2296,14 @@ def update_adaptive_scoring(days: int = 30):
 
     log.info(
         f"update_adaptive_scoring done: {adaptive.get('source_scores', {})} sources, "
-        f"{adaptive.get('category_scores', {})} categories"
+        f"{adaptive.get('suggested_category_scores', {})} categories (suggested only)"
     )
     return {
         "status": "ok",
         "positive": pos_count,
         "negative": neg_count,
         "adaptive_source_scores": adaptive.get("source_scores"),
-        "adaptive_category_scores": adaptive.get("category_scores"),
+        "suggested_category_scores": adaptive.get("suggested_category_scores"),
         "suggested_boost": adaptive.get("suggested_boost_keywords"),
         "suggested_penalty": adaptive.get("suggested_penalty_keywords"),
     }
@@ -1695,11 +2330,17 @@ def catch_up_daily_tasks():
         if weekdays is not None and now_msk.isoweekday() not in weekdays:
             continue
         scheduled = now_msk.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if now_msk < scheduled:
+        if now_msk < scheduled + _CATCH_UP_GRACE:
             continue
 
         key = _daily_marker_key(task_name, today)
-        claimed = redis_client.set(key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True)
+        legacy_ran = any(
+            redis_client.exists(legacy)
+            for legacy in _legacy_daily_marker_keys(task_name, today)
+        )
+        claimed = not legacy_ran and redis_client.set(
+            key, 'catch_up_queued', ex=_DAILY_MARKER_TTL, nx=True
+        )
         if not claimed:
             skipped.append(task_name)
             continue
@@ -1716,3 +2357,9 @@ def catch_up_daily_tasks():
         f"skipped={len(skipped)} already-tracked"
     )
     return {'queued': queued, 'skipped_count': len(skipped)}
+
+
+@celery_app.task
+def rebalance_channel_queue(dry_run=True):
+    """Compatibility task for requests queued before scheduler consolidation."""
+    return crud.schedule_channel_events(dry_run=dry_run)
