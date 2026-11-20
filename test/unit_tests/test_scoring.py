@@ -17,6 +17,19 @@ from davai_s_nami_bot.scoring import (
 )
 
 
+def test_only_explicit_geography_penalty_survives_recalculation():
+    event = {'city_id': 'kzn', 'address': 'ресторан Свияжск, Казань, ул. Пушкина, 86'}
+    config = {'enabled': True}
+    local = calculate_score(event, [], None, config)
+    with_penalty = calculate_score({**event, 'score_breakdown': {'geography_penalty': -20}}, [], None, config)
+    assert with_penalty.total == local.total - 20
+    breakdown = json.loads(with_penalty.to_json())
+    assert breakdown['geography_penalty'] == -20
+    updated = apply_taste_to_breakdown(breakdown, 80, config)
+    assert updated['geography_penalty'] == -20
+    assert apply_taste_to_breakdown(updated, 80, config) == updated
+
+
 ENABLED_CONFIG = {
     "enabled": True,
     "weights": {

@@ -581,7 +581,7 @@ def calculate_score(
                     date_boost = date_scarcity_boost_val
 
     metadata = dict(parse_breakdown(event_data.get("score_breakdown")) or {})
-    metadata["base_total"] = int(raw + rep_penalty + place_queue_pen + date_boost)
+    metadata["base_total"] = int(raw + rep_penalty + place_queue_pen + date_boost + (metadata.get("geography_penalty") or 0))
     total = max(0, min(100, metadata["base_total"] + editorial_adjustment(metadata)))
 
     return ScoreBreakdown(
@@ -661,6 +661,7 @@ def apply_taste_to_breakdown(
         + (breakdown.get("repetition_penalty") or 0)
         + (breakdown.get("place_queue_penalty") or 0)
         + (breakdown.get("date_scarcity_boost") or 0)
+        + (breakdown.get("geography_penalty") or 0)
     )
 
     breakdown["base_total"] = total
